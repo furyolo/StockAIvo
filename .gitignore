@@ -1,0 +1,87 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*$py.class
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# uv package manager
+.uv-cache/
+uv.lock
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+
+# OS-specific
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Environment variables
+.env
+.env.*
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage*
+coverage.xml
+test-results/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.manifest
+*.spec
+
+# Jupyter/IPython
+.ipynb_checkpoints/
+
+# Logs
+*.log
+logs/
+
+# Backup files
+*~
+*.bak
+*.tmp
+
+# Misc
+node_modules/
+memory-bank/*.md.bak
+memory-bank/*.tmp
+stockaivo/__pycache__/
+stockaivo/*/__pycache__/
+stockaivo/*/*.pyc
+stockaivo/*/*.pyo
+stockaivo/*/*.pyd
+stockaivo/*/*$py.class
+stockaivo/scripts/__pycache__/
+stockaivo/scripts/*.pyc
+stockaivo/scripts/*.pyo
+stockaivo/scripts/*.pyd
+stockaivo/scripts/*$py.class
+stockaivo/routers/__pycache__/
+stockaivo/routers/*.pyc
+stockaivo/routers/*.pyo
+stockaivo/routers/*.pyd
+stockaivo/routers/*$py.class
+stockaivo/ai/__pycache__/
+stockaivo/ai/*.pyc
+stockaivo/ai/*.pyo
+stockaivo/ai/*.pyd
+stockaivo/ai/*$py.class
+tests/__pycache__/
+tests/*.pyc
+tests/*.pyo
+tests/*.pyd
+tests/*$py.class
