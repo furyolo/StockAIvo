@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Dict, Any, List
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime
  
@@ -80,6 +81,20 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
+)
+
+# 配置CORS中间件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:4222",  # 前端开发服务器
+        "http://127.0.0.1:4222",
+        "http://localhost:3000",  # 备用前端端口
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # 包含路由器
@@ -336,7 +351,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="127.0.0.1",
-        port=8999,
+        port=8000,
         reload=True,
         log_level="info"
     )

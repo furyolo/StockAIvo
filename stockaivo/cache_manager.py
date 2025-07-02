@@ -101,8 +101,8 @@ class CacheManager:
             # 将所有日期时间列转换为字符串格式
             for col in df_copy.columns:
                 if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
-                    # 对于日期列（dates），只保留日期部分，不包含时间
-                    if col.lower() in ['dates', 'date']:
+                    # 对于日期列（date），只保留日期部分，不包含时间
+                    if col.lower() in ['date']:
                         df_copy[col] = df_copy[col].dt.strftime('%Y-%m-%d')
                     else:
                         # 对于其他时间戳列，保留完整的日期时间格式
@@ -143,7 +143,7 @@ class CacheManager:
             # 如果DataFrame不为空，尝试恢复日期时间格式
             if not df.empty:
                 # 根据列名推断可能的日期列
-                date_columns = ['date', 'dates', 'timestamp', 'time', 'hour_timestamp']
+                date_columns = ['date', 'timestamp', 'time', 'hour_timestamp']
                 for col in df.columns:
                     if col.lower() in date_columns:
                         try:

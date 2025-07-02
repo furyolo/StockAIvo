@@ -82,7 +82,7 @@ class StockPriceDaily(Base):
     
     # 复合主键：股票代码 + 日期
     ticker = Column(String(10), ForeignKey('stocks.ticker'), primary_key=True, nullable=False, comment='股票代码')
-    dates = Column(Date, primary_key=True, nullable=False, comment='交易日期')
+    date = Column(Date, primary_key=True, nullable=False, comment='交易日期')
     
     # OHLCV数据
     open = Column(Numeric(10, 4), nullable=False, comment='开盘价')
@@ -107,15 +107,15 @@ class StockPriceDaily(Base):
     
     # 表约束和索引
     __table_args__ = (
-        UniqueConstraint('ticker', 'dates', name='uk_daily_ticker_date'),
+        UniqueConstraint('ticker', 'date', name='uk_daily_ticker_date'),
         Index('idx_daily_ticker', 'ticker'),
-        Index('idx_daily_date', 'dates'),
-        Index('idx_daily_ticker_date', 'ticker', 'dates'),
+        Index('idx_daily_date', 'date'),
+        Index('idx_daily_ticker_date', 'ticker', 'date'),
         {'comment': '股票日K线数据表'}
     )
     
     def __repr__(self):
-        return f"<StockPriceDaily(ticker='{self.ticker}', dates='{self.dates}', close={self.close})>"
+        return f"<StockPriceDaily(ticker='{self.ticker}', date='{self.date}', close={self.close})>"
 
 
 class StockPriceWeekly(Base):
@@ -127,7 +127,7 @@ class StockPriceWeekly(Base):
     
     # 复合主键：股票代码 + 日期
     ticker = Column(String(10), ForeignKey('stocks.ticker'), primary_key=True, nullable=False, comment='股票代码')
-    dates = Column(Date, primary_key=True, nullable=False, comment='周结束日期（周五）')
+    date = Column(Date, primary_key=True, nullable=False, comment='周结束日期（周五）')
     
     # OHLCV数据
     open = Column(Numeric(10, 4), nullable=False, comment='周开盘价')
@@ -152,15 +152,15 @@ class StockPriceWeekly(Base):
     
     # 表约束和索引
     __table_args__ = (
-        UniqueConstraint('ticker', 'dates', name='uk_weekly_ticker_week'),
+        UniqueConstraint('ticker', 'date', name='uk_weekly_ticker_week'),
         Index('idx_weekly_ticker', 'ticker'),
-        Index('idx_weekly_date', 'dates'),
-        Index('idx_weekly_ticker_date', 'ticker', 'dates'),
+        Index('idx_weekly_date', 'date'),
+        Index('idx_weekly_ticker_date', 'ticker', 'date'),
         {'comment': '股票周K线数据表'}
     )
     
     def __repr__(self):
-        return f"<StockPriceWeekly(ticker='{self.ticker}', dates='{self.dates}', close={self.close})>"
+        return f"<StockPriceWeekly(ticker='{self.ticker}', date='{self.date}', close={self.close})>"
 
 
 class StockPriceHourly(Base):

@@ -140,7 +140,7 @@ def _standardize_columns(df: pd.DataFrame, period: str) -> pd.DataFrame:
         # 根据参考项目的列名映射，AKShare 返回的是中文列名
         column_mapping = {
             # AKShare stock_us_hist 返回的中文列名映射
-            '日期': 'dates',
+            '日期': 'date',
             '开盘': 'open',
             '收盘': 'close',
             '最高': 'high',
@@ -174,7 +174,9 @@ def _standardize_columns(df: pd.DataFrame, period: str) -> pd.DataFrame:
         # 根据周期设置时间列
         if period in ["daily", "weekly"]:
             # 确保有 date 列
-            if 'date' not in df.columns:
+            if 'date' not in df.columns and 'dates' in df.columns:
+                df = df.rename(columns={'dates': 'date'})
+            elif 'date' not in df.columns:
                 # 如果索引是日期，将其重置为列
                 if df.index.name == 'date' or pd.api.types.is_datetime64_any_dtype(df.index):
                     df = df.reset_index()

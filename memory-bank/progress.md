@@ -1,3 +1,31 @@
+# Progress
+
+This file tracks the project's progress using a task list format.
+YYYY-MM-DD HH:MM:SS - Log of updates made.
+
+*
+
+## Completed Tasks
+
+* [2025-07-02 15:57:19] - **调试任务完成**: 修复了 `frontend/src/main.tsx` 中的 `[ts] Cannot find module './router'` 导入错误。通过更新 `frontend/tsconfig.json` 以移除过时的 Next.js 配置并使其与 Vite 兼容，解决了该问题。
+* [2025-07-02 15:54:28] - **配置**: 完成了将 Vite 开发服务器端口修改为 `4222` 的任务。
+* [2025-07-02 15:12:00] - **Architecture**: Finalized the decision to replace ECharts with TradingView Lightweight Charts. Updated `decisionLog.md` and `activeContext.md`.
+
+## Completed Tasks
+
+* [2025-07-02 15:13:00] - **Frontend**: Migrated `StockChart.tsx` from ECharts to TradingView Lightweight Charts. Installed dependency and refactored the component and its parent.
+
+* [2025-07-02 15:47:42] - **前端 (第五阶段)**: 完成了 `page.tsx` 的重构，使其成为一个纯客户端组件，并修改了子组件以解决编译时依赖问题。
+* [2025-07-02 15:41:37] - **配置**: 在 `frontend/` 目录下成功创建了 `vite.config.ts`，为 Vite 项目提供了基本的插件、别名和服务器代理设置。
+## Current Tasks
+* [2025-07-02 15:43:18] - **前端**: 创建了 `frontend/index.html` 和 `frontend/src/main.tsx`，完成了项目 HTML 和应用入口点的设置。
+* [2025-07-02 15:44:47] - **前端**: 完成了第四阶段的路由重构。创建了 `router.tsx` 并更新了 `layout.tsx` 以集成 `react-router-dom`。
+
+* [2025-07-02 15:50:12] - **前端 (第六阶段)**: 完成了最后的迁移步骤。更新了 `package.json` 中的脚本以使用 Vite，并删除了 `next.config.js` 和 `next-env.d.ts` 等过时的 Next.js 文件。
+* Test the new chart component to ensure data is displayed correctly and all interactions work as expected.
+
+## Next Steps
+* [2025-07-02 12:24:37] - **编码任务完成**: 成功将数据库和代码库中的 `dates` 字段重构为 `date`，并清除了所有相关的兼容性代码。
 * [2025-07-01 19:06:02] - **编码任务完成**: 成功重构了 `pyproject.toml`，将开发依赖项分离到 `[project.optional-dependencies.dev]` 组中。
 * [2025-07-01 11:35:42] - **调试任务完成**: 修复了 `technical_analyst` 代理因 prompt 过长而导致的 `502 Bad Gateway` 错误。通过截断发送给本地LLM的数据，解决了该问题。
 * [2025-07-01 11:16:25] - **编码任务完成**: 成功修复了 `stockaivo/ai/orchestrator.py` 中的 `AttributeError`，通过添加对 `None` 值的检查来提高代码健壮性。
@@ -65,3 +93,27 @@
 - [2025-07-01 11:27:18] - FAIL - Invoke-WebRequest 失败，因为无法连接到远程服务器。可能是服务器启动缓慢或失败。
 - [2025-07-01 11:27:33] - INFO - 从 pyproject.toml 发现 'uv run' 需要一个脚本参数。将尝试使用 'uv run dev' 并将等待时间增加到 10 秒。
 - [2025-07-01 11:28:06] - SUCCESS - 服务器成功启动，JNJ 分析已触发。技术分析师代理失败，出现 502 错误。
+
+---
+**Timestamp:** 2025-07-02T15:22:00+08:00
+**Task:** TDD for `StockChart` component ([`frontend/src/components/StockChart.tsx`](frontend/src/components/StockChart.tsx))
+**Cycle:** Complete
+**Summary:**
+- Set up Jest and React Testing Library in the Next.js project.
+- Overcame ESM module resolution issues for `lightweight-charts` by implementing a manual Jest mock.
+- Created [`frontend/src/components/StockChart.test.tsx`](frontend/src/components/StockChart.test.tsx) with the following tests:
+  - Renders a placeholder when no data is provided.
+  - Renders the chart container when data is provided.
+  - Verifies that the `createChart` function is called on mount.
+- All tests are passing successfully.
+**Files Affected:**
+- [`frontend/package.json`](frontend/package.json)
+- [`frontend/jest.config.ts`](frontend/jest.config.ts)
+- [`frontend/tsconfig.json`](frontend/tsconfig.json)
+- [`frontend/__mocks__/lightweight-charts.ts`](frontend/__mocks__/lightweight-charts.ts)
+- [`frontend/src/components/StockChart.tsx`](frontend/src/components/StockChart.tsx)
+- [`frontend/src/components/StockChart.test.tsx`](frontend/src/components/StockChart.test.tsx)
+---
+* [2025-07-02 15:28:14] - **调试任务完成**: 修复了 `frontend/src/components/StockChart.tsx` 中的 `TypeError`。通过使用 `as any` 类型断言和遵循 `lightweight-charts` v5 的正确 API 模式，解决了运行时错误。
+
+* [2025-07-02 16:02:39] - **调试任务完成**: 修复了 http://localhost:4222/ 的空白页面问题。通过移除 `frontend/src/app/layout.tsx` 中无效的 `<html>` 和 `<body>` 标签，解决了该问题。

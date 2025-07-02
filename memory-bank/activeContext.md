@@ -7,6 +7,17 @@
 
 ## Current Focus
 
+* [2025-07-02 15:56:44] - **Bug Fix**: Resolved a TypeScript module resolution error (`[ts] Cannot find module './router'`) in `frontend/src/main.tsx`. The issue was caused by an outdated Next.js configuration in `frontend/tsconfig.json`. The fix involved updating `tsconfig.json` to be compatible with Vite by changing the JSX mode to `react-jsx` and removing Next.js-specific plugins and file inclusions.
+* [2025-07-02 15:54:20] - **配置**: 根据用户反馈，将 `frontend/vite.config.ts` 中的 Vite 开发服务器端口更改为 `4222`。
+* [2025-07-02 15:47:27] - **前端重构 (第五阶段)**: 重构了 `frontend/src/app/page.tsx`，将其从 Next.js 页面组件转换为纯客户端 React 组件。移除了 `useState` 和数据处理逻辑，为使用 SWR 进行客户端数据获取做好了准备。同时，修改了 `StockDataForm.tsx` 和 `StockChart.tsx` 以移除强制性 props，解决了由此产生的编译错误。
+* [2025-07-02 15:44:39] - **前端重构**: 创建了 `frontend/src/router.tsx` 以使用 `react-router-dom` 管理路由，并相应地修改了 `frontend/src/app/layout.tsx` 以使用 `<Outlet />` 而不是 `children`，从而将项目从 Next.js 页面路由迁移到 React Router。
+* [2025-07-02 15:43:27] - **前端**: 创建了 `frontend/index.html` 和 `frontend/src/main.tsx` 作为 Vite 应用的入口点。`main.tsx` 中存在一个预期的 TypeScript 错误，因为 `router.tsx` 尚未创建。
+
+* [2025-07-02 15:50:22] - **前端迁移 (第六阶段)**: 完成了迁移的最后一步。更新了 `frontend/package.json` 中的脚本以使用 Vite，并清理了不再需要的 Next.js 配置文件 (`next.config.js`, `next-env.d.ts`)。
+* [2025-07-02 15:41:37] - **配置**: 创建了 `frontend/vite.config.ts` 文件，为前端项目迁移到 Vite 做准备。该配置包括 React 插件、`@` 路径别名和到后端 API 的代理。
+
+* [2025-07-02 15:13:00] - **Implementation**: Completed the migration of the frontend charting library from ECharts to TradingView Lightweight Charts. The `lightweight-charts` dependency was installed, and the `StockChart.tsx` component was fully refactored.
+* [2025-07-02 12:24:29] - **Refactor**: Renamed the `dates` field to `date` in the `stock_prices_daily` and `stock_prices_weekly` database tables and models. Searched and removed all related code that was added to rename `date` to `dates` to ensure that only `date` is used as the date field across all models, database interactions, and APIs.
 * [2025-07-01 19:05:55] - **Refactor**: Separated development dependencies (`pytest`, `pytest-asyncio`) into a `[project.optional-dependencies.dev]` group in [`pyproject.toml`](pyproject.toml) to improve dependency management.
 * [2025-07-01 11:16:18] - **Bug Fix**: Added a `None` check in [`stockaivo/ai/orchestrator.py`](stockaivo/ai/orchestrator.py) to prevent an `AttributeError` during the analysis stream, improving the robustness of the workflow.
 * [2025-07-01 11:10:53] - **Refactor**: Enhanced the `technical_analysis_agent` in `stockaivo/ai/agents.py` to analyze both daily and weekly data, providing a more comprehensive technical analysis by considering short-term and long-term trends.
@@ -123,3 +134,7 @@
 * [2025-07-01 11:22:12] - [Debug Status Update: Fix Confirmation] Disabled HTTP/2 in the `httpx` client in `stockaivo/ai/llm_service.py`. This resolved the `httpx.ReadError` and stabilized the connection, but the 502 error remains, indicating a server-side issue.
 - **[2025-07-01 11:28:14] Deployment Issue:** The `technical_analyst` agent is failing with a `502 Bad Gateway` error when trying to connect to the OpenAI-compatible API at `http://localhost:3222/v1/chat/completions`. The downstream LLM service at this address may be down or misconfigured.
 * [2025-07-01 11:35:31] - [Debug Status Update: Fix Confirmation] Resolved `502 Bad Gateway` in `technical_analyst` by truncating the prompt data in `stockaivo/ai/agents.py`. This prevents overloading the local LLM service.
+* [2025-07-02 15:28:02] - [Debug Status Update: Fix Confirmation] Resolved `TypeError: chartRef.current.addCandlestickSeries is not a function` in `frontend/src/components/StockChart.tsx`. The fix involved using `as any` to bypass incorrect TypeScript type definitions for the `lightweight-charts` library and correctly separating series creation from option application, aligning with the v5 API.
+
+* [2025-07-02 16:06:18] - [Debug Status Update: Fix Confirmation] Resolved blank page issue by refactoring the layout and page components. Moved the main page structure (Header, main container) from `page.tsx` to `layout.tsx` to create a proper layout hierarchy for `react-router-dom`, and simplified `page.tsx` to only contain the page-specific content.
+* [2025-07-02 16:02:30] - [Debug Status Update: Fix Confirmation] Resolved blank page issue by correcting invalid DOM structure in `frontend/src/app/layout.tsx`. The component was incorrectly rendering `<html>` and `<body>` tags.

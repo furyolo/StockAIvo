@@ -324,7 +324,7 @@ def _get_date_col(period: PeriodType) -> str:
     if period == 'hourly':
         return 'hour_timestamp'
     # For daily and weekly
-    return 'dates'
+    return 'date'
 
 def _get_required_dates(period: PeriodType, start_date_str: Optional[str], end_date_str: Optional[str]) -> List[date]:
     """
@@ -455,7 +455,7 @@ def _query_database(db: Session, ticker: str, period: PeriodType, start_date: Op
         if period == 'hourly':
             date_column = model.hour_timestamp
         else:  # For daily and weekly
-            date_column = model.dates
+            date_column = model.date
         
         query = select(*columns_to_select).where(model.ticker == ticker)
 

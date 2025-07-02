@@ -67,8 +67,8 @@ class DatabaseWriter:
         
         for _, row in df.iterrows():
             try:
-                # 处理日期字段, 优先使用 'dates'
-                trade_date = row.get('dates', row.get('date', row.get('日期')))
+                # 处理日期字段
+                trade_date = row.get('date', row.get('日期'))
                 if isinstance(trade_date, str):
                     trade_date = pd.to_datetime(trade_date).date()
                 elif isinstance(trade_date, pd.Timestamp):
@@ -80,7 +80,7 @@ class DatabaseWriter:
                 # 准备价格数据
                 price_data = {
                     'ticker': ticker,
-                    'dates': trade_date,
+                    'date': trade_date,
                     'open': float(row.get('open', 0)),
                     'high': float(row.get('high', 0)),
                     'low': float(row.get('low', 0)),
@@ -118,14 +118,14 @@ class DatabaseWriter:
         
         for _, row in df.iterrows():
             try:
-                # 处理周开始日期字段, 优先使用 'dates'
-                trade_date = row.get('dates', row.get('date', row.get('日期')))
+                # 处理周开始日期字段
+                trade_date = row.get('date', row.get('日期'))
                 if isinstance(trade_date, str):
-                    week_start = pd.to_datetime(trade_date).date()
+                    trade_date = pd.to_datetime(trade_date).date()
                 elif isinstance(trade_date, pd.Timestamp):
-                    week_start = trade_date.date()
+                    trade_date = trade_date.date()
                 elif isinstance(trade_date, date):
-                    week_start = trade_date
+                    pass # trade_date is already a date object
                 else:
                     logger.warning(f"无效的日期格式: {trade_date}")
                     continue
@@ -135,7 +135,7 @@ class DatabaseWriter:
                 
                 price_data = {
                     'ticker': ticker,
-                    'dates': week_start,
+                    'date': trade_date,
                     'open': float(row.get('open', 0)),
                     'high': float(row.get('high', 0)),
                     'low': float(row.get('low', 0)),
@@ -334,13 +334,13 @@ class DatabaseWriter:
                         if period == 'daily':
                             daily_data = self._prepare_daily_price_data(ticker, dataframe)
                             processed_rows = self._batch_upsert_prices(
-                                db, StockPriceDaily, daily_data, ['ticker', 'dates']
+                                db, StockPriceDaily, daily_data, ['ticker', 'date']
                             )
                             
                         elif period == 'weekly':
                             weekly_data = self._prepare_weekly_price_data(ticker, dataframe)
                             processed_rows = self._batch_upsert_prices(
-                                db, StockPriceWeekly, weekly_data, ['ticker', 'dates']
+                                db, StockPriceWeekly, weekly_data, ['ticker', 'date']
                             )
                             
                         elif period == 'hourly':
@@ -418,10 +418,6 @@ class DatabaseWriter:
         Returns:
             bool: 保存成功返回True，失败返回False
         """
-        # API返回的是'date'列, 模型要求的是'dates'列, 在这里进行转换
-        if 'date' in dataframe.columns:
-            dataframe = dataframe.rename(columns={'date': 'dates'})
-
         try:
             with database.SessionLocal() as db:
                 with db.begin():
@@ -435,12 +431,12 @@ class DatabaseWriter:
                     if period == 'daily':
                         daily_data = self._prepare_daily_price_data(ticker, dataframe)
                         processed_rows = self._batch_upsert_prices(
-                            db, StockPriceDaily, daily_data, ['ticker', 'dates']
+                            db, StockPriceDaily, daily_data, ['ticker', 'date']
                         )
                     elif period == 'weekly':
                         weekly_data = self._prepare_weekly_price_data(ticker, dataframe)
                         processed_rows = self._batch_upsert_prices(
-                            db, StockPriceWeekly, weekly_data, ['ticker', 'dates']
+                            db, StockPriceWeekly, weekly_data, ['ticker', 'date']
                         )
                     elif period == 'hourly':
                         hourly_data = self._prepare_hourly_price_data(ticker, dataframe)
