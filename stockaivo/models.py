@@ -67,8 +67,15 @@ class StockSymbols(Base):
     """
     __tablename__ = 'stock_symbols'
 
-    symbol = Column(String(10), primary_key=True, comment='股票代码，如AAPL')
-    full_symbol = Column("fullsymbol", String(255), nullable=False, comment='数据源使用的完整代码，如105.AAPL')
+    # 根据实际数据库结构：fullsymbol是主键，symbol是NOT NULL
+    full_symbol = Column("fullsymbol", String(255), primary_key=True, comment='数据源使用的完整代码，如105.AAPL')
+    symbol = Column(String(10), nullable=False, comment='股票代码，如AAPL')
+
+    # 创建索引以优化基于symbol的查询
+    __table_args__ = (
+        Index('idx_stock_symbols_symbol', 'symbol'),
+        {'comment': '股票代码与完整代码映射表'}
+    )
 
     def __repr__(self):
         return f"<StockSymbols(symbol='{self.symbol}', full_symbol='{self.full_symbol}')>"
@@ -200,3 +207,34 @@ class StockPriceHourly(Base):
     
     def __repr__(self):
         return f"<StockPriceHourly(ticker='{self.ticker}', hour_timestamp='{self.hour_timestamp}', close={self.close})>"
+
+
+class UsStocksName(Base):
+    """
+    美股名称表
+    存储美国股票的英文名称、中文名称和股票代码的映射关系
+    用于股票搜索和名称查询功能
+    """
+    __tablename__ = 'us_stocks_name'
+
+    # 主键：股票代码
+    symbol = Column(String, primary_key=True, nullable=False, comment='股票代码，如AAPL, MSFT')
+
+    # 名称字段
+    name = Column(String, nullable=False, comment='英文公司名称')
+    cname = Column(String, nullable=True, comment='中文公司名称')
+
+    # 时间戳字段
+    fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment='数据获取时间')
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
+
+    # 创建索引以支持搜索优化
+    __table_args__ = (
+        Index('idx_us_stocks_name_search', 'name', 'cname'),  # 复合索引支持搜索
+        Index('idx_us_stocks_name_name', 'name'),  # 英文名称索引
+        Index('idx_us_stocks_name_cname', 'cname'),  # 中文名称索引
+        {'comment': '美股名称映射表，用于股票搜索功能'}
+    )
+
+    def __repr__(self):
+        return f"<UsStocksName(symbol='{self.symbol}', name='{self.name}', cname='{self.cname}')>"

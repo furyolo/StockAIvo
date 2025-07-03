@@ -10,6 +10,7 @@
 - FastAPI 提供高性能 RESTful API
 - 支持定时任务与数据自动更新
 - Redis 缓存加速数据访问
+- 数据库查询性能优化（索引优化）
 - 支持多因子选股与策略回测
 - 可扩展的插件式 AI Agent 架构
 
@@ -60,6 +61,29 @@ uv run start
 ```
 服务将在 `http://127.0.0.1:8000` 上可用。
 
+## 数据库优化
+
+### 索引优化
+项目包含数据库索引优化脚本，用于提升查询性能：
+
+```bash
+# 为stock_symbols表创建索引（优化AKShare数据获取性能）
+cd database_migrations
+uv run create_stock_symbols_index.py
+
+# 为搜索功能创建索引
+uv run create_search_indexes.py
+```
+
+### 性能测试
+```bash
+# 测试stock_symbols表查询性能
+cd tests
+uv run test_stock_symbols_performance.py
+```
+
+详细信息请参考 [database_migrations/README.md](database_migrations/README.md)
+
 ## 目录结构简介
 
 ```
@@ -67,10 +91,11 @@ stockaivo/
   ├─ ai/                # AI智能体与相关服务
   ├─ routers/           # FastAPI 路由
   ├─ scripts/           # 启动与运维脚本
-  ├─ tests/             # 单元测试
   ├─ data_service.py    # 数据服务主模块
   ├─ database.py        # 数据库连接与操作
   └─ ...
+database_migrations/    # 数据库迁移与索引优化脚本
+tests/                  # 单元测试与性能测试
 memory-bank/            # 记忆库与上下文管理
 README.md               # 项目说明
 pyproject.toml          # 项目依赖与配置
