@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple, Union, Any
 from datetime import datetime
 import os
 import threading
+import hashlib
 from dotenv import load_dotenv
 from enum import Enum, auto
 
@@ -19,6 +20,7 @@ class CacheType(Enum):
     """缓存类型的枚举"""
     PENDING_SAVE = auto()  # 表示数据等待被持久化
     GENERAL_CACHE = auto()  # 表示通用的查询结果缓存
+    SEARCH_CACHE = auto()  # 表示搜索结果缓存
 
 # 加载环境变量
 load_dotenv()
@@ -189,6 +191,9 @@ class CacheManager:
             elif cache_type == CacheType.GENERAL_CACHE:
                 cache_key = f"general_cache:{ticker}:{period}"
                 ttl = 3600  # 1小时，作为通用查询缓存
+            elif cache_type == CacheType.SEARCH_CACHE:
+                cache_key = f"search_cache:{ticker}:{period}"
+                ttl = 300  # 5分钟，搜索结果缓存
             else:
                 logger.error(f"未知的缓存类型: {cache_type}")
                 return None
@@ -238,6 +243,8 @@ class CacheManager:
                 cache_key = f"pending_save:{ticker}:{period}"
             elif cache_type == CacheType.GENERAL_CACHE:
                 cache_key = f"general_cache:{ticker}:{period}"
+            elif cache_type == CacheType.SEARCH_CACHE:
+                cache_key = f"search_cache:{ticker}:{period}"
             else:
                 logger.error(f"未知的缓存类型: {cache_type}")
                 return None
@@ -460,18 +467,156 @@ class CacheManager:
     def health_check(self) -> bool:
         """
         检查Redis连接健康状态
-        
+
         Returns:
             bool: 连接正常返回True
         """
         try:
             if self.redis_client is None:
                 return False
-            
+
             self.redis_client.ping()
             return True
         except Exception:
             return False
+
+    def _generate_search_cache_key(self, query: str, limit: int = 10, offset: int = 0) -> str:
+        """
+        生成搜索缓存键
+
+        Args:
+            query: 搜索查询词
+            limit: 结果限制数量
+            offset: 分页偏移量
+
+        Returns:
+            str: 搜索缓存键
+        """
+        # 创建查询参数的哈希值
+        query_params = f"{query.lower().strip()}:{limit}:{offset}"
+        query_hash = hashlib.md5(query_params.encode('utf-8')).hexdigest()
+        return f"search_cache:{query_hash}"
+
+    def _serialize_search_results(self, results: List[Dict[str, Any]]) -> str:
+        """
+        序列化搜索结果
+
+        Args:
+            results: 搜索结果列表
+
+        Returns:
+            str: 序列化后的JSON字符串
+        """
+        try:
+            data_dict = {
+                'results': results,
+                'timestamp': datetime.now().isoformat(),
+                'count': len(results)
+            }
+            return json.dumps(data_dict, ensure_ascii=False, default=str)
+        except Exception as e:
+            error_msg = f"搜索结果序列化失败: {e}"
+            logger.error(error_msg)
+            raise RedisSerializationError(error_msg)
+
+    def _deserialize_search_results(self, json_str: str) -> List[Dict[str, Any]]:
+        """
+        反序列化搜索结果
+
+        Args:
+            json_str: 序列化的JSON字符串
+
+        Returns:
+            List[Dict[str, Any]]: 搜索结果列表
+        """
+        try:
+            data_dict = json.loads(json_str)
+            return data_dict.get('results', [])
+        except Exception as e:
+            error_msg = f"搜索结果反序列化失败: {e}"
+            logger.error(error_msg)
+            raise RedisSerializationError(error_msg)
+
+    def save_search_results(self, query: str, results: List[Dict[str, Any]],
+                           limit: int = 10, offset: int = 0) -> Optional[str]:
+        """
+        保存搜索结果到缓存
+
+        Args:
+            query: 搜索查询词
+            results: 搜索结果列表
+            limit: 结果限制数量
+            offset: 分页偏移量
+
+        Returns:
+            Optional[str]: 保存成功返回缓存键名，失败返回None
+        """
+        if self.redis_client is None:
+            logger.error("Redis连接未建立")
+            return None
+
+        if not results:
+            logger.warning(f"尝试保存空搜索结果: {query}")
+            return None
+
+        try:
+            cache_key = self._generate_search_cache_key(query, limit, offset)
+            serialized_data = self._serialize_search_results(results)
+
+            # 设置5分钟的TTL
+            self.redis_client.setex(
+                name=cache_key,
+                time=300,  # 5分钟
+                value=serialized_data
+            )
+
+            logger.info(f"成功保存搜索结果到Redis: {cache_key}, 结果数: {len(results)}")
+            return cache_key
+
+        except RedisSerializationError:
+            return None
+        except redis.RedisError as e:
+            logger.error(f"Redis操作失败: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"保存搜索结果时发生未知错误: {e}")
+            return None
+
+    def get_search_results(self, query: str, limit: int = 10, offset: int = 0) -> Optional[List[Dict[str, Any]]]:
+        """
+        从缓存中获取搜索结果
+
+        Args:
+            query: 搜索查询词
+            limit: 结果限制数量
+            offset: 分页偏移量
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: 搜索结果列表，未找到返回None
+        """
+        if self.redis_client is None:
+            logger.error("Redis连接未建立")
+            return None
+
+        try:
+            cache_key = self._generate_search_cache_key(query, limit, offset)
+            serialized_data = self.redis_client.get(cache_key)
+
+            if serialized_data:
+                logger.info(f"在Redis缓存中找到搜索结果: {cache_key}")
+                return self._deserialize_search_results(str(serialized_data))
+            else:
+                logger.info(f"在Redis缓存中未找到搜索结果: {cache_key}")
+                return None
+
+        except RedisSerializationError:
+            return None
+        except redis.RedisError as e:
+            logger.error(f"从Redis获取搜索结果时出错: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"从Redis获取搜索结果时发生未知错误: {e}")
+            return None
 
 
 # --- Lazy Loading Singleton Pattern ---
@@ -522,3 +667,12 @@ def get_from_redis(ticker: str, period: str, cache_type: CacheType) -> Optional[
 def delete_from_redis(key: str) -> bool:
     """从Redis中删除指定的键"""
     return get_cache_manager().delete_from_redis(key)
+
+def save_search_results(query: str, results: List[Dict[str, Any]],
+                       limit: int = 10, offset: int = 0) -> Optional[str]:
+    """保存搜索结果到缓存"""
+    return get_cache_manager().save_search_results(query, results, limit, offset)
+
+def get_search_results(query: str, limit: int = 10, offset: int = 0) -> Optional[List[Dict[str, Any]]]:
+    """从缓存中获取搜索结果"""
+    return get_cache_manager().get_search_results(query, limit, offset)

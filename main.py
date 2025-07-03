@@ -20,6 +20,7 @@ from stockaivo.cache_manager import get_pending_data_keys, health_check as redis
 from stockaivo.data_service import get_stock_data, check_data_service_health, PeriodType
 from stockaivo.routers import stocks_router
 from stockaivo.routers.ai import router as ai_router
+from stockaivo.routers.search import router as search_router
 from stockaivo.background_scheduler import start_scheduler, stop_scheduler
 # from stockaivo.ai.orchestrator import cleanup_orchestrator # Removed after refactor
 # from stockaivo.ai.llm_service import cleanup_llm_service # Removed after refactor
@@ -100,6 +101,7 @@ app.add_middleware(
 # 包含路由器
 app.include_router(stocks_router)
 app.include_router(ai_router)
+app.include_router(search_router)
 
 
 @app.get("/", tags=["基础"])

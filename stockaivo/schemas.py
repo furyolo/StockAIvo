@@ -53,3 +53,26 @@ class ErrorResponse(BaseModel):
     """错误响应模型"""
     detail: str = Field(..., description="错误详情")
     timestamp: datetime = Field(..., description="错误发生时间")
+
+
+class SearchResult(BaseModel):
+    """搜索结果单项模型"""
+    symbol: str = Field(..., description="股票代码", min_length=1, max_length=10)
+    name: str = Field(..., description="英文公司名称", min_length=1, max_length=200)
+    cname: Optional[str] = Field(None, description="中文公司名称", max_length=200)
+    relevance_score: float = Field(..., description="相关性评分", ge=0.0, le=1.0)
+
+    class Config:
+        from_attributes = True
+
+
+class SearchResponse(BaseModel):
+    """搜索响应模型"""
+    query: str = Field(..., description="搜索查询词", min_length=1, max_length=100)
+    total_count: int = Field(..., description="总结果数量", ge=0)
+    results: List[SearchResult] = Field(..., description="搜索结果列表")
+    has_more: bool = Field(..., description="是否还有更多结果")
+    timestamp: datetime = Field(..., description="响应时间戳")
+
+    class Config:
+        from_attributes = True

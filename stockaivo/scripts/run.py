@@ -42,6 +42,6 @@ def start():
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=3227,
+        port=3224,
         log_config=LOG_CONFIG
     )

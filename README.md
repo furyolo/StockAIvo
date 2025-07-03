@@ -28,8 +28,8 @@ cd StockAIvo
 # 创建虚拟环境并安装所有依赖
 uv sync
 
-# 如果需要进行开发，请安装开发依赖
-uv sync --dev
+# 如果需要进行开发，请安装开发依赖（包含pytest等测试工具）
+uv sync --extra dev
 ```
 
 
@@ -105,8 +105,14 @@ uv.lock                 # 锁定依赖版本
 ## 测试
 
 ```bash
-uv pip install --system -r requirements-dev.txt  # 如有开发依赖
-pytest tests/
+# 确保已安装开发依赖
+uv sync --extra dev
+
+# 运行所有测试
+uv run pytest tests/
+
+# 运行特定测试
+uv run pytest tests/test_stock_symbols_performance.py
 ```
 
 ## 贡献指南
