@@ -24,67 +24,82 @@ from stockaivo.models import UsStocksName
 class TestCalculateRelevanceScore(unittest.TestCase):
     """测试相关性评分算法"""
 
+    def test_symbol_exact_match(self):
+        """测试股票代码精确匹配"""
+        score = calculate_relevance_score("aapl", "AAPL", "Apple Inc.", "苹果公司")
+        self.assertEqual(score, 1.0)
+
+    def test_symbol_prefix_match(self):
+        """测试股票代码前缀匹配"""
+        score = calculate_relevance_score("aap", "AAPL", "Apple Inc.", "苹果公司")
+        self.assertEqual(score, 0.95)
+
     def test_exact_match_english(self):
         """测试英文精确匹配"""
-        score = calculate_relevance_score("apple", "Apple", "苹果公司")
-        self.assertEqual(score, 1.0)
+        score = calculate_relevance_score("apple", "AAPL", "Apple", "苹果公司")
+        self.assertEqual(score, 0.9)
 
     def test_exact_match_chinese(self):
         """测试中文精确匹配"""
-        score = calculate_relevance_score("苹果", "Apple Inc.", "苹果")
-        self.assertEqual(score, 1.0)
+        score = calculate_relevance_score("苹果", "AAPL", "Apple Inc.", "苹果")
+        self.assertEqual(score, 0.9)
 
     def test_prefix_match_english(self):
         """测试英文前缀匹配"""
-        score = calculate_relevance_score("app", "Apple Inc.", "苹果公司")
-        self.assertEqual(score, 0.9)
+        score = calculate_relevance_score("app", "AAPL", "Apple Inc.", "苹果公司")
+        self.assertEqual(score, 0.8)
 
     def test_prefix_match_chinese(self):
         """测试中文前缀匹配"""
-        score = calculate_relevance_score("苹", "Apple Inc.", "苹果公司")
-        self.assertEqual(score, 0.9)
+        score = calculate_relevance_score("苹", "AAPL", "Apple Inc.", "苹果公司")
+        self.assertEqual(score, 0.8)
+
+    def test_symbol_contains_match(self):
+        """测试股票代码包含匹配"""
+        score = calculate_relevance_score("apl", "AAPL", "Apple Inc.", "苹果公司")
+        self.assertEqual(score, 0.7)
 
     def test_contains_match_english(self):
         """测试英文包含匹配"""
-        score = calculate_relevance_score("tech", "Apple Technology Inc.", "苹果科技")
-        self.assertEqual(score, 0.7)
+        score = calculate_relevance_score("tech", "ABCD", "Apple Technology Inc.", "苹果科技")
+        self.assertEqual(score, 0.6)
 
     def test_contains_match_chinese(self):
         """测试中文包含匹配"""
-        score = calculate_relevance_score("科技", "Apple Technology", "苹果科技公司")
-        self.assertEqual(score, 0.7)
+        score = calculate_relevance_score("科技", "ABCD", "Apple Technology", "苹果科技公司")
+        self.assertEqual(score, 0.6)
 
     def test_word_boundary_match(self):
         """测试单词边界匹配"""
-        score = calculate_relevance_score("tech", "Apple Tech Solutions", None)
-        self.assertEqual(score, 0.7)  # 包含匹配
+        score = calculate_relevance_score("tech", "ABCD", "Apple Tech Solutions", None)
+        self.assertEqual(score, 0.6)  # 包含匹配
 
     def test_partial_word_match(self):
         """测试部分单词匹配"""
-        score = calculate_relevance_score("app", "Snapple Inc.", None)
-        self.assertEqual(score, 0.7)  # 包含匹配
+        score = calculate_relevance_score("app", "SNAP", "Snapple Inc.", None)
+        self.assertEqual(score, 0.6)  # 包含匹配
 
     def test_no_match(self):
         """测试无匹配情况"""
-        score = calculate_relevance_score("xyz", "Apple Inc.", "苹果公司")
+        score = calculate_relevance_score("xyz", "AAPL", "Apple Inc.", "苹果公司")
         self.assertEqual(score, 0.3)
 
     def test_case_insensitive(self):
         """测试大小写不敏感"""
-        score1 = calculate_relevance_score("APPLE", "apple inc.", None)
-        score2 = calculate_relevance_score("apple", "APPLE INC.", None)
+        score1 = calculate_relevance_score("AAPL", "aapl", "apple inc.", None)
+        score2 = calculate_relevance_score("aapl", "AAPL", "APPLE INC.", None)
         self.assertEqual(score1, score2)
-        self.assertEqual(score1, 0.9)  # 前缀匹配
+        self.assertEqual(score1, 1.0)  # Symbol 精确匹配
 
     def test_empty_query(self):
         """测试空查询"""
-        score = calculate_relevance_score("", "Apple Inc.", "苹果公司")
-        self.assertEqual(score, 0.9)  # 空字符串是前缀匹配
+        score = calculate_relevance_score("", "AAPL", "Apple Inc.", "苹果公司")
+        self.assertEqual(score, 0.95)  # 空字符串是symbol前缀匹配
 
     def test_none_cname(self):
         """测试中文名称为None的情况"""
-        score = calculate_relevance_score("apple", "Apple Inc.", None)
-        self.assertEqual(score, 0.9)  # 前缀匹配
+        score = calculate_relevance_score("apple", "AAPL", "Apple Inc.", None)
+        self.assertEqual(score, 0.8)  # 前缀匹配
 
 
 class TestSearchStocksByName(unittest.TestCase):

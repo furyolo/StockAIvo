@@ -19,44 +19,58 @@ from .schemas import SearchResult
 logger = logging.getLogger(__name__)
 
 
-def calculate_relevance_score(query: str, name: str, cname: Optional[str] = None) -> float:
+def calculate_relevance_score(query: str, symbol: str, name: str, cname: Optional[str] = None) -> float:
     """
     计算搜索结果的相关性评分
-    
+
     Args:
         query: 搜索查询词
+        symbol: 股票代码
         name: 英文公司名称
         cname: 中文公司名称（可选）
-        
+
     Returns:
         float: 相关性评分 (0.0-1.0)
     """
     query_lower = query.lower().strip()
+    symbol_lower = symbol.lower()
     name_lower = name.lower()
     cname_lower = cname.lower() if cname else ""
-    
-    # 精确匹配得分最高
-    if query_lower == name_lower or (cname and query_lower == cname_lower):
+
+    # Symbol 精确匹配得分最高
+    if query_lower == symbol_lower:
         return 1.0
-    
-    # 前缀匹配得分较高
-    if name_lower.startswith(query_lower) or (cname and cname_lower.startswith(query_lower)):
+
+    # Symbol 前缀匹配得分第二高
+    if symbol_lower.startswith(query_lower):
+        return 0.95
+
+    # Name/Cname 精确匹配得分第三高
+    if query_lower == name_lower or (cname and query_lower == cname_lower):
         return 0.9
-    
-    # 包含匹配得分中等
-    if query_lower in name_lower or (cname and query_lower in cname_lower):
+
+    # Name/Cname 前缀匹配得分第四高
+    if name_lower.startswith(query_lower) or (cname and cname_lower.startswith(query_lower)):
+        return 0.8
+
+    # Symbol 包含匹配
+    if query_lower in symbol_lower:
         return 0.7
-    
+
+    # Name/Cname 包含匹配得分中等
+    if query_lower in name_lower or (cname and query_lower in cname_lower):
+        return 0.6
+
     # 单词边界匹配
     name_words = name_lower.split()
     cname_words = cname_lower.split() if cname else []
-    
+
     for word in name_words + cname_words:
         if word.startswith(query_lower):
-            return 0.6
-        if query_lower in word:
             return 0.5
-    
+        if query_lower in word:
+            return 0.4
+
     # 默认最低分
     return 0.3
 
@@ -99,27 +113,32 @@ def search_stocks_by_name(
         
         # 构建模糊搜索查询
         search_pattern = f"%{query}%"
-        
-        # 使用 ILIKE 进行不区分大小写的模糊匹配
+
+        # 使用 ILIKE 进行不区分大小写的模糊匹配，包含 symbol 字段
         search_condition = or_(
+            UsStocksName.symbol.ilike(search_pattern),
             UsStocksName.name.ilike(search_pattern),
             UsStocksName.cname.ilike(search_pattern)
         )
         
-        # 构建排序逻辑：精确匹配 > 前缀匹配 > 包含匹配
+        # 构建排序逻辑：Symbol精确匹配 > Symbol前缀匹配 > Name/Cname精确匹配 > Name/Cname前缀匹配 > 包含匹配
         # 使用 CASE WHEN 进行数据库级别的排序
         order_score = case(
-            # 精确匹配（英文或中文）
+            # Symbol 精确匹配（最高优先级）
+            (func.lower(UsStocksName.symbol) == query.lower(), 6),
+            # Symbol 前缀匹配（第二优先级）
+            (func.lower(UsStocksName.symbol).like(f"{query.lower()}%"), 5),
+            # Name/Cname 精确匹配（第三优先级）
             (or_(
                 func.lower(UsStocksName.name) == query.lower(),
                 func.lower(UsStocksName.cname) == query.lower()
             ), 4),
-            # 前缀匹配（英文或中文）
+            # Name/Cname 前缀匹配（第四优先级）
             (or_(
                 func.lower(UsStocksName.name).like(f"{query.lower()}%"),
                 func.lower(UsStocksName.cname).like(f"{query.lower()}%")
             ), 3),
-            # 包含匹配
+            # 包含匹配（最低优先级）
             (search_condition, 2),
             else_=1
         )
@@ -142,7 +161,7 @@ def search_stocks_by_name(
         # 转换为字典格式并计算相关性评分
         search_results = []
         for stock in result:
-            relevance_score = calculate_relevance_score(query, stock.name, stock.cname)
+            relevance_score = calculate_relevance_score(query, stock.symbol, stock.name, stock.cname)
             search_results.append({
                 'symbol': stock.symbol,
                 'name': stock.name,
