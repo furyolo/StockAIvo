@@ -23,12 +23,13 @@ def _calculate_date_range(period: PeriodType, date_range_option: Optional[str], 
     # 2. 如果没有提供任何选项，则应用新的默认逻辑
     if not date_range_option:
         today = date.today()
+        yesterday = today - timedelta(days=1)
         if period == 'daily':
             start_date = today - timedelta(days=30)
-            return start_date.isoformat(), today.isoformat()
+            return start_date.isoformat(), yesterday.isoformat()
         elif period == 'weekly':
-            start_date = today - timedelta(weeks=8)
-            return start_date.isoformat(), today.isoformat()
+            start_date = today - timedelta(days=180)
+            return start_date.isoformat(), yesterday.isoformat()
         return None, None # 其他周期默认全历史
 
     # 3. 处理预设选项
@@ -36,14 +37,13 @@ def _calculate_date_range(period: PeriodType, date_range_option: Optional[str], 
         return None, None
 
     today = date.today()
+    yesterday = today - timedelta(days=1)
     start_date = None
 
     if date_range_option == 'past_30_days':
         start_date = today - timedelta(days=30)
     elif date_range_option == 'past_60_days':
         start_date = today - timedelta(days=60)
-    elif date_range_option == 'past_90_days':
-        start_date = today - timedelta(days=90)
     elif date_range_option == 'past_8_weeks':
         start_date = today - timedelta(weeks=8)
     elif date_range_option == 'past_16_weeks':
@@ -52,7 +52,7 @@ def _calculate_date_range(period: PeriodType, date_range_option: Optional[str], 
         start_date = today - timedelta(weeks=24)
     
     if start_date:
-        return start_date.isoformat(), today.isoformat()
+        return start_date.isoformat(), yesterday.isoformat()
     
     return None, None
 

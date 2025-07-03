@@ -4,9 +4,9 @@ StockAIvo - Pydantic数据模型
 """
 
 from datetime import datetime
-from datetime import date as Date
+from datetime import date as DateType
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -24,12 +24,14 @@ class StockPriceBase(BaseModel):
 
 class StockPriceDaily(StockPriceBase):
     """日线数据模型"""
-    date: Date = Field(..., description="日期")
+    date: DateType = Field(..., description="日期")
+    model_config = {"json_encoders": {DateType: lambda d: d.strftime('%Y-%m-%d')}}
 
 
 class StockPriceWeekly(StockPriceBase):
     """周线数据模型"""
-    date: Date = Field(..., description="周开始日期")
+    date: DateType = Field(..., description="周开始日期")
+    model_config = {"json_encoders": {DateType: lambda d: d.strftime('%Y-%m-%d')}}
 
 
 class StockPriceHourly(StockPriceBase):
@@ -42,7 +44,7 @@ class StockDataResponse(BaseModel):
     ticker: str = Field(..., description="股票代码")
     period: str = Field(..., description="时间周期")
     data_count: int = Field(..., description="数据条数", ge=0)
-    data: List[dict] = Field(..., description="股票数据列表")
+    data: List[Union[StockPriceDaily, StockPriceWeekly, StockPriceHourly]] = Field(..., description="股票数据列表")
     timestamp: datetime = Field(..., description="响应时间戳")
     
     class Config:

@@ -6,6 +6,38 @@ This file records architectural and implementation decisions using a list format
 *
       
 ---
+### Decision (Code)
+[2025-07-03 16:14:16] - **修复API日期格式并增强响应模型类型安全**
+
+**Rationale:**
+API 响应中的 `date` 字段被默认的 FastAPI/Starlette JSON 编码器序列化为包含时间的 ISO 格式字符串 (例如 `YYYY-MM-DDTHH:MM:SS`)，这不符合前端的预期。此外，响应模型 `StockDataResponse` 对 `data` 字段使用了通用的 `List[dict]` 类型，这绕过了 Pydantic 的类型验证和自动序列化特性，降低了类型安全性。
+
+为了解决此问题，实施了以下两项关键更改：
+1.  **自定义日期编码器**: 在 `stockaivo/schemas.py` 的 `StockPriceDaily` 和 `StockPriceWeekly` 模型中，通过 `model_config` 添加了一个 `json_encoders`。这个编码器强制 `date` 对象在序列化时使用 `%Y-%m-%d` 格式。
+2.  **强化响应模型**: 在 `stockaivo/schemas.py` 中，将 `StockDataResponse` 的 `data` 字段类型从 `List[dict]` 更改为更具体的 `List[Union[StockPriceDaily, StockPriceWeekly, StockPriceHourly]]`。
+
+这一组合方案利用了 Pydantic V2 的强大功能。当 FastAPI 准备响应时，Pydantic 会自动将从 `data_service` 返回的 DataFrame 记录（`to_dict('records')` 的结果）验证并转换为 `StockPriceDaily`/`Weekly`/`Hourly` 模型实例。在最终的 JSON 序列化阶段，Pydantic 会检测到 `StockPriceDaily`/`Weekly` 模型上我们自定义的 `json_encoders`，并应用它来格式化 `date` 字段，从而确保了输出格式的正确性。
+
+**Details:**
+- **File:** `stockaivo/schemas.py`
+  - **Change:**
+    - 为 `StockPriceDaily` 和 `StockPriceWeekly` 添加了带 `json_encoders` 的 `model_config`。
+    - 将 `StockDataResponse.data` 的类型提示更新为 `List[Union[...]]`。
+    - 为避免类型名冲突，将 `from datetime import date` 修改为 `from datetime import date as DateType`。
+- **File:** `stockaivo/routers/stocks.py`
+  - **Change:** 为了解决 Pylance 静态类型检查器无法验证 Pandas 的 `to_dict('records')` 输出与 Pydantic 模型输入匹配的问题，在 `data=data.to_dict('records'),` 行添加了 `# type: ignore` 注释。这保留了代码的运行时正确性和简洁性，同时解决了静态分析错误。
+---
+### Decision (Code)
+[2025-07-03 15:45:47] - **优化数据获取以感知市场节假日**
+
+**Rationale:**
+系统当前会将市场节假日和周末误判为数据缺失，并尝试向远程API请求数据，这必然会导致失败并浪费资源。为了解决这个问题，在数据获取逻辑中引入了交易日历检查。在确定一个日期范围的数据缺失并准备从远程API获取之前，系统现在会先验证该范围内是否包含至少一个有效的交易日。如果该范围完全由非交易日（节假日、周末）组成，系统将记录一条信息并跳过该范围，从而避免无效的API调用。
+
+**Details:**
+- **File:** `stockaivo/data_service.py`
+- **Change:** 在 `get_stock_data` 函数中，处理缺失数据范围的循环内，增加了使用 `pandas-market-calendars` 库的逻辑。通过调用 `mcal.get_calendar('NYSE').schedule()` 来检查日期范围内的交易日。如果返回的 `schedule` 为空，则跳过当前循环。
+- **Library Used:** `pandas-market-calendars`, 该库已存在于项目依赖中。
+---
 ### Decision (Debug)
 [2025-07-02 16:06:18] - [BugFix: Refactor React Component Structure to Fix Blank Page]
 
@@ -704,3 +736,22 @@ The application page at http://localhost:4222/ was blank. The root cause was ide
 **Details:**
 - **File:** `frontend/src/app/layout.tsx`
 - **Change:** Removed the `<html>` and `<body>` tags from the `RootLayout` component's return statement, wrapping the `<Outlet />` in a React Fragment (`<>...</>`).
+
+
+---
+
+### **内存银行更新摘要**
+
+**标题:** `[2025-07-03] - 修正周线数据必需日期的生成逻辑以正确处理节假日`
+
+**基本原理:**
+`_get_required_dates` 函数在计算周线数据 (`weekly`) 的必需日期时，可能会将非交易日的周五（如节假日）错误地包含进来。这是因为它会将一周的最后一个交易日（如周四）的日期“滚动”到当周的周五，而没有验证该周五本身是否也是一个交易日。本次修复通过增加一个验证步骤来解决此问题：在生成所有潜在的周五之后，会与原始的交易日列表进行比对，只保留那些本身就是交易日的周五。这从根本上阻止了对节假日的数据请求，提高了数据管道的健壮性和准确性。
+
+**实施细节:**
+- **文件:** `stockaivo/data_service.py`
+- **函数:** `_get_required_dates`
+- **变更:**
+    1.  在函数开始时，将从 `nyse.schedule` 获取的所有交易日存储在一个 `set` 中，以备快速查询。
+    2.  在为 `weekly` 周期计算出所有潜在的周五后，增加了一个列表推导式，用 `trading_days_set` 来过滤这个列表，确保结果中的每个周五都是真实的交易日。
+
+---

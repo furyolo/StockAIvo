@@ -7,6 +7,10 @@
 
 ## Current Focus
 
+* [2025-07-03 15:45:27] - **功能增强**: 优化了 `stockaivo/data_service.py` 的数据获取逻辑。在为缺失日期范围请求远程API之前，系统现在会使用 `pandas-market-calendars` 库检查该范围内是否存在至少一个交易日。如果范围内全是节假日或周末，则会跳过该范围，避免了不必要的API调用。
+* [2025-07-03 15:03:15] - **功能增强**: 在 `stockaivo/data_service.py` 的 `get_stock_data` 函数中实现了默认日期范围逻辑。当未提供开始和结束日期时，系统现在会为 `daily` 周期应用30天默认值，为 `weekly` 周期应用180天默认值。
+
+* [2025-07-03 15:24:26] - **Bug Fix**: Corrected a logic flaw in `stockaivo/data_service.py` where the calculation of missing weekly data ranges could extend into the future. The `_find_missing_date_ranges` function was updated to truncate any date range so that its end date does not exceed the current day (`today`), preventing the system from attempting to fetch data for future dates.
 * [2025-07-02 15:56:44] - **Bug Fix**: Resolved a TypeScript module resolution error (`[ts] Cannot find module './router'`) in `frontend/src/main.tsx`. The issue was caused by an outdated Next.js configuration in `frontend/tsconfig.json`. The fix involved updating `tsconfig.json` to be compatible with Vite by changing the JSX mode to `react-jsx` and removing Next.js-specific plugins and file inclusions.
 * [2025-07-02 15:54:20] - **配置**: 根据用户反馈，将 `frontend/vite.config.ts` 中的 Vite 开发服务器端口更改为 `4222`。
 * [2025-07-02 15:47:27] - **前端重构 (第五阶段)**: 重构了 `frontend/src/app/page.tsx`，将其从 Next.js 页面组件转换为纯客户端 React 组件。移除了 `useState` 和数据处理逻辑，为使用 SWR 进行客户端数据获取做好了准备。同时，修改了 `StockDataForm.tsx` 和 `StockChart.tsx` 以移除强制性 props，解决了由此产生的编译错误。

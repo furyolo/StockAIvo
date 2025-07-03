@@ -78,7 +78,7 @@ async def get_daily_data(
             ticker=ticker,
             period="daily",
             data_count=len(data),
-            data=data.to_dict('records'),
+            data=data.to_dict('records'),  # type: ignore
             timestamp=datetime.now()
         )
         
@@ -135,7 +135,7 @@ async def get_weekly_data(
             ticker=ticker,
             period="weekly",
             data_count=len(data),
-            data=data.to_dict('records'),
+            data=data.to_dict('records'),  # type: ignore
             timestamp=datetime.now()
         )
         
@@ -192,7 +192,7 @@ async def get_hourly_data(
             ticker=ticker,
             period="hourly",
             data_count=len(data),
-            data=data.to_dict('records'),
+            data=data.to_dict('records'),  # type: ignore
             timestamp=datetime.now()
         )
         

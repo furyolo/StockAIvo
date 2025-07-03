@@ -96,6 +96,31 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
         logger.error(f"无效的参数: ticker='{ticker}', period='{period}'")
         return None
 
+    # =================================================================
+    # == 新增：默认日期范围逻辑 ==
+    # =================================================================
+    # 如果没有提供开始和结束日期，则应用默认值
+    if start_date is None and end_date is None:
+        logger.info(f"未提供日期范围，为 '{period}' 周期应用默认值。")
+        today = date.today()
+        if period == "daily":
+            # 默认查询过去30天的数据
+            start_date_obj = today - timedelta(days=30)
+            end_date_obj = today - timedelta(days=1)
+            start_date = start_date_obj.strftime('%Y-%m-%d')
+            end_date = end_date_obj.strftime('%Y-%m-%d')
+            logger.info(f"日线数据默认范围设置为: {start_date} -> {end_date}")
+        elif period == "weekly":
+            # 默认查询过去180天的数据
+            start_date_obj = today - timedelta(days=180)
+            end_date_obj = today - timedelta(days=1)
+            start_date = start_date_obj.strftime('%Y-%m-%d')
+            end_date = end_date_obj.strftime('%Y-%m-%d')
+            logger.info(f"周线数据默认范围设置为: {start_date} -> {end_date}")
+    # =================================================================
+    # == 默认逻辑结束 ==
+    # =================================================================
+
     logger.info(f"开始获取数据: {ticker} ({period}) | 范围: {start_date} -> {end_date}")
 
     # 修正结束日期，确保不包含今天及以后的日期
@@ -246,6 +271,17 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
             for missing_start, missing_end in missing_ranges:
                 ms_str = missing_start.strftime('%Y-%m-%d')
                 me_str = missing_end.strftime('%Y-%m-%d')
+                
+                # 新增：在调用API前检查缺失范围是否包含交易日
+                try:
+                    nyse_calendar = mcal.get_calendar('NYSE')
+                    schedule = nyse_calendar.schedule(start_date=ms_str, end_date=me_str)
+                    if schedule.empty:
+                        logger.info(f"跳过非交易日范围: {ms_str} -> {me_str}")
+                        continue
+                except Exception as e:
+                    logger.warning(f"无法检查交易日历，将继续尝试获取数据: {e}")
+
                 logger.info(f"正在从远程 API 获取缺失范围: {ms_str} -> {me_str}")
                 new_data = await data_provider.fetch_from_akshare(db, ticker, period, ms_str, me_str)
                 if new_data is not None and not new_data.empty:
@@ -348,22 +384,37 @@ def _get_required_dates(period: PeriodType, start_date_str: Optional[str], end_d
         nyse = mcal.get_calendar('NYSE')
         schedule = nyse.schedule(start_date=start_date, end_date=end_date)
         
+        # 将所有交易日存储在一个Set中以便快速查找
+        trading_days_set = {d.date() for d in schedule.index}
+
         if period == "daily":
-            # Pylance has trouble with schedule.index.date, so we use a list comprehension.
-            return [d.date() for d in schedule.index]
+            # daily 逻辑保持不变
+            return sorted(list(trading_days_set))
+        
         elif period == "weekly":
-            # 获取所有交易日，然后筛选出周五
-            # Pylance has trouble with schedule.index.date, so we use a list comprehension.
-            trading_days = pd.to_datetime([d.date() for d in schedule.index])
-            # 使用 rollforward 将日期滚动到当周的周五
-            fridays = trading_days.to_series().apply(lambda x: x + pd.offsets.Week(weekday=4, n=0)).dt.date
-            return sorted(list(set(fridays)))
+            # 1. 获取所有交易日（Datetime对象）
+            all_trading_days = pd.to_datetime([d.date() for d in schedule.index])
+
+            # 2. 将每个交易日向前滚动到其所在周的周五
+            potential_fridays = all_trading_days.to_series().apply(
+                lambda x: x + pd.offsets.Week(weekday=4, n=0)
+            ).dt.date
+
+            # 3. (核心修复) 过滤，只保留那些本身也是交易日的周五
+            actual_fridays = [
+                friday for friday in potential_fridays
+                if friday in trading_days_set
+            ]
+
+            # 4. 返回去重和排序后的结果
+            return sorted(list(set(actual_fridays)))
+
         elif period == "monthly":
-             # 获取所有交易日，然后筛选出月末
-            # Pylance has trouble with schedule.index.date, so we use a list comprehension.
+            # monthly 逻辑保持不变
             trading_days = pd.to_datetime([d.date() for d in schedule.index])
             month_ends = trading_days[trading_days.is_month_end]
-            return month_ends.date.tolist()
+            # Pylance has trouble with series.dt.date
+            return [d.date() for d in month_ends]
 
     except Exception as e:
         logger.error(f"无法从 pandas_market_calendars 获取日历: {e}. 回退到旧的 'B' 频率逻辑。")
@@ -411,10 +462,25 @@ def _find_missing_date_ranges(required_dates: List[date], cached_dates: List[dat
             # 重置状态
             start_of_current_range = None
             
-    if missing_ranges:
-        logger.info(f"找到 {len(missing_ranges)} 个缺失范围: {missing_ranges}")
+    if not missing_ranges:
+        return []
+
+    today = date.today()
+    adjusted_ranges = []
+    for start, end in missing_ranges:
+        if start > today:
+            # 如果整个范围都在未来，则跳过
+            continue
         
-    return missing_ranges
+        # 如果结束日期在未来，则将其截断为今天
+        adjusted_end = min(end, today)
+        adjusted_ranges.append((start, adjusted_end))
+
+    if adjusted_ranges != missing_ranges:
+        logger.info(f"原始缺失范围: {missing_ranges}")
+        logger.info(f"调整后的缺失范围 (不超过今天): {adjusted_ranges}")
+
+    return adjusted_ranges
 
 def _query_database(db: Session, ticker: str, period: PeriodType, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Optional[pd.DataFrame]:
     """

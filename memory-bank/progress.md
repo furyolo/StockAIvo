@@ -7,6 +7,10 @@ YYYY-MM-DD HH:MM:SS - Log of updates made.
 
 ## Completed Tasks
 
+* [2025-07-03 15:45:39] - **编码任务完成**: 成功在 `stockaivo/data_service.py` 中集成了交易日历检查，以避免在非交易日进行不必要的数据请求。
+* [2025-07-03 15:03:15] - **编码任务完成**: 成功在 `stockaivo/data_service.py` 中实现了默认日期范围功能。
+
+* [2025-07-03 15:24:36] - **调试任务完成**: 修复了 `stockaivo/data_service.py` 中周线数据缺失范围计算可能超过今天日期的问题。
 * [2025-07-02 15:57:19] - **调试任务完成**: 修复了 `frontend/src/main.tsx` 中的 `[ts] Cannot find module './router'` 导入错误。通过更新 `frontend/tsconfig.json` 以移除过时的 Next.js 配置并使其与 Vite 兼容，解决了该问题。
 * [2025-07-02 15:54:28] - **配置**: 完成了将 Vite 开发服务器端口修改为 `4222` 的任务。
 * [2025-07-02 15:12:00] - **Architecture**: Finalized the decision to replace ECharts with TradingView Lightweight Charts. Updated `decisionLog.md` and `activeContext.md`.
@@ -117,3 +121,13 @@ YYYY-MM-DD HH:MM:SS - Log of updates made.
 * [2025-07-02 15:28:14] - **调试任务完成**: 修复了 `frontend/src/components/StockChart.tsx` 中的 `TypeError`。通过使用 `as any` 类型断言和遵循 `lightweight-charts` v5 的正确 API 模式，解决了运行时错误。
 
 * [2025-07-02 16:02:39] - **调试任务完成**: 修复了 http://localhost:4222/ 的空白页面问题。通过移除 `frontend/src/app/layout.tsx` 中无效的 `<html>` 和 `<body>` 标签，解决了该问题。
+- [2025-07-03 15:04:09] - START TDD Cycle: Add unit tests for `get_stock_data` default date functionality.
+- [2025-07-03 15:09:36] - END TDD Cycle: Added unit tests for `get_stock_data` default date functionality in `tests/test_data_service.py`. All 18 tests are now passing.
+- [2025-07-03 15:10:33] - START - Docs Writer: Update README.md with new API endpoint behavior for GET /stocks/{ticker}.
+- [2025-07-03 15:11:08] - END - Docs Writer: Update README.md with new API endpoint behavior for GET /stocks/{ticker}.
+- [2025-07-03 15:25:20] - START TDD Cycle: Add regression test for weekly data future date bug in `stockaivo/data_service.py`.
+- **[2025-07-03 15:32:02]** - **TDD Cycle (Completed)**: Added regression test `test_weekly_data_fetch_does_not_exceed_today` to `tests/test_data_service.py`. The test confirms that requests for weekly data extending into the future are correctly truncated to the current day. The test passed successfully after fixing mock implementation details.
+- [IN-PROGRESS] 2025-07-03 15:50:00 - Start TDD cycle for holiday check in `data_service.py`. Task: Add regression test to ensure non-trading day ranges are skipped.
+- [COMPLETED] 2025-07-03 15:55:00 - Finish TDD cycle for holiday check in `data_service.py`. Regression test `test_skips_fetching_for_holiday_only_range` added and passed.
+- [2025-07-03 16:59:44] - [docs-writer] - 启动了对 `README.md` 的全面审查和更新任务。
+- [2025-07-03 16:59:44] - [docs-writer] - 完成了对 `README.md` 的更新，使其全面反映了项目当前的架构、前后端设置、API端点和最新技术决策。
