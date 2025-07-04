@@ -71,7 +71,7 @@ const StockSearch: React.FC<StockSearchProps> = ({ onSelectStock }) => {
   };
 
   const handleSelectStock = (result: SearchResult) => {
-    setQuery(`${result.symbol} - ${result.name}`);
+    setQuery('');
     setShowResults(false);
     onSelectStock(result.symbol, result.name);
   };

@@ -6,6 +6,43 @@ This file records architectural and implementation decisions using a list format
 *
       
 ---
+### Decision (Architecture)
+[2025-07-04 16:43:58] - **Separate AI Analysis Endpoint into POST for Creation and GET for Streaming**
+
+**Rationale:**
+To resolve a "405 Method Not Allowed" error, the `/ai/analyze` endpoint's responsibilities were split. The previous design likely used a single endpoint for both initiating and streaming, causing method conflicts. The new design adheres more closely to RESTful principles:
+1.  **`POST /ai/analyze`**: A client sends a `POST` request to create a new resource, in this case, an AI analysis task. This is a non-idempotent action that starts a background process.
+2.  **`GET /ai/analyze`**: A client sends a `GET` request to retrieve the resource, which is the stream of analysis results from the created task. This is an idempotent action.
+
+This separation directly resolves the method conflict and creates a clearer, more predictable API interface for clients.
+
+**Implementation Details:**
+- The proposed implementation uses a global variable (`current_analysis_generator`) to store the state (the analysis generator) between the `POST` and `GET` calls.
+- **CRITICAL CAVEAT:** This state management approach is a proof-of-concept and is **NOT SUITABLE FOR PRODUCTION**. It is not thread-safe across multiple workers and can only handle one analysis task at a time for the entire application. A robust production solution would require a proper task queue system (e.g., Celery with a Redis or RabbitMQ broker) where the `POST` request returns a unique `task_id`, and the `GET` request uses this `task_id` to retrieve the results from a persistent or shared result backend.
+- **Affected File:** [`stockaivo/routers/ai.py`](stockaivo/routers/ai.py)
+---
+### Decision (Code)
+[2025-07-04 16:32:25] - **BugFix: Prevent Extra Search Request in StockSearch Component**
+
+**Rationale:**
+In the `StockSearch.tsx` component, when a user selected a stock from the search results, the `handleSelectStock` function would call `setQuery()` to update the input field's text. This state update would, in turn, trigger the `useEffect` hook that depends on the `query` state, causing an unnecessary and unintended additional search API request to be fired. This behavior was inefficient.
+
+The fix removes the `setQuery()` call from the `handleSelectStock` function. This prevents the `useEffect` hook from re-triggering the search after a selection has been made, resolving the bug. The responsibility for updating the UI or related state now lies with the parent component through the `onSelectStock` callback.
+
+**Details:**
+- **File:** [`frontend/src/components/StockSearch.tsx`](frontend/src/components/StockSearch.tsx)
+- **Change:** Removed the line `setQuery(...)` from the `handleSelectStock` function.
+---
+---
+### Decision (Code)
+[2025-07-03 21:23:00] - **Refactor: Remove Duplicate Stock Data Endpoint from main.py**
+
+**Rationale:**
+The `@app.get("/stock-data/{ticker}")` endpoint in `main.py` was functionally identical to the one defined in the dedicated router file `stockaivo/routers/stocks.py`. Maintaining duplicate code increases maintenance overhead and potential for inconsistencies. The removal centralizes the routing logic in the designated router, adhering to the project's modular architecture.
+
+**Details:**
+- **File:** `main.py`
+- **Change:** Removed the entire `get_stock_data_endpoint` function and its associated `@app.get` decorator (lines 236-293).
 ### Decision (Code)
 [2025-07-03 16:14:16] - **修复API日期格式并增强响应模型类型安全**
 

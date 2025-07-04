@@ -3,6 +3,7 @@ AI分析路由器 - 提供AI投资决策分析的API端点
 """
 
 import logging
+import asyncio
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -10,23 +11,30 @@ from typing import Optional
 from enum import Enum
 from datetime import date, timedelta
 
-from stockaivo.ai.orchestrator import run_ai_analysis
+from stockaivo.ai.orchestrator import run_ai_analysis, run_ai_analysis_stream
 
 logger = logging.getLogger(__name__)
 
 # 创建路由器
 router = APIRouter(prefix="/ai", tags=["AI分析"])
 
+# 移除全局状态管理，改为直接流式响应
+
 
 class DateRangeOptions(str, Enum):
     """预设的日期范围选项"""
+    # 日线数据选项
     PAST_30_DAYS = "past_30_days"
     PAST_60_DAYS = "past_60_days"
     PAST_90_DAYS = "past_90_days"
+    PAST_180_DAYS = "past_180_days"
+    PAST_1_YEAR = "past_1_year"
+
+    # 周线数据选项
     PAST_8_WEEKS = "past_8_weeks"
     PAST_16_WEEKS = "past_16_weeks"
     PAST_24_WEEKS = "past_24_weeks"
-    FULL_HISTORY = "full_history"
+    PAST_52_WEEKS = "past_52_weeks"
 
 
 class AnalysisRequest(BaseModel):
@@ -70,18 +78,17 @@ class NestedAnalysisRequest(BaseModel):
 
 
 @router.post("/analyze")
-async def stream_ai_analysis(nested_request: NestedAnalysisRequest):
+async def analyze_stock_stream(nested_request: NestedAnalysisRequest):
     """
-    启动并流式传输AI投资分析结果。
+    启动AI投资分析并流式返回结果。
 
-    此端点将实时返回每个AI Agent的分析结果。
-    您可以选择一个预
-    设的日期范围，或提供一个自定义的日期范围。
+    这是一个简化的单一端点，直接返回流式分析结果，
+    无需额外的GET请求。
     """
     try:
         request = nested_request.value
-        logger.info(f"收到AI流式分析请求: {request.ticker}, 日期选项: {request.date_range_option}, 自定义范围: {request.start_date}-{request.end_date}")
-        
+        logger.info(f"收到AI分析请求: {request.ticker}, 日期选项: {request.date_range_option}, 自定义范围: {request.start_date}-{request.end_date}")
+
         custom_date_range = None
         if request.start_date and request.end_date:
             custom_date_range = {
@@ -89,21 +96,34 @@ async def stream_ai_analysis(nested_request: NestedAnalysisRequest):
                 "end_date": request.end_date.isoformat()
             }
 
-        # 返回一个流式响应
-        return StreamingResponse(
-            run_ai_analysis(
-                ticker=request.ticker,
-                date_range_option=request.date_range_option.value if request.date_range_option else None,
-                custom_date_range=custom_date_range
-            ),
-            media_type="text/event-stream"
+        # 直接创建并返回流式响应
+        analysis_generator = run_ai_analysis_stream(
+            ticker=request.ticker,
+            date_range_option=request.date_range_option.value if request.date_range_option else None,
+            custom_date_range=custom_date_range
         )
-        
+
+        async def stream_wrapper():
+            """包装生成器以处理错误和清理"""
+            try:
+                async for event in analysis_generator:
+                    yield event
+            except asyncio.CancelledError:
+                logger.warning("客户端断开了连接，AI分析流已取消。")
+            except Exception as e:
+                logger.error(f"AI分析过程中发生错误: {e}")
+                error_event = f"data: {{'error': '分析过程中发生错误: {str(e)}'}}\n\n"
+                yield error_event
+            finally:
+                logger.info("AI分析流结束。")
+
+        return StreamingResponse(stream_wrapper(), media_type="text/event-stream")
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"启动AI流式分析失败: {e}")
+        logger.error(f"启动AI分析失败: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"启动AI流式分析失败: {str(e)}"
+            detail=f"启动AI分析失败: {str(e)}"
         )

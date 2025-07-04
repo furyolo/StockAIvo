@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import StockSearch from './components/StockSearch';
 import TradingViewChart from './components/TradingViewChart';
 import AIAnalysis from './components/AIAnalysis';
@@ -87,10 +87,10 @@ function App() {
           <StockSearch onSelectStock={handleSelectStock} />
         </div>
 
-        {/* 主要内容区域 */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 主要内容区域 - 上下布局 */}
+        <div className="space-y-6">
           {/* 图表区域 */}
-          <div className="lg:col-span-2">
+          <div className="w-full">
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -148,7 +148,7 @@ function App() {
           </div>
 
           {/* AI 分析区域 */}
-          <div className="lg:col-span-1">
+          <div className="w-full">
             <AIAnalysis selectedStock={selectedStock} stockName={stockName} />
           </div>
         </div>

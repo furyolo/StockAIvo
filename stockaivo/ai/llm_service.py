@@ -7,7 +7,7 @@ import os
 import httpx
 import requests
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, AsyncGenerator
 from pydantic import BaseModel
 import logging
 import google.generativeai as genai
@@ -69,13 +69,40 @@ class LLMService:
         else:
             return "LLM服务未正确配置"
 
+    async def invoke_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        """
+        调用LLM并返回流式文本响应。
+
+        Args:
+            prompt: 发送给LLM的提示词。
+
+        Yields:
+            LLM的流式文本响应片段。
+        """
+        if self.mode == "openai":
+            # 尝试真正的流式请求
+            async for chunk in self._invoke_openai_stream(prompt):
+                yield chunk
+        elif self.mode == "gemini":
+            # Gemini暂不支持流式，回退到一次性返回
+            result = await self._invoke_gemini(prompt)
+            # 模拟流式返回，按句子分割
+            import asyncio
+            sentences = result.split('。')
+            for sentence in sentences:
+                if sentence.strip():
+                    yield sentence + '。'
+                    await asyncio.sleep(0.2)  # 模拟流式延迟
+        else:
+            yield "LLM服务未正确配置"
+
     async def _invoke_openai(self, prompt: str) -> str:
         # 先尝试使用 requests 库（同步）
         try:
             request_data = {
                 "model": self.openai_model_name,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 1000
+                "max_tokens": 4000
             }
             logger.info(f"Sending request to OpenAI API using requests: model={self.openai_model_name}, prompt_length={len(prompt)}")
 
@@ -109,7 +136,7 @@ class LLMService:
             request_data = {
                 "model": self.openai_model_name,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 1000
+                "max_tokens": 4000
             }
             logger.info(f"Sending request to OpenAI API using httpx: model={self.openai_model_name}, prompt_length={len(prompt)}")
 
@@ -143,6 +170,99 @@ class LLMService:
         except Exception as e:
             logger.error(f"调用LLM时发生意外错误: {e}")
             return f"Error calling LLM: {str(e)}"
+
+    async def _invoke_openai_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        """
+        流式调用OpenAI兼容API，如果失败则回退到非流式并模拟流式输出
+        """
+        # 首先尝试使用requests进行流式请求（与非流式请求保持一致）
+        try:
+            request_data = {
+                "model": self.openai_model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 4000,
+                "stream": True
+            }
+            logger.info(f"Sending streaming request to OpenAI API: model={self.openai_model_name}, prompt_length={len(prompt)}")
+
+            # 使用requests进行流式请求
+            import asyncio
+            import requests
+
+            def stream_request():
+                response = requests.post(
+                    f"{self.openai_api_base}/chat/completions",
+                    json=request_data,
+                    headers={"Authorization": f"Bearer {self.openai_api_key}"},
+                    timeout=60.0,
+                    stream=True
+                )
+                response.raise_for_status()
+                return response
+
+            response = await asyncio.to_thread(stream_request)
+            logger.info(f"Streaming response status: {response.status_code}")
+
+            # 处理流式响应，确保正确的UTF-8编码
+            for line_bytes in response.iter_lines():
+                if line_bytes:
+                    # 手动解码为UTF-8字符串
+                    try:
+                        line = line_bytes.decode('utf-8')
+                    except UnicodeDecodeError:
+                        # 如果UTF-8解码失败，尝试其他编码
+                        try:
+                            line = line_bytes.decode('latin-1')
+                        except UnicodeDecodeError:
+                            continue  # 跳过无法解码的行
+
+                    if line.startswith("data: "):
+                        data_str = line[6:]  # 移除 "data: " 前缀
+
+                        if data_str.strip() == "[DONE]":
+                            break
+
+                        try:
+                            data = json.loads(data_str)
+                            if "choices" in data and len(data["choices"]) > 0:
+                                delta = data["choices"][0].get("delta", {})
+                                if "content" in delta:
+                                    content = delta["content"]
+                                    if content:
+                                        yield content
+                        except json.JSONDecodeError:
+                            # 跳过无法解析的行
+                            continue
+
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"流式调用HTTP错误 (requests): {e.response.status_code} - {e.response.text}")
+            logger.warning(f"流式调用失败，回退到非流式调用: {e}")
+            # 回退到非流式调用并模拟流式输出
+            async for chunk in self._fallback_to_simulated_stream(prompt):
+                yield chunk
+        except Exception as e:
+            logger.error(f"流式调用错误 (requests): {type(e).__name__}: {e}")
+            logger.warning(f"流式调用失败，回退到非流式调用: {e}")
+            # 回退到非流式调用并模拟流式输出
+            async for chunk in self._fallback_to_simulated_stream(prompt):
+                yield chunk
+
+    async def _fallback_to_simulated_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        """
+        回退到非流式调用并模拟流式输出
+        """
+        try:
+            result = await self._invoke_openai(prompt)
+            # 模拟流式输出：按句子分割
+            import asyncio
+            sentences = result.split('。')
+            for sentence in sentences:
+                if sentence.strip():
+                    yield sentence + '。'
+                    await asyncio.sleep(0.1)  # 模拟流式延迟
+        except Exception as fallback_error:
+            logger.error(f"非流式回退也失败: {fallback_error}")
+            yield f"Error: {str(fallback_error)}"
 
 # 单例模式
 llm_service = LLMService()

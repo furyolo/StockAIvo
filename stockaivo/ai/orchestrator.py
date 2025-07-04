@@ -12,6 +12,8 @@ from stockaivo.ai.agents import (
     fundamental_analysis_agent,
     news_sentiment_analysis_agent,
     synthesis_agent,
+    technical_analysis_agent_stream,
+    synthesis_agent_stream,
 )
 from typing import AsyncGenerator
 import json
@@ -81,14 +83,30 @@ class LangGraphOrchestrator:
         async for output in self.app.astream(initial_state):
             for key, value in output.items():
                 if value is None: continue
-                # Yield a JSON string for each agent's output
-                agent_name = key.replace('_agent', '')
-                result_data = {
-                    "agent": agent_name,
-                    "output": value.get("analysis_results", {}).get(agent_name) or value.get("final_report")
-                }
-                if result_data["output"]: # Only yield if there is content
-                    yield f"data: {json.dumps(result_data)}\n\n"
+
+                # Handle different types of outputs
+                if key == "synthesis":
+                    # For synthesis agent, output the final report
+                    final_report = value.get("final_report")
+                    if final_report:
+                        result_data = {
+                            "agent": "synthesis",
+                            "output": final_report
+                        }
+                        yield f"data: {json.dumps(result_data)}\n\n"
+                else:
+                    # For other agents, output their analysis results
+                    agent_name = key.replace('_agent', '')
+                    analysis_results = value.get("analysis_results", {})
+                    agent_output = analysis_results.get(agent_name)
+
+                    # 只输出非空的分析结果
+                    if agent_output is not None:
+                        result_data = {
+                            "agent": agent_name,
+                            "output": agent_output
+                        }
+                        yield f"data: {json.dumps(result_data)}\n\n"
             
         print("\n---AI Analysis Complete---")
 
@@ -102,6 +120,124 @@ async def run_ai_analysis(ticker: str, date_range_option: str | None = None, cus
     and yields the output of each agent as a JSON string.
     """
     async for chunk in orchestrator.run_analysis(ticker, date_range_option, custom_date_range):
+        yield chunk
+
+
+# ==================== 流式版本的Orchestrator ====================
+
+class StreamingLangGraphOrchestrator:
+    """
+    流式版本的多智能体股票分析工作流编排器
+    """
+    def __init__(self):
+        pass
+
+    async def run_analysis_stream(self, ticker: str, date_range_option: str | None = None, custom_date_range: dict | None = None) -> AsyncGenerator[str, None]:
+        """
+        运行流式AI分析工作流
+        """
+        print(f"\n=== Starting Streaming AI Analysis for {ticker} ===")
+
+        # 初始化状态
+        initial_state = {
+            "ticker": ticker,
+            "date_range_option": date_range_option,
+            "custom_date_range": custom_date_range,
+            "raw_data": {},
+            "analysis_results": {}
+        }
+
+        # 1. 数据收集阶段（非流式）
+        print("\n---Phase 1: Data Collection---")
+        state = await data_collection_agent(initial_state)
+
+        # 发送数据收集结果
+        data_collector_result = state.get("analysis_results", {}).get("data_collector")
+        if data_collector_result:
+            result_data = {
+                "agent": "data_collector",
+                "output": data_collector_result
+            }
+            yield f"data: {json.dumps(result_data)}\n\n"
+
+        # 检查是否有基本面数据和新闻数据
+        raw_data = state.get("raw_data", {})
+        has_fundamental_data = any(key in raw_data for key in ['financials', 'company_info', 'earnings'])
+        has_news_data = any(key in raw_data for key in ['news', 'sentiment'])
+
+        # 2. 技术分析阶段（流式）
+        print("\n---Phase 2: Technical Analysis (Streaming)---")
+        async for chunk in technical_analysis_agent_stream(state):
+            analysis_results = chunk.get("analysis_results", {})
+            technical_result = analysis_results.get("technical_analyst")
+            if technical_result:
+                # 更新状态
+                state["analysis_results"]["technical_analyst"] = technical_result
+
+                # 发送流式结果
+                result_data = {
+                    "agent": "technical_analyst",
+                    "output": technical_result,
+                    "streaming": True
+                }
+                yield f"data: {json.dumps(result_data)}\n\n"
+
+        # 3. 基本面分析阶段（如果有数据）
+        if has_fundamental_data:
+            print("\n---Phase 3: Fundamental Analysis---")
+            fundamental_result = await fundamental_analysis_agent(state)
+            state.update(fundamental_result)
+
+            agent_output = fundamental_result.get("analysis_results", {}).get("fundamental_analyst")
+            if agent_output:
+                result_data = {
+                    "agent": "fundamental_analyst",
+                    "output": agent_output
+                }
+                yield f"data: {json.dumps(result_data)}\n\n"
+        else:
+            print("\n---Skipping Fundamental Analysis (no data)---")
+
+        # 4. 新闻情感分析阶段（如果有数据）
+        if has_news_data:
+            print("\n---Phase 4: News Sentiment Analysis---")
+            news_result = await news_sentiment_analysis_agent(state)
+            state.update(news_result)
+
+            agent_output = news_result.get("analysis_results", {}).get("news_sentiment_analyst")
+            if agent_output:
+                result_data = {
+                    "agent": "news_sentiment_analyst",
+                    "output": agent_output
+                }
+                yield f"data: {json.dumps(result_data)}\n\n"
+        else:
+            print("\n---Skipping News Sentiment Analysis (no data)---")
+
+        # 5. 综合分析阶段（流式）
+        print("\n---Phase 5: Synthesis (Streaming)---")
+        async for chunk in synthesis_agent_stream(state):
+            final_report = chunk.get("final_report")
+            if final_report:
+                result_data = {
+                    "agent": "synthesis",
+                    "output": final_report,
+                    "streaming": True
+                }
+                yield f"data: {json.dumps(result_data)}\n\n"
+
+        print("\n---Streaming AI Analysis Complete---")
+
+
+# 流式orchestrator实例
+streaming_orchestrator = StreamingLangGraphOrchestrator()
+
+# 流式分析主函数
+async def run_ai_analysis_stream(ticker: str, date_range_option: str | None = None, custom_date_range: dict | None = None) -> AsyncGenerator[str, None]:
+    """
+    运行流式AI分析工作流并产生结果
+    """
+    async for chunk in streaming_orchestrator.run_analysis_stream(ticker, date_range_option, custom_date_range):
         yield chunk
 
 # Example usage for testing

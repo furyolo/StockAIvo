@@ -233,65 +233,6 @@ async def persist_data_endpoint(background_tasks: BackgroundTasks, db: Session =
         )
 
 
-@app.get("/stock-data/{ticker}", tags=["数据查询"])
-async def get_stock_data_endpoint(
-    ticker: str,
-    period: PeriodType = "daily",
-    db: Session = Depends(get_db)
-):
-    """
-    获取股票数据端点
-    
-    Args:
-        ticker: 股票代码 (例如: AAPL)
-        period: 时间周期 (daily, weekly, hourly)
-        db: 数据库会话依赖项
-        
-    Returns:
-        Dict: 股票数据
-    """
-    try:
-        # 验证ticker参数
-        ticker = ticker.upper().strip()
-        if not ticker or len(ticker) > 10:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="无效的股票代码"
-            )
-        
-        logger.info(f"获取股票数据请求: {ticker}_{period}")
-        
-        # 调用数据服务获取数据
-        data = await get_stock_data(db, ticker, period)
-        
-        if data is None or data.empty:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"未找到股票 {ticker} 的 {period} 数据"
-            )
-        
-        # 转换DataFrame为字典格式返回
-        response = {
-            "ticker": ticker,
-            "period": period,
-            "data_count": len(data),
-            "data": data.to_dict('records'),
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        logger.info(f"成功返回股票数据: {ticker}_{period}, 记录数: {len(data)}")
-        return response
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取股票数据失败 {ticker}_{period}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取股票数据失败: {str(e)}"
-        )
-
-
 @app.get("/cache-stats", tags=["缓存管理"])
 async def get_cache_statistics():
     """

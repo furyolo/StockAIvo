@@ -7,6 +7,8 @@ YYYY-MM-DD HH:MM:SS - Log of updates made.
 
 ## Completed Tasks
 
+* [2025-07-04 16:32:52] - **调试任务完成**: 修复了 `frontend/src/components/StockSearch.tsx` 中的一个 bug，该 bug 导致在从搜索结果中选择股票后会触发一次额外的、不必要的搜索请求。
+* [2025-07-03 21:23:00] - **编码任务完成**: 成功从 `main.py` 中移除了重复的股票数据端点，以统一路由逻辑。
 * [2025-07-03 15:45:39] - **编码任务完成**: 成功在 `stockaivo/data_service.py` 中集成了交易日历检查，以避免在非交易日进行不必要的数据请求。
 * [2025-07-03 15:03:15] - **编码任务完成**: 成功在 `stockaivo/data_service.py` 中实现了默认日期范围功能。
 
@@ -131,3 +133,4 @@ YYYY-MM-DD HH:MM:SS - Log of updates made.
 - [COMPLETED] 2025-07-03 15:55:00 - Finish TDD cycle for holiday check in `data_service.py`. Regression test `test_skips_fetching_for_holiday_only_range` added and passed.
 - [2025-07-03 16:59:44] - [docs-writer] - 启动了对 `README.md` 的全面审查和更新任务。
 - [2025-07-03 16:59:44] - [docs-writer] - 完成了对 `README.md` 的更新，使其全面反映了项目当前的架构、前后端设置、API端点和最新技术决策。
+* [2025-07-04 16:45:52] - **Completed:** Refactored `/ai/analyze` endpoint in `stockaivo/routers/ai.py` into separate POST and GET methods for task creation and streaming, following the approved architectural decision.

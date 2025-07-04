@@ -7,6 +7,8 @@
 
 ## Current Focus
 
+* [2025-07-04 16:32:39] - **Bug Fix**: Corrected an issue in `frontend/src/components/StockSearch.tsx` where selecting a stock from search results triggered an unnecessary extra search request. The `setQuery` call within the `handleSelectStock` function was removed to prevent the `useEffect` hook from re-firing the search.
+* [2025-07-03 21:23:00] - **Refactor**: Removed the duplicate stock data endpoint (`@app.get("/stock-data/{ticker}")`) from `main.py` to centralize routing logic in `stockaivo/routers/stocks.py`.
 * [2025-07-03 15:45:27] - **功能增强**: 优化了 `stockaivo/data_service.py` 的数据获取逻辑。在为缺失日期范围请求远程API之前，系统现在会使用 `pandas-market-calendars` 库检查该范围内是否存在至少一个交易日。如果范围内全是节假日或周末，则会跳过该范围，避免了不必要的API调用。
 * [2025-07-03 15:03:15] - **功能增强**: 在 `stockaivo/data_service.py` 的 `get_stock_data` 函数中实现了默认日期范围逻辑。当未提供开始和结束日期时，系统现在会为 `daily` 周期应用30天默认值，为 `weekly` 周期应用180天默认值。
 
@@ -142,3 +144,4 @@
 
 * [2025-07-02 16:06:18] - [Debug Status Update: Fix Confirmation] Resolved blank page issue by refactoring the layout and page components. Moved the main page structure (Header, main container) from `page.tsx` to `layout.tsx` to create a proper layout hierarchy for `react-router-dom`, and simplified `page.tsx` to only contain the page-specific content.
 * [2025-07-02 16:02:30] - [Debug Status Update: Fix Confirmation] Resolved blank page issue by correcting invalid DOM structure in `frontend/src/app/layout.tsx`. The component was incorrectly rendering `<html>` and `<body>` tags.
+* [2025-07-04 16:46:03] - **Code Change:** Implemented the separation of the `/ai/analyze` endpoint in [`stockaivo/routers/ai.py`](stockaivo/routers/ai.py) into `POST` for creation and `GET` for streaming. This aligns with the decision recorded in the `decisionLog.md`. The task is now complete.

@@ -33,8 +33,6 @@ logger = logging.getLogger(__name__)
 PeriodType = Literal["daily", "weekly", "hourly"]
 
 
-from .database_writer import save_dataframe_to_db
-
 def _filter_dataframe_by_date(df: pd.DataFrame, period: PeriodType, start_date: Optional[str], end_date: Optional[str]) -> pd.DataFrame:
     """根据日期范围过滤DataFrame"""
     if df.empty or (not start_date and not end_date):
