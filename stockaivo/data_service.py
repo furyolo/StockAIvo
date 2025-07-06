@@ -101,17 +101,20 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
     if start_date is None and end_date is None:
         logger.info(f"未提供日期范围，为 '{period}' 周期应用默认值。")
         today = date.today()
+
+        # 先计算end_date_obj，如果遇到休市日，则继续往前直到非休市日为止
+        yesterday = today - timedelta(days=1)
+        end_date_obj = _get_latest_trading_day(yesterday)
+
         if period == "daily":
-            # 默认查询过去30天的数据
-            start_date_obj = today - timedelta(days=30)
-            end_date_obj = today - timedelta(days=1)
+            # start_date_obj在end_date_obj基础上往前30天
+            start_date_obj = end_date_obj - timedelta(days=30)
             start_date = start_date_obj.strftime('%Y-%m-%d')
             end_date = end_date_obj.strftime('%Y-%m-%d')
             logger.info(f"日线数据默认范围设置为: {start_date} -> {end_date}")
         elif period == "weekly":
-            # 默认查询过去180天的数据
-            start_date_obj = today - timedelta(days=180)
-            end_date_obj = today - timedelta(days=1)
+            # start_date_obj在end_date_obj基础上往前180天
+            start_date_obj = end_date_obj - timedelta(days=180)
             start_date = start_date_obj.strftime('%Y-%m-%d')
             end_date = end_date_obj.strftime('%Y-%m-%d')
             logger.info(f"周线数据默认范围设置为: {start_date} -> {end_date}")
@@ -359,6 +362,38 @@ def _get_date_col(period: PeriodType) -> str:
         return 'hour_timestamp'
     # For daily and weekly
     return 'date'
+
+
+def _get_latest_trading_day(target_date: date) -> date:
+    """
+    获取指定日期或之前的最近交易日
+
+    Args:
+        target_date (date): 目标日期
+
+    Returns:
+        date: 最近的交易日
+    """
+    try:
+        # 使用NYSE日历获取交易日
+        nyse_calendar = mcal.get_calendar('NYSE')
+
+        # 从目标日期往前查找30天，确保能找到交易日
+        search_start = target_date - timedelta(days=30)
+        schedule = nyse_calendar.schedule(start_date=search_start, end_date=target_date)
+
+        if schedule.empty:
+            logger.warning(f"在 {search_start} 到 {target_date} 范围内未找到交易日，使用目标日期")
+            return target_date
+
+        # 获取最后一个交易日
+        latest_trading_day = schedule.index[-1].date()
+        logger.info(f"目标日期 {target_date} 的最近交易日: {latest_trading_day}")
+        return latest_trading_day
+
+    except Exception as e:
+        logger.warning(f"获取最近交易日时出错: {e}，使用目标日期")
+        return target_date
 
 def _get_required_dates(period: PeriodType, start_date_str: Optional[str], end_date_str: Optional[str]) -> List[date]:
     """

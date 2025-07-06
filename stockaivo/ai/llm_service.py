@@ -102,7 +102,7 @@ class LLMService:
             request_data = {
                 "model": self.openai_model_name,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 4000
+                "max_tokens": 6000
             }
             logger.info(f"Sending request to OpenAI API using requests: model={self.openai_model_name}, prompt_length={len(prompt)}")
 
@@ -136,7 +136,7 @@ class LLMService:
             request_data = {
                 "model": self.openai_model_name,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 4000
+                "max_tokens": 6000
             }
             logger.info(f"Sending request to OpenAI API using httpx: model={self.openai_model_name}, prompt_length={len(prompt)}")
 
@@ -180,7 +180,7 @@ class LLMService:
             request_data = {
                 "model": self.openai_model_name,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 4000,
+                "max_tokens": 6000,
                 "stream": True
             }
             logger.info(f"Sending streaming request to OpenAI API: model={self.openai_model_name}, prompt_length={len(prompt)}")

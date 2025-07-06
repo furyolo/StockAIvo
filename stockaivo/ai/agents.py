@@ -21,20 +21,7 @@ def _calculate_date_range(period: PeriodType, date_range_option: Optional[str], 
     if custom_date_range and custom_date_range.get('start_date') and custom_date_range.get('end_date'):
         return custom_date_range['start_date'], custom_date_range['end_date']
 
-    # 2. 如果没有提供任何选项，则应用新的默认逻辑
-    if not date_range_option:
-        today = date.today()
-        yesterday = today - timedelta(days=1)
-        if period == 'daily':
-            start_date = today - timedelta(days=30)
-            return start_date.isoformat(), yesterday.isoformat()
-        elif period == 'weekly':
-            start_date = today - timedelta(days=180)
-            return start_date.isoformat(), yesterday.isoformat()
-        return None, None # 其他周期默认全历史
-
-    # 3. 处理预设选项
-
+    # 2. 处理预设选项
     today = date.today()
     yesterday = today - timedelta(days=1)
     start_date = None
@@ -94,7 +81,7 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
         for period in periods_to_fetch:
             # 为每个周期单独计算日期范围
             start_date, end_date = _calculate_date_range(period, date_range_option, custom_date_range)
-            print(f"  - For {period} data, calculated range: {start_date or 'history start'} to {end_date or 'today'}")
+            print(f"  - For {period} data, calculated range: {start_date or 'default start'} to {end_date or 'default end'}")
             
             task = get_stock_data(
                 db=db,
