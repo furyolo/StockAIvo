@@ -6,7 +6,8 @@
 *
 
 ## Current Focus
-
+* [2025-07-07 12:41:08] - **Bug Fix**: Corrected a test failure in `TestTechnicalIndicator.test_calculate_rsi`. The `calculate_rsi` function in `stockaivo/ai/technical_indicator.py` now reindexes its output to match the input Series' length and index, resolving the `AssertionError: assert 99 == 100`.
+* [2025-07-07 12:35:47] - **Bug Fix**: Corrected a Pylance type error and improved the RSI calculation logic in `stockaivo/ai/technical_indicator.py`. The `delta` series is now explicitly cast to float, the calculation uses the standard EMA method, and a division-by-zero error is prevented.
 * [2025-07-04 16:32:39] - **Bug Fix**: Corrected an issue in `frontend/src/components/StockSearch.tsx` where selecting a stock from search results triggered an unnecessary extra search request. The `setQuery` call within the `handleSelectStock` function was removed to prevent the `useEffect` hook from re-firing the search.
 * [2025-07-03 21:23:00] - **Refactor**: Removed the duplicate stock data endpoint (`@app.get("/stock-data/{ticker}")`) from `main.py` to centralize routing logic in `stockaivo/routers/stocks.py`.
 * [2025-07-03 15:45:27] - **功能增强**: 优化了 `stockaivo/data_service.py` 的数据获取逻辑。在为缺失日期范围请求远程API之前，系统现在会使用 `pandas-market-calendars` 库检查该范围内是否存在至少一个交易日。如果范围内全是节假日或周末，则会跳过该范围，避免了不必要的API调用。

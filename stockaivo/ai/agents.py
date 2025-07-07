@@ -14,6 +14,7 @@ from stockaivo.database import get_db
 from stockaivo.ai.state import GraphState
 from stockaivo.ai.llm_service import llm_service
 from stockaivo.ai.tools import llm_tool
+from stockaivo.ai.technical_indicator import TechnicalIndicator
 
 def _calculate_date_range(period: PeriodType, date_range_option: Optional[str], custom_date_range: Optional[dict]) -> tuple[Optional[str], Optional[str]]:
     """
@@ -155,32 +156,125 @@ def _get_target_friday_date() -> str:
 
     return target_date.strftime("%Y-%m-%d")
 
-def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_price_str: str) -> str:
-    """构建技术分析的提示词"""
+def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_price_str: str,
+                                   daily_indicators: list[str] | None = None, weekly_indicators: list[str] | None = None) -> str:
+    """构建技术分析的提示词，根据实际计算的指标动态调整"""
     target_date = _get_target_friday_date()
+
+    # 构建技术指标说明
+    def build_indicators_description(indicators: list[str]) -> str:
+        if not indicators:
+            return "- 由于数据量不足，未计算技术指标"
+
+        descriptions = []
+
+        # 移动平均线
+        ma_indicators = [ind for ind in indicators if ind.startswith('MA')]
+        if ma_indicators:
+            ma_list = ', '.join(ma_indicators)
+            descriptions.append(f"- **移动平均线:** {ma_list}")
+
+        # RSI
+        if 'RSI' in indicators:
+            descriptions.append("- **RSI:** 相对强弱指标（14日周期）")
+
+        # MACD
+        macd_indicators = [ind for ind in indicators if ind in ['MACD', 'Signal', 'Histogram']]
+        if macd_indicators:
+            descriptions.append("- **MACD:** MACD线、信号线、柱状图")
+
+        # 布林带
+        bb_indicators = [ind for ind in indicators if ind.startswith('BB_')]
+        if bb_indicators:
+            descriptions.append("- **布林带:** 中轨（BB_Middle）、上轨（BB_Upper）、下轨（BB_Lower）")
+
+        # ATR
+        if 'ATR' in indicators:
+            descriptions.append("- **ATR:** 平均真实波幅（14日周期）")
+
+        # 成交量指标
+        volume_indicators = [ind for ind in indicators if ind in ['Volume_MA', 'Volume_Ratio']]
+        if volume_indicators:
+            descriptions.append("- **成交量指标:** 成交量移动平均（Volume_MA）、成交量比率（Volume_Ratio）")
+
+        # 波动率
+        if 'Volatility' in indicators:
+            descriptions.append("- **波动率:** 过去20日的价格波动率")
+
+        return '\n    '.join(descriptions) if descriptions else "- 由于数据量不足，未计算技术指标"
+
+    # 获取日线和周线的指标描述
+    daily_indicators_desc = build_indicators_description(daily_indicators or [])
+    weekly_indicators_desc = build_indicators_description(weekly_indicators or [])
+
+    # 构建分析要求，根据可用指标调整
+    analysis_requirements = []
+
+    # 基础价格分析（总是可用）
+    analysis_requirements.append("1.  **价格趋势分析:** 结合日线和周线图，分析当前的短期趋势（上升、下降、横盘），并识别到 {target_date} 前可能的趋势变化。")
+
+    # 移动平均线分析
+    if any(ind.startswith('MA') for ind in (daily_indicators or [])):
+        analysis_requirements.append("2.  **移动平均线分析:** 利用移动平均线的排列和价格相对位置，判断趋势强度和方向。")
+
+    # 技术指标分析
+    available_indicators = set((daily_indicators or []) + (weekly_indicators or []))
+    if available_indicators:
+        indicator_analysis = ["3.  **技术指标分析:** 重点分析以下可用技术指标的信号："]
+
+        if 'RSI' in available_indicators:
+            indicator_analysis.append("       - RSI是否处于超买（>70）或超卖（<30）区域")
+
+        if any(ind in available_indicators for ind in ['MACD', 'Signal', 'Histogram']):
+            indicator_analysis.append("       - MACD线与信号线的交叉情况，柱状图的变化趋势")
+
+        if any(ind.startswith('BB_') for ind in available_indicators):
+            indicator_analysis.append("       - 价格与布林带的相对位置，是否触及上下轨")
+
+        if any(ind.startswith('MA') for ind in available_indicators):
+            indicator_analysis.append("       - 移动平均线的多头或空头排列")
+
+        analysis_requirements.append('\n    '.join(indicator_analysis))
+
+    # 成交量分析
+    if any(ind in available_indicators for ind in ['Volume_MA', 'Volume_Ratio']):
+        analysis_requirements.append("4.  **交易量分析:** 利用成交量比率（Volume_Ratio）分析近期交易量的异常变化，结合价格变动判断短期趋势的强度和可持续性。")
+
+    # 波动率和风险分析
+    if any(ind in available_indicators for ind in ['ATR', 'Volatility']):
+        analysis_requirements.append("5.  **波动率和风险:** 分析ATR和波动率指标，评估当前市场的波动程度和风险水平。")
+
+    # 短期前景（总是包含）
+    analysis_requirements.append(f"6.  **短期前景:** 提供一个简洁的总结，重点关注到 {target_date} 前的短期交易机会和风险点，并给出具体的进出场建议。")
+
     return f"""
-    你是一位专业的股票技术分析师。请根据以下为股票代码 {ticker} 提供的日线和周线价格及交易量数据，进行深入的短期技术分析。
+    你是一位专业的股票技术分析师。请根据以下为股票代码 {ticker} 提供的日线和周线价格、交易量数据以及已计算的技术指标，进行深入的短期技术分析。
 
     **分析时间范围:** 重点关注到 {target_date}（最近的周五或交易日）之前的短期走势和交易机会。
 
-    **分析要求:**
-    1.  **短期趋势分析:** 结合日线和周线图，判断当前的短期趋势（上升、下降、横盘），并识别到 {target_date} 前可能的趋势变化。
-    2.  **关键水平:** 识别短期内的关键支撑位和阻力位，特别是在 {target_date} 前可能触及的价格水平。
-    3.  **技术指标 (可选):** 如果可能，请提及一些常见的技术指标（如移动平均线, RSI）在短期内的表现和信号。
-    4.  **交易量分析:** 分析近期交易量与价格变动的关系，判断短期趋势的强度。
-    5.  **短期前景:** 提供一个简洁的总结，重点关注到 {target_date} 前的短期交易机会和风险点。
+    **日线数据技术指标:**
+    {daily_indicators_desc}
 
-    **日线原始数据:**
+    **周线数据技术指标:**
+    {weekly_indicators_desc}
+
+    **分析要求:**
+    {chr(10).join(f'    {req}' for req in analysis_requirements)}
+
+    **日线数据（含技术指标）:**
     {daily_price_str}
 
-    **周线原始数据:**
+    **周线数据（含技术指标）:**
     {weekly_price_str}
 
-    请提供你的短期技术分析报告，重点关注到 {target_date} 前的交易机会。
+    请基于上述可用的技术指标数据提供你的专业短期技术分析报告，重点关注到 {target_date} 前的交易机会。
     """
 
-def _process_technical_analysis_data(state: GraphState) -> tuple[str, str, str]:
-    """处理技术分析所需的数据，返回ticker和处理后的价格数据字符串"""
+def _process_technical_analysis_data(state: GraphState) -> tuple[str, str, str, list[str], list[str]]:
+    """处理技术分析所需的数据，返回ticker、处理后的价格数据字符串和实际计算的技术指标列表"""
+    import logging
+    logger = logging.getLogger(__name__)
+
     ticker = state.get("ticker", "UNKNOWN_TICKER")
     raw_data = state.get("raw_data", {})
 
@@ -188,9 +282,25 @@ def _process_technical_analysis_data(state: GraphState) -> tuple[str, str, str]:
     daily_prices_data = raw_data.get("daily_prices")
     weekly_prices_data = raw_data.get("weekly_prices")
 
+    # 初始化技术指标计算器
+    technical_indicator = TechnicalIndicator()
+
+    daily_indicators = []
+    weekly_indicators = []
+
     # 处理日线数据 - 使用完整数据集
     if daily_prices_data:
         daily_price_df = pd.DataFrame(daily_prices_data['data'], columns=daily_prices_data['columns'], index=daily_prices_data['index'])
+
+        # 计算技术指标
+        try:
+            logger.info(f"开始计算{ticker}日线数据的技术指标")
+            daily_price_df = technical_indicator.calculate_indicators(daily_price_df)
+            daily_indicators = technical_indicator.get_calculated_indicators(daily_price_df)
+            logger.info(f"日线数据完成，共{len(daily_indicators)}个指标: {', '.join(daily_indicators)}")
+        except Exception as e:
+            logger.error(f"计算{ticker}日线技术指标时出错: {str(e)}")
+
         daily_price_str = daily_price_df.to_string()
     else:
         daily_price_str = "无日线数据"
@@ -198,11 +308,21 @@ def _process_technical_analysis_data(state: GraphState) -> tuple[str, str, str]:
     # 处理周线数据 - 使用完整数据集
     if weekly_prices_data:
         weekly_price_df = pd.DataFrame(weekly_prices_data['data'], columns=weekly_prices_data['columns'], index=weekly_prices_data['index'])
+
+        # 计算技术指标
+        try:
+            logger.info(f"开始计算{ticker}周线数据的技术指标")
+            weekly_price_df = technical_indicator.calculate_indicators(weekly_price_df)
+            weekly_indicators = technical_indicator.get_calculated_indicators(weekly_price_df)
+            logger.info(f"周线数据完成，共{len(weekly_indicators)}个指标: {', '.join(weekly_indicators)}")
+        except Exception as e:
+            logger.error(f"计算{ticker}周线技术指标时出错: {str(e)}")
+
         weekly_price_str = weekly_price_df.to_string()
     else:
         weekly_price_str = "无周线数据"
 
-    return ticker, daily_price_str, weekly_price_str
+    return ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators
 
 
 def _check_fundamental_data_and_get_ticker(state: GraphState) -> tuple[bool, str]:
@@ -338,10 +458,10 @@ async def technical_analysis_agent(state: GraphState) -> Dict[str, Any]:
     print("\n---Executing Technical Analysis Agent---")
 
     # 使用共用函数处理数据
-    ticker, daily_price_str, weekly_price_str = _process_technical_analysis_data(state)
+    ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators = _process_technical_analysis_data(state)
 
     # 使用共享的prompt构建函数
-    prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str)
+    prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators)
     analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": prompt}})
 
     return {"analysis_results": {"technical_analyst": analysis_result}}
@@ -420,10 +540,10 @@ async def technical_analysis_agent_stream(state: GraphState) -> AsyncGenerator[D
     print("\n---Executing Technical Analysis Agent (Stream)---")
 
     # 使用共用函数处理数据
-    ticker, daily_price_str, weekly_price_str = _process_technical_analysis_data(state)
+    ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators = _process_technical_analysis_data(state)
 
     # 使用共享的prompt构建函数
-    prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str)
+    prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators)
 
     # 流式生成分析结果
     accumulated_result = ""

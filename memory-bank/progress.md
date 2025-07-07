@@ -6,7 +6,8 @@ YYYY-MM-DD HH:MM:SS - Log of updates made.
 *
 
 ## Completed Tasks
-
+* [2025-07-07 12:41:08] - **调试任务完成**: 修复了 `TestTechnicalIndicator.test_calculate_rsi` 中的测试失败。通过在 `stockaivo/ai/technical_indicator.py` 的 `calculate_rsi` 函数中添加 `.reindex()`，确保了输出序列与输入序列的长度和索引一致。
+* [2025-07-07 12:35:55] - **调试任务完成**: 修复了 `stockaivo/ai/technical_indicator.py` 中的 Pylance 类型错误，并重构了 RSI 计算逻辑以提高准确性和健壮性。
 * [2025-07-04 16:32:52] - **调试任务完成**: 修复了 `frontend/src/components/StockSearch.tsx` 中的一个 bug，该 bug 导致在从搜索结果中选择股票后会触发一次额外的、不必要的搜索请求。
 * [2025-07-03 21:23:00] - **编码任务完成**: 成功从 `main.py` 中移除了重复的股票数据端点，以统一路由逻辑。
 * [2025-07-03 15:45:39] - **编码任务完成**: 成功在 `stockaivo/data_service.py` 中集成了交易日历检查，以避免在非交易日进行不必要的数据请求。
@@ -134,3 +135,4 @@ YYYY-MM-DD HH:MM:SS - Log of updates made.
 - [2025-07-03 16:59:44] - [docs-writer] - 启动了对 `README.md` 的全面审查和更新任务。
 - [2025-07-03 16:59:44] - [docs-writer] - 完成了对 `README.md` 的更新，使其全面反映了项目当前的架构、前后端设置、API端点和最新技术决策。
 * [2025-07-04 16:45:52] - **Completed:** Refactored `/ai/analyze` endpoint in `stockaivo/routers/ai.py` into separate POST and GET methods for task creation and streaming, following the approved architectural decision.
+- [x] 2025-07-07: Refactored `calculate_rsi` function in `stockaivo/ai/technical_indicator.py` for clarity and performance.

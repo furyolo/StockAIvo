@@ -18,6 +18,7 @@ from .agents import (
 from .state import GraphState
 from .tools import llm_tool
 from .orchestrator import run_ai_analysis
+from .technical_indicator import TechnicalIndicator
 
 __all__ = [
     "llm_service",
@@ -33,5 +34,6 @@ __all__ = [
     "app",
     "run_ai_analysis",
     "GraphState",
-    "llm_tool"
+    "llm_tool",
+    "TechnicalIndicator"
 ]

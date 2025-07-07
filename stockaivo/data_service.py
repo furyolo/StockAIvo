@@ -107,8 +107,8 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
         end_date_obj = _get_latest_trading_day(yesterday)
 
         if period == "daily":
-            # start_date_obj在end_date_obj基础上往前30天
-            start_date_obj = end_date_obj - timedelta(days=30)
+            # start_date_obj在end_date_obj基础上往前40天
+            start_date_obj = end_date_obj - timedelta(days=40)
             start_date = start_date_obj.strftime('%Y-%m-%d')
             end_date = end_date_obj.strftime('%Y-%m-%d')
             logger.info(f"日线数据默认范围设置为: {start_date} -> {end_date}")

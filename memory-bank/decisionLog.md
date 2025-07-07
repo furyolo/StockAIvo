@@ -6,6 +6,33 @@ This file records architectural and implementation decisions using a list format
 *
       
 ---
+### Decision (Debug)
+[2025-07-07 12:41:08] - [Bug Fix Strategy: Align RSI Output Length to Input Length]
+
+**Rationale:**
+A test failure (`AssertionError: assert 99 == 100`) indicated that the `calculate_rsi` function was returning a `pd.Series` with one less element than the input Series. This was caused by the `series.diff(1).dropna()` operation at the beginning of the function, which shortens the series by one. While the RSI calculation itself was correct, the output's length and index did not match the input's, causing the assertion to fail.
+
+The fix is to reindex the final `rsi` Series to match the index of the original input `series`. This ensures the output has the exact same dimensions as the input, with a `NaN` value at the first position where RSI cannot be calculated.
+
+**Details:**
+- **File:** `stockaivo/ai/technical_indicator.py`
+- **Change:** Added `.reindex(series.index)` to the return statement of the `calculate_rsi` function.
+---
+### Decision (Debug)
+[2025-07-07 12:35:16] - [Bug Fix Strategy: Correct RSI Calculation in technical_indicator.py]
+
+**Rationale:**
+A Pylance type error (`operator ">" is not supported for types "Series[type[object]]"`) was reported in the `calculate_rsi` function. The root cause was that the `delta` Series, after a `.diff()` operation, was inferred as `object` type due to a leading `NaN` value. Additionally, the RSI calculation was using an incorrect method (Simple Moving Average instead of Exponential Moving Average) and was not robust against division-by-zero errors.
+
+The fix addresses all three issues:
+1.  **Type Error**: Explicitly converted the `delta` series to `float` using `.astype(float)` after removing the `NaN` value with `.dropna()`.
+2.  **Calculation Method**: Replaced the `rolling().mean()` (SMA) with `ewm(com=period - 1, adjust=False).mean()` (EMA) to align with the standard RSI calculation formula.
+3.  **Division by Zero**: Added logic to handle cases where average loss is zero, preventing an error and correctly setting RSI to 100, which represents a strong upward trend.
+
+**Details:**
+- **File:** `stockaivo/ai/technical_indicator.py`
+- **Change:** Refactored the `calculate_rsi` function for correctness and robustness.
+---
 ### Decision (Architecture)
 [2025-07-04 16:43:58] - **Separate AI Analysis Endpoint into POST for Creation and GET for Streaming**
 
@@ -483,312 +510,41 @@ The root cause of the `NaN` value in the `ticker` field was that the DataFrame r
 
 **Rationale:**
 1.  **动态列选择**: 为了使数据库查询更加健壮并减少不必要的数据传输，对 `_query_database` 函数进行了修改。通过使用 SQLAlchemy 的 `inspect` 功能，查询现在以编程方式仅选择模型中定义的列，同时显式排除了 `created_at` 和 `updated_at` 这两个通用时间戳字段。这避免了在模型更改时需要手动更新查询，并确保了API响应的简洁性。
-2.  **标准化日志格式**: 为了提高日志的可读性和调试效率，对整个应用的日志系统进行了标准化配置。通过在 `main.py` 中设置 `basicConfig`，所有日志输出现在都包含 `[HH:MM:SS]` 格式的时间戳，使得按时间顺序追踪事件和关联不同模块的日志变得更加容易。
 
-**Details:**
-- **File:** `stockaivo/data_service.py`
-  - **Change:** 在 `_query_database` 函数中，使用 `inspect(model).c` 和列表推导式来构建要选择的列列表，排除了 `created_at` 和 `updated_at`。查询语句被重构为使用 `select()`。
-- **File:** `main.py`
-  - **Change:** 修改了 `logging.basicConfig`，添加了 `format` 和 `datefmt` 参数，以实现全局统一的时间戳日志格式。
 ---
-### Decision (Debug)
-[2025-06-29 16:16:10] - [Bug Fix Strategy: Correct ON CONFLICT column name]
+**Date:** 2025-07-07
+**Context:** Refactoring `calculate_rsi` in `stockaivo/ai/technical_indicator.py`
+**Decision:**
+Optimized the `calculate_rsi` function to improve conciseness, readability, and performance.
 
 **Rationale:**
-The application was failing with a `psycopg2.errors.UndefinedColumn` because the `persist_pending_data` function in `stockaivo/database_writer.py` was using the incorrect column name `date` in the `ON CONFLICT` clause for the `stock_prices_daily` table. The correct column name, as defined in the model and used in other parts of the code, is `dates`. The fix involves correcting this column name in the `_batch_upsert_prices` call within the `persist_pending_data` function.
+1.  **Conciseness**: Replaced `delta.where(...)` with the more compact `delta.clip(...)` for calculating `gain` and `loss`.
+2.  **Performance/Correctness**: Removed a redundant check `rsi[avg_loss == 0] = 100`. The mathematical formula `100.0 - (100.0 / (1.0 + rs))` already correctly handles the case where `avg_loss` is zero (resulting in `rs` being infinity and `rsi` being 100), thus simplifying the code and avoiding an unnecessary operation.
+3.  **Robustness**: Added `min_periods=period` to the `.ewm()` calculation. This ensures that the RSI is only calculated after a sufficient number of data points are available, preventing misleading initial values and making the calculation more robust.
+4.  **Readability**: Improved the docstring to provide a clearer explanation of the RSI calculation logic and the function's parameters.
 
-**Details:**
-- **File:** `stockaivo/database_writer.py`
-- **Change:** In `persist_pending_data`, the `_batch_upsert_prices` call for the 'daily' period was changed to use `['ticker', 'dates']` as the `conflict_columns` argument, aligning it with the database schema.
----
-### Decision (Debug)
-[2025-06-27 17:43:00] - [Bug Fix Strategy: Data Sanitization Before Serialization]
+**Original Code Snippet:**
+```python
+delta = series.diff(1).dropna().astype(float)
+gain = delta.where(delta > 0, 0.0)
+loss = -delta.where(delta < 0, 0.0)
+avg_gain = gain.ewm(com=period - 1, adjust=False).mean()
+avg_loss = loss.ewm(com=period - 1, adjust=False).mean()
+rs = avg_gain / avg_loss.replace(0, 1)
+rsi = 100 - (100 / (1 + rs))
+rsi[avg_loss == 0] = 100
+return rsi.reindex(series.index)
+```
 
-**Rationale:**
-The root cause of the `TypeError: 'float' object cannot be interpreted as an integer` was identified as `NaN` values in the `volume` column of the DataFrame being passed to the Pydantic model for serialization. `NaN` is a float, which violates the schema's expectation of an `int` for the `volume` field. The most robust fix is to sanitize the data just before it's returned by the `data_service`. This ensures that data from any source (cache, DB, or API) is cleaned, preventing similar errors in the future.
-
-**Details:**
-- **File:** `stockaivo/data_service.py`
-- **Change:**
-    - A new private function `_clean_dataframe(df)` was created. This function checks for a `volume` column, fills any `NaN` values with `0`, and then explicitly casts the column's type to `int`.
-    - This `_clean_dataframe` function is now called on the final DataFrame in all return paths of the main `get_stock_data` function, immediately before the data is returned for serialization. This guarantees that the data passed to the Pydantic models is always clean.
-## Decision
-
-*
-      
-## Rationale 
-
-*
-
-## Implementation Details
-
-*
----
-### Decision (Architecture)
-[2025-06-27 17:29:00] - **实现后台持久化调度器**
-
-**Rationale:**
-为了确保临时缓存中的数据能够定期、可靠地持久化到主数据库（PostgreSQL），引入了基于 `apscheduler` 的后台调度器。这种异步、定时的机制取代了之前依赖手动或API触发的持久化方式，提高了系统的自动化程度和数据的最终一致性。调度器在独立的后台线程中运行，不会阻塞主应用的API请求，并且通过为每个任务创建独立的数据库会话来确保线程安全。
-
-**Details:**
-- **File:** `stockaivo/background_scheduler.py` (新文件)
-  - **Change:** 创建了一个新的模块，包含 `start_scheduler`、`stop_scheduler` 和 `scheduled_persist_job` 函数。调度任务被配置为每5分钟运行一次，调用 `database_writer.persist_pending_data`。
-- **File:** `main.py`
-  - **Change:** 在 `lifespan` 上下文管理器中集成了调度器。应用启动时调用 `start_scheduler`，应用关闭时调用 `stop_scheduler`。
-- **File:** `pyproject.toml`
-  - **Change:** 将 `apscheduler` 添加到项目依赖中。
----
-### Decision (Bug Fix)
-[2025-06-27 17:16:26] - **修正 `data_service.py` 中的日期列名不一致问题**
-
-**Rationale:**
-为了解决因日期列名不一致 (`date` vs `dates`) 导致的潜在bug，对 `data_service.py` 进行了两处关键修正。1) `_get_date_col` 函数现在为日线和周线数据统一返回 `dates`。2) `_query_database` 函数在构建查询时统一使用 `model.dates` 属性。这确保了整个服务在处理日期列时使用唯一的标识符，与数据库模型保持一致，提高了代码的健壮性和可维护性。
-
-**Details:**
-- **File:** `stockaivo/data_service.py`
-  - **Change in `_get_date_col`:** The return value for 'daily' and 'weekly' periods was changed from `'date'` to `'dates'`.
-  - **Change in `_query_database`:** The date column attribute used in the query for 'daily' and 'weekly' data was changed from `model.date` to `model.dates`.
----
-### Decision (Architecture)
-[2025-06-27 16:50:01] - **实现持久化后自动清理 `pending_save` 缓存的机制**
-
-**Rationale:**
-为了确保数据管道的健壮性和状态的准确性，必须在数据成功从 `pending_save` 缓存持久化到数据库后，自动删除对应的缓存条目。如果不删除，可能会导致数据被重复处理，或者在缓存过期后数据丢失（如果持久化失败）。通过将 `pending_save` 的Redis键作为参数传递给后台的数据库写入任务，并在任务成功后由其负责删除该键，我们创建了一个可靠的、事务性的闭环操作。
-
-**Details:**
-- **File:** `stockaivo/cache_manager.py`
-  - **Change:**
-    - 添加了 `delete_from_redis(key: str)` 方法用于删除任意键。
-    - 修改了 `save_to_redis(...)` 的返回类型，从 `bool` 变为 `Optional[str]`，使其在成功时返回生成的缓存键名。
-- **File:** `stockaivo/data_service.py`
-  - **Change:**
-    - 在调用 `cache_manager.save_to_redis` 时捕获返回的 `pending_save` 键。
-    - 在 `background_tasks.add_task` 调用中，将此 `pending_cache_key` 作为新参数传递给 `database_writer.save_dataframe_to_db`。
-- **File:** `stockaivo/database_writer.py`
-  - **Change:**
-    - 修改了 `save_dataframe_to_db` 函数签名，增加了一个可选参数 `pending_cache_key: Optional[str] = None`。
-    - 在数据库事务成功提交后，如果 `pending_cache_key` 存在，则调用 `cache_manager.delete_from_redis` 将其删除。
-
----
----
----
----
-### Decision (Debug)
-[2025-06-27 16:47:32] - **Bug Fix Strategy: Standardize Date Column Name**
-
-**Rationale:**
-The root cause of the bug was an inconsistency in the date column naming convention within `data_service.py`. The `_get_date_col` helper function returned 'date' for daily data, while the database models and query functions expected 'dates'. Standardizing the output of `_get_date_col` to always return 'dates' for both daily and weekly data is the most direct and correct fix, ensuring alignment with the database schema and resolving the data filtering failure.
-
-**Details:**
-- **File:** `stockaivo/data_service.py`
-- **Change:** Modified the `_get_date_col` function to return 'dates' for both 'daily' and 'weekly' periods.
-
-### Decision (Architecture)
-[2025-06-27 16:08:15] - **实施双重Redis缓存策略 (PENDING_SAVE & GENERAL_CACHE)**
-
-**Rationale:**
-为了进一步优化数据访问性能并明确数据状态，引入了两种不同的缓存类型。
-1.  `PENDING_SAVE`: 用于存放从外部API（如AKShare）获取的、等待后台任务持久化到PostgreSQL的新数据。这类缓存的生存时间（TTL）较长（24小时），以确保数据在持久化完成前不会丢失。
-2.  `GENERAL_CACHE`: 用于存放从数据库或API查询出的、服务于前端读取请求的数据。这类缓存的TTL较短（1小时），旨在加速热点数据的重复访问，同时也能较快地反映数据库的更新。
-这种双重策略将“待写入”数据和“只读”数据分离开来，使得缓存管理更加清晰，提高了数据获取的整体效率和系统的健壮性。
-
-**Details:**
-- **File:** `stockaivo/cache_manager.py`
-  - **Change:** 引入了 `CacheType` 枚举。修改了 `save_to_redis` 和 `get_from_redis` 函数，以支持基于 `CacheType` 的不同键名（`pending_save:` vs `general_cache:`）和TTL。
-- **File:** `stockaivo/data_service.py`
-  - **Change:**
-    - 从远程API获取新数据后，会同时写入 `PENDING_SAVE` 和 `GENERAL_CACHE`。
-    - 从数据库查询出的数据，仅写入 `GENERAL_CACHE`。
-    - 数据读取请求优先查询 `GENERAL_CACHE`。
-### Decision (Code)
-[2025-06-27 12:22:07] - **修正 `_query_database` 中的日期列选择逻辑**
-
-**Rationale:**
-`_query_database` 函数在处理日线数据 (`daily`) 时错误地使用了 `model.date` 属性，而正确的属性应该是 `model.dates`，这与周线 (`weekly`) 数据一致。此修复统一了日线和周线数据的日期列处理逻辑，确保了与数据库模型 (`models.py`) 的定义完全一致，从而消除了一个潜在的数据查询错误。
-
-**Details:**
-- **File:** `stockaivo/data_service.py`
-- **Change:** 修改了 `_query_database` 函数中的条件判断，确保当 `period` 为 `'daily'` 或 `'weekly'` 时，都使用 `model.dates` 作为日期列。
-### Decision (Architecture)
-[2025-06-27 12:17:36] - **统一数据流中的日期列命名规范：API 'date' -> DB 'dates'**
-
-**Rationale:**
-为了解决数据源 (AKShare) 和数据库模型 (SQLAlchemy) 之间关于日期列命名的长期不一致问题 (`date` vs `dates`)，特此确立统一的转换规范。数据提供者 (`data_provider.py`) 负责从外部API获取数据并将其标准化，统一输出为带 `date` 列的DataFrame。数据写入层 (`database_writer.py`) 则负责在数据持久化之前，将 `date` 列重命名为 `dates`，以匹配数据库模型中的定义。这种策略将数据转换的责任明确地放在了数据写入层，确保了数据源的纯粹性和数据库模型的稳定性。
-
-**Details:**
-- **File:** `stockaivo/data_provider.py`
-  - **Change:** 移除了针对周线数据将 `date` 列重命名为 `dates` 的特殊逻辑，确保所有时间周期的数据都统一以 `date` 列名输出。
-- **File:** `stockaivo/models.py`
-  - **Change:** 确认并保持 `StockPriceDaily` 和 `StockPriceWeekly` 模型中的日期字段为 `dates`。
-- **File:** `stockaivo/database_writer.py`
-  - **Change:** 在 `save_dataframe_to_db` 函数中增加了明确的重命名步骤 `dataframe.rename(columns={'date': 'dates'})`，作为数据持久化前的预处理。同时，更新了相关的 `_prepare...` 和 `_batch_upsert_prices` 函数以正确处理 `dates` 字段。
----
-### Decision (Architecture)
-[2025-06-27 11:32:43] - **采用 FastAPI BackgroundTasks 实现数据库写入异步化**
-
-**Rationale:**
-为了优化API响应时间，特别是对于那些触发远程数据获取的请求，我们将耗时的数据库写入操作从主请求/响应循环中分离出来。使用 FastAPI 内置的 `BackgroundTasks` 是一个轻量级且高效的解决方案，它允许我们将函数（如 `save_dataframe_to_db`）注册为在响应发送后在后台运行的任务。这确保了用户可以立即收到数据，而数据库的持久化操作则在后台异步完成，从而显著提升了用户体验和系统吞吐量。
-
-**Details:**
-- **文件:** `stockaivo/routers/stocks.py`, `stockaivo/data_service.py`
-- **实现:**
-  - 在 `stocks.py` 的 API 端点中注入 `BackgroundTasks` 依赖。
-  - 将 `background_tasks` 对象一直传递到 `data_service.get_stock_data` 函数。
-  - 在 `data_service.py` 中，当从远程API获取到新数据后，使用 `background_tasks.add_task(database_writer.save_dataframe_to_db, ...)` 来调度异步写入，而不是直接调用该函数。
----
-### Decision (Code)
-[2025-06-20 21:01:18] - SQLAlchemy ORM模型架构设计
-
-**Rationale:**
-基于项目文档要求和数据库最佳实践，选择了合适的字段类型、约束和关系设计，确保数据一致性和查询性能。
-
-**Details:**
-- 价格字段使用Numeric(10,4)而非Float，避免浮点数精度问题
-- 交易量使用BigInteger支持大数值
-- 创建复合唯一约束(ticker+dates/timestamp)防止重复数据
-- 使用cascade="all, delete-orphan"确保数据完整性
-- 为高频查询字段创建专门索引提升性能
----
-### Decision (Code)
-[2025-06-20 21:09:20] - AKShare数据源封装实现决策
-
-**Rationale:**
-参考D:\Coding\stockai项目的成功实现，选择使用ak.stock_us_hist接口而非其他接口，并采用正确的fullsymbol格式（如"105.AAPL"）来确保数据获取的稳定性。
-
-**Details:**
-- 使用ak.stock_us_hist(symbol=fullsymbol, period=period, adjust="qfq")接口
-- ticker转换为fullsymbol格式：f"105.{ticker}"（105为美股市场代码）
-- 实现中文列名到英文的标准化映射，基于参考项目的成功经验
-- 数据验证策略：对负数价格采用warning+修正而非直接拒绝，提高容错性
-- 小时线数据暂用日线数据代替，因AKShare不直接支持美股小时数据
----
-### Decision (Code)
-[2025-06-20 21:12:30] - Redis缓存管理器架构设计与实现
-
-**Rationale:**
-基于项目文档1.3节要求，设计了一个完整的Redis缓存系统来处理从AKShare获取的临时数据。选择面向对象设计和类型安全的实现方式，确保系统的可维护性和健壮性。
-
-**Details:**
-- 使用CacheManager类封装所有Redis操作，支持连接池和健康检查
-- 键名格式采用`pending_save:{ticker}:{period}`模式，清晰标识数据来源和类型
-- DataFrame序列化采用JSON格式，包含元数据(时间戳、行数)便于调试和监控
-- 实现完整的错误处理机制：连接错误、序列化错误、Redis操作错误
-- 支持环境变量配置Redis连接参数，提供合理默认值
-- 添加数据过期机制(24小时TTL)防止缓存数据积压
-- 提供缓存统计和健康检查功能便于运维监控
----
-### Decision (Code)
-[2025-06-20 21:14:40] - 数据查询主逻辑架构设计与实现
-
-**Rationale:**
-基于项目文档1.4节要求，设计了一个完整的数据查询协调系统，采用数据库优先、外部API补充、缓存辅助的三层架构模式，确保数据获取的效率和可靠性。
-
-**Details:**
-- 实现核心函数get_stock_data(ticker, period)作为统一数据入口点
-- 采用数据库优先策略：先查询PostgreSQL，未找到再调用AKShare
-- 数据库查询使用占位符函数_query_database_placeholder()，便于后续具体实现
-- 集成已实现的data_provider.fetch_from_akshare()和cache_manager.save_to_redis()函数
-- 实现完善的错误处理机制：缓存失败不影响数据返回，确保服务可用性
-- 添加健康检查check_data_service_health()和缓存统计get_cached_data_summary()功能
-- 提供test_data_service()函数便于功能验证和调试
----
-### Decision (Code)
-[2025-06-20 21:19:25] - 异步数据持久化架构设计与实现
-
-**Rationale:**
-基于项目文档1.5节要求，设计了完整的数据持久化系统，采用PostgreSQL UPSERT机制处理数据冲突，确保数据一致性和系统健壮性。选择FastAPI框架提供RESTful API接口，便于系统集成和监控。
-
-**Details:**
-- 数据库连接管理：使用SQLAlchemy 2.0+引擎，配置连接池和健康检查机制
-- 批量UPSERT策略：使用PostgreSQL的ON CONFLICT DO UPDATE语法处理数据冲突
-- 事务管理：每个ticker+period组合使用独立事务，失败时不影响其他数据处理
-- API设计：提供/check-pending-data检查和/persist-data执行两个核心端点
-- 错误处理：完善的异常处理和日志记录，支持部分失败场景
-- 数据类型映射：处理AKShare中文列名到数据库英文字段的转换
----
-### Decision (Code)
-[2025-06-20 21:22:45] - 股票数据API架构设计与实现
-
-**Rationale:**
-基于项目文档功能二要求，设计了完整的RESTful API系统，采用FastAPI路由器模式和Pydantic数据验证，确保API的标准化、可维护性和数据安全性。
-
-**Details:**
-- API端点设计：实现/stocks/{ticker}/daily、weekly、hourly三个核心端点，符合RESTful风格
-- 数据模型设计：使用Pydantic定义StockPriceBase、StockDataResponse等响应模型，确保数据格式一致性
-- 路由组织：采用FastAPI APIRouter模式，创建独立的stocks.py路由文件，便于模块化管理
-- 参数验证：实现ticker代码验证、日期范围过滤等输入验证机制
-- 错误处理：完善的HTTP状态码和错误响应，包括404、400、500等标准错误处理
-- 集成方式：在main.py中使用include_router()集成股票路由，保持代码组织清晰
----
-**Timestamp:** 2025-06-20T21:25:18+08:00
-
-
----
-### Decision (Debug)
-[2025-07-01 11:22:25] - [BugFix: Disable HTTP/2 to Resolve `httpx.ReadError`]
-
-**Rationale:**
-The application was experiencing `httpx.ReadError` when communicating with the local LLM service at `http://localhost:3222`. While direct `curl` requests were successful, `httpx` calls failed, suggesting a client-server incompatibility. The root cause was identified as a likely incompatibility between `httpx`'s default HTTP/2 support and the local LLM server's capabilities, causing the server to drop the connection prematurely.
-
-The fix involves explicitly disabling HTTP/2 in the `httpx.AsyncClient` instance within `stockaivo/ai/llm_service.py`. This forces communication over HTTP/1.1, which stabilized the connection and resolved the `ReadError`, allowing the client to receive a proper `502 Bad Gateway` response instead of a connection error.
-
-**Details:**
-- **File:** `stockaivo/ai/llm_service.py`
-- **Change:** Added the parameter `http2=False` to the `httpx.AsyncClient` constructor.
-
-- **[2025-07-01 11:28:20] Deployment Strategy:**
-  - **Decision:** Used `uv run dev` to start the application based on `pyproject.toml` scripts.
-  - **Decision:** Used PowerShell's `Start-Job` for background execution and `Invoke-WebRequest` for API calls to ensure compatibility with the Windows environment.
-  - **Observation:** Increased sleep time to 10 seconds to allow the server to initialize before sending requests.
-  - **Issue:** Identified a `502 Bad Gateway` error from the `technical_analyst` agent, indicating a problem with a downstream service.
-
-
----
-### Decision (Debug)
-[2025-07-02 15:28:22] - [BugFix: Resolve `TypeError` in `StockChart.tsx` due to `lightweight-charts` typing issue]
-
-**Rationale:**
-The application was throwing a runtime error `TypeError: chartRef.current.addCandlestickSeries is not a function` in the `StockChart.tsx` component. The root cause was determined to be incorrect or mismatched TypeScript type definitions for the `lightweight-charts` library (v5.0.8), which caused the TypeScript compiler to believe that the `addCandlestickSeries` and `addHistogramSeries` methods did not exist on the `IChartApi` interface, even though they likely exist on the actual JavaScript object at runtime. The secondary cause was the incorrect API usage pattern for setting series options, which is a breaking change in v4+ of the library.
-
-The fix involves two main parts:
-1.  **Bypass Type Checking:** Use a type assertion (`as any`) when calling `addCandlestickSeries` and `addHistogramSeries`. This tells the TypeScript compiler to ignore the faulty type definitions and trust that the methods exist at runtime.
-2.  **Correct API Usage:** Refactor the series creation logic to align with the `lightweight-charts` v4+ API. Instead of passing all options directly to the `add...Series` method, the series is created without options, and then `applyOptions` is called on the newly created series object to set its visual properties.
-
-This combined approach resolves both the compile-time type errors and the underlying runtime error while aligning the code with modern library standards. Additionally, the component's parent page (`page.tsx`) was modified to use `next/dynamic` to import the chart component, preventing potential SSR-related issues.
-
-**Details:**
-- **File:** `frontend/src/components/StockChart.tsx`
-  - **Change:** Wrapped `chartRef.current` with `(chartRef.current as any)` before calling `addCandlestickSeries` and `addHistogramSeries`. Separated series creation from option application using `.applyOptions()`.
-- **File:** `frontend/src/app/page.tsx`
-  - **Change:** Replaced the static import of `StockChart` with a dynamic import using `next/dynamic`, with `ssr: false`.
-
-
----
-### Decision (Debug)
-[2025-07-02 16:02:00] - [BugFix: Correct Invalid DOM Structure in Root Layout]
-
-**Rationale:**
-The application page at http://localhost:4222/ was blank. The root cause was identified as an invalid DOM structure being generated by the `RootLayout` component in `frontend/src/app/layout.tsx`. This component was rendering its own `<html>` and `<body>` tags. In a Vite-based single-page application, these tags are managed by the main `index.html` file, and React components should only render content *inside* the `<body>`. Rendering nested `<html>` tags is invalid HTML and causes modern browsers to fail to render the page correctly. The fix is to remove these tags from the React component, ensuring it only renders the `<Outlet />` for its child routes within a React Fragment.
-
-**Details:**
-- **File:** `frontend/src/app/layout.tsx`
-- **Change:** Removed the `<html>` and `<body>` tags from the `RootLayout` component's return statement, wrapping the `<Outlet />` in a React Fragment (`<>...</>`).
-
-
----
-
-### **内存银行更新摘要**
-
-**标题:** `[2025-07-03] - 修正周线数据必需日期的生成逻辑以正确处理节假日`
-
-**基本原理:**
-`_get_required_dates` 函数在计算周线数据 (`weekly`) 的必需日期时，可能会将非交易日的周五（如节假日）错误地包含进来。这是因为它会将一周的最后一个交易日（如周四）的日期“滚动”到当周的周五，而没有验证该周五本身是否也是一个交易日。本次修复通过增加一个验证步骤来解决此问题：在生成所有潜在的周五之后，会与原始的交易日列表进行比对，只保留那些本身就是交易日的周五。这从根本上阻止了对节假日的数据请求，提高了数据管道的健壮性和准确性。
-
-**实施细节:**
-- **文件:** `stockaivo/data_service.py`
-- **函数:** `_get_required_dates`
-- **变更:**
-    1.  在函数开始时，将从 `nyse.schedule` 获取的所有交易日存储在一个 `set` 中，以备快速查询。
-    2.  在为 `weekly` 周期计算出所有潜在的周五后，增加了一个列表推导式，用 `trading_days_set` 来过滤这个列表，确保结果中的每个周五都是真实的交易日。
-
+**Refactored Code Snippet:**
+```python
+delta = series.diff(1)
+gain = delta.clip(lower=0)
+loss = -delta.clip(upper=0)
+avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
+avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
+rs = avg_gain / avg_loss
+rsi = 100.0 - (100.0 / (1.0 + rs))
+return rsi.reindex(series.index)
+```
 ---

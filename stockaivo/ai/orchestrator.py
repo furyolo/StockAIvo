@@ -152,7 +152,14 @@ class StreamingLangGraphOrchestrator:
 
         # 1. 数据收集阶段（非流式）
         print("\n---Phase 1: Data Collection---")
-        state = cast(GraphState, await data_collection_agent(initial_state))
+        data_collection_result = await data_collection_agent(initial_state)
+
+        # 手动合并状态（在流式版本中需要手动处理状态合并）
+        state = initial_state.copy()
+        if "raw_data" in data_collection_result:
+            state["raw_data"] = {**state.get("raw_data", {}), **data_collection_result["raw_data"]}
+        if "analysis_results" in data_collection_result:
+            state["analysis_results"] = {**state.get("analysis_results", {}), **data_collection_result["analysis_results"]}
 
         # 发送数据收集结果
         data_collector_result = state.get("analysis_results", {}).get("data_collector")
