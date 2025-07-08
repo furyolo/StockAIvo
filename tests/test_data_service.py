@@ -501,5 +501,129 @@ class TestHolidayDataFetching(unittest.IsolatedAsyncioTestCase):
         print("--- Test: Skips Fetching for Holiday-Only Range PASSED ---")
 
 
+class TestWeeklyEndDateLogic(unittest.TestCase):
+    """测试周线数据结束日期计算逻辑"""
+
+    @patch('stockaivo.data_service.mcal')
+    def test_get_latest_complete_weekly_end_date_monday(self, mock_mcal):
+        """测试周一时应该使用上一个完整周的最后交易日作为结束日期"""
+        from stockaivo.data_service import _get_latest_complete_weekly_end_date
+        from datetime import date
+
+        # 模拟NYSE日历
+        mock_calendar = MagicMock()
+        mock_mcal.get_calendar.return_value = mock_calendar
+
+        # 创建模拟的交易日程表，包含更大的日期范围
+        mock_schedule = MagicMock()
+        mock_schedule.index = [
+            pd.Timestamp('2025-06-23'),  # 更早的日期
+            pd.Timestamp('2025-06-24'),
+            pd.Timestamp('2025-06-25'),
+            pd.Timestamp('2025-06-26'),
+            pd.Timestamp('2025-06-27'),  # 上周五
+            pd.Timestamp('2025-06-30'),  # 上周一
+            pd.Timestamp('2025-07-01'),  # 上周二
+            pd.Timestamp('2025-07-02'),  # 上周三
+            pd.Timestamp('2025-07-03'),  # 上周四
+            # 2025-07-04 (周五) 是假期，不在交易日列表中
+            pd.Timestamp('2025-07-07'),  # 本周一
+            pd.Timestamp('2025-07-08'),  # 本周二
+            pd.Timestamp('2025-07-09'),  # 本周三
+            pd.Timestamp('2025-07-10'),  # 本周四
+            pd.Timestamp('2025-07-11'),  # 本周五
+            pd.Timestamp('2025-07-14'),  # 下周一
+        ]
+        mock_schedule.empty = False
+        mock_calendar.schedule.return_value = mock_schedule
+
+        # 测试周一（2025-07-07）
+        test_date = date(2025, 7, 7)  # 周一
+        result = _get_latest_complete_weekly_end_date(test_date)
+
+        # 应该返回上一个完整周的最后交易日（2025-07-03，上周四，因为上周五是假期）
+        expected = date(2025, 7, 3)
+        self.assertEqual(result, expected)
+
+    @patch('stockaivo.data_service.mcal')
+    def test_get_latest_complete_weekly_end_date_friday(self, mock_mcal):
+        """测试周五时应该使用当前周五作为结束日期（如果是交易日）"""
+        from stockaivo.data_service import _get_latest_complete_weekly_end_date
+        from datetime import date
+
+        # 模拟NYSE日历
+        mock_calendar = MagicMock()
+        mock_mcal.get_calendar.return_value = mock_calendar
+
+        # 创建模拟的交易日程表，包含更大的日期范围
+        mock_schedule = MagicMock()
+        mock_schedule.index = [
+            pd.Timestamp('2025-06-30'),  # 上周一
+            pd.Timestamp('2025-07-01'),  # 上周二
+            pd.Timestamp('2025-07-02'),  # 上周三
+            pd.Timestamp('2025-07-03'),  # 上周四
+            pd.Timestamp('2025-07-07'),  # 本周一
+            pd.Timestamp('2025-07-08'),  # 本周二
+            pd.Timestamp('2025-07-09'),  # 本周三
+            pd.Timestamp('2025-07-10'),  # 本周四
+            pd.Timestamp('2025-07-11'),  # 本周五
+            pd.Timestamp('2025-07-14'),  # 下周一
+            pd.Timestamp('2025-07-15'),  # 下周二
+            pd.Timestamp('2025-07-16'),  # 下周三
+            pd.Timestamp('2025-07-17'),  # 下周四
+            pd.Timestamp('2025-07-18'),  # 下周五
+        ]
+        mock_schedule.empty = False
+        mock_calendar.schedule.return_value = mock_schedule
+
+        # 测试周五（2025-07-11）
+        test_date = date(2025, 7, 11)  # 周五
+        result = _get_latest_complete_weekly_end_date(test_date)
+
+        # 应该返回当前周五（2025-07-11）
+        expected = date(2025, 7, 11)
+        self.assertEqual(result, expected)
+
+    @patch('stockaivo.data_service.mcal')
+    def test_get_latest_complete_weekly_end_date_holiday_friday(self, mock_mcal):
+        """测试周五是假期时应该使用上一个完整周的最后交易日作为结束日期"""
+        from stockaivo.data_service import _get_latest_complete_weekly_end_date
+        from datetime import date
+
+        # 模拟NYSE日历
+        mock_calendar = MagicMock()
+        mock_mcal.get_calendar.return_value = mock_calendar
+
+        # 创建模拟的交易日程表（7月4日独立日假期），包含更大的日期范围
+        mock_schedule = MagicMock()
+        mock_schedule.index = [
+            pd.Timestamp('2025-06-23'),  # 更早的日期
+            pd.Timestamp('2025-06-24'),
+            pd.Timestamp('2025-06-25'),
+            pd.Timestamp('2025-06-26'),
+            pd.Timestamp('2025-06-27'),  # 上周五
+            pd.Timestamp('2025-06-30'),  # 上周一
+            pd.Timestamp('2025-07-01'),  # 上周二
+            pd.Timestamp('2025-07-02'),  # 上周三
+            pd.Timestamp('2025-07-03'),  # 上周四
+            # 2025-07-04 (周五) 是假期，不在交易日列表中
+            pd.Timestamp('2025-07-07'),  # 下周一
+            pd.Timestamp('2025-07-08'),  # 下周二
+            pd.Timestamp('2025-07-09'),  # 下周三
+            pd.Timestamp('2025-07-10'),  # 下周四
+            pd.Timestamp('2025-07-11'),  # 下周五
+        ]
+        mock_schedule.empty = False
+        mock_calendar.schedule.return_value = mock_schedule
+
+        # 测试假期周五（2025-07-04）
+        test_date = date(2025, 7, 4)  # 周五，但是假期
+        result = _get_latest_complete_weekly_end_date(test_date)
+
+        # 应该返回上一个完整周的最后交易日（2025-07-03，上周四）
+        expected = date(2025, 7, 3)
+        self.assertEqual(result, expected)
+
+
 if __name__ == '__main__':
     unittest.main()

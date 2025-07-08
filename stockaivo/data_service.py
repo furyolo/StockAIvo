@@ -102,19 +102,20 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
         logger.info(f"未提供日期范围，为 '{period}' 周期应用默认值。")
         today = date.today()
 
-        # 先计算end_date_obj，如果遇到休市日，则继续往前直到非休市日为止
-        yesterday = today - timedelta(days=1)
-        end_date_obj = _get_latest_trading_day(yesterday)
-
         if period == "daily":
+            # 对于日线数据，使用昨天作为结束日期，避免获取不完整的当日数据
+            yesterday = today - timedelta(days=1)
+            end_date_obj = _get_latest_trading_day(yesterday)
             # start_date_obj在end_date_obj基础上往前40天
             start_date_obj = end_date_obj - timedelta(days=40)
             start_date = start_date_obj.strftime('%Y-%m-%d')
             end_date = end_date_obj.strftime('%Y-%m-%d')
             logger.info(f"日线数据默认范围设置为: {start_date} -> {end_date}")
         elif period == "weekly":
-            # start_date_obj在end_date_obj基础上往前180天
-            start_date_obj = end_date_obj - timedelta(days=180)
+            # 对于周线数据，使用最近完整周的结束日期，避免获取不完整的当前周数据
+            end_date_obj = _get_latest_complete_weekly_end_date(today)
+            # start_date_obj在end_date_obj基础上往前200天
+            start_date_obj = end_date_obj - timedelta(days=200)
             start_date = start_date_obj.strftime('%Y-%m-%d')
             end_date = end_date_obj.strftime('%Y-%m-%d')
             logger.info(f"周线数据默认范围设置为: {start_date} -> {end_date}")
@@ -393,6 +394,96 @@ def _get_latest_trading_day(target_date: date) -> date:
 
     except Exception as e:
         logger.warning(f"获取最近交易日时出错: {e}，使用目标日期")
+        return target_date
+
+
+def _get_latest_complete_weekly_end_date(target_date: date) -> date:
+    """
+    获取最近的完整周的结束日期
+
+    对于周线数据，我们需要避免获取当前未完成周的数据：
+    - 如果当前是周一到周四，返回上一个完整周的最后一个交易日
+    - 如果当前是周五，检查是否为交易日且市场已收盘，如果是则返回当前周五，否则返回上一个完整周的最后一个交易日
+    - 如果当前是周末，返回本周的最后一个交易日（通常是周五，但如果周五是假期则是周四等）
+
+    Args:
+        target_date (date): 目标日期
+
+    Returns:
+        date: 最近的完整周的结束日期
+    """
+    try:
+        # 使用NYSE日历获取交易日
+        nyse_calendar = mcal.get_calendar('NYSE')
+
+        # 获取当前日期的星期几 (0=Monday, 6=Sunday)
+        current_weekday = target_date.weekday()
+
+        # 从目标日期往前查找30天，确保能找到交易日
+        search_start = target_date - timedelta(days=30)
+        schedule = nyse_calendar.schedule(start_date=search_start, end_date=target_date + timedelta(days=7))
+
+        if schedule.empty:
+            logger.warning(f"在 {search_start} 到 {target_date} 范围内未找到交易日")
+            return target_date
+
+        # 获取所有交易日
+        trading_days_set = {d.date() for d in schedule.index}
+
+        # 定义中文星期名称
+        weekday_names = ["一", "二", "三", "四", "五", "六", "日"]
+
+        if current_weekday < 4:  # 周一到周四 (0-3)
+            # 当前周还未完成，找上一个完整周的最后一个交易日
+            # 先找到上周的周日，然后往前找最近的交易日
+            days_to_last_sunday = current_weekday + 1  # 到上周日的天数
+            last_sunday = target_date - timedelta(days=days_to_last_sunday)
+
+            # 从上周日开始往前找最近的交易日（这将是上一个完整周的最后一个交易日）
+            search_date = last_sunday
+            while search_date >= search_start:
+                if search_date in trading_days_set:
+                    logger.info(f"当前是周{weekday_names[current_weekday]}，使用上一个完整周的最后交易日 {search_date} 作为周线数据结束日期")
+                    return search_date
+                search_date -= timedelta(days=1)
+
+        elif current_weekday == 4:  # 周五 (4)
+            # 检查当前周五是否为交易日
+            if target_date in trading_days_set:
+                # 当前周五是交易日，可以使用当前周五
+                logger.info(f"当前是周五且为交易日，使用当前周五 {target_date} 作为周线数据结束日期")
+                return target_date
+            else:
+                # 当前周五不是交易日，找本周的最后一个交易日（往前找到周四、周三等）
+                search_date = target_date - timedelta(days=1)  # 从周四开始
+
+                while search_date >= search_start:
+                    if search_date in trading_days_set:
+                        logger.info(f"当前周五非交易日，使用本周最后交易日 {search_date} 作为周线数据结束日期")
+                        return search_date
+                    search_date -= timedelta(days=1)
+
+        else:  # 周末 (5-6)
+            # 找本周的最后一个交易日
+            # 从当前日期往前找到本周一，然后再往前一天到上周日，再往前找最近的交易日
+            days_to_this_monday = current_weekday  # 到本周一的天数
+            this_monday = target_date - timedelta(days=days_to_this_monday)
+
+            # 从本周一开始往前找最近的交易日（这将是本周的最后一个交易日）
+            search_date = this_monday - timedelta(days=1)  # 从上周日开始
+            while search_date >= search_start:
+                if search_date in trading_days_set:
+                    logger.info(f"当前是周末，使用本周的最后交易日 {search_date} 作为周线数据结束日期")
+                    return search_date
+                search_date -= timedelta(days=1)
+
+        # 如果都找不到，回退到最近的交易日
+        latest_trading_day = schedule.index[-1].date()
+        logger.warning(f"无法找到合适的交易日，使用最近交易日: {latest_trading_day}")
+        return latest_trading_day
+
+    except Exception as e:
+        logger.warning(f"获取最近完整周结束日期时出错: {e}，使用目标日期")
         return target_date
 
 def _get_required_dates(period: PeriodType, start_date_str: Optional[str], end_date_str: Optional[str]) -> List[date]:

@@ -9,7 +9,6 @@ import httpx
 import json
 import random
 from typing import Dict, Any, Optional, AsyncGenerator
-from pydantic import BaseModel
 import logging
 import google.generativeai as genai
 
@@ -130,7 +129,7 @@ class LLMService:
         request_data = {
             "model": self.openai_model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 6000
+            "max_tokens": 9000
         }
         if stream:
             request_data["stream"] = True
