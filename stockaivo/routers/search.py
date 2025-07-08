@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from ..search_service import search_stocks_with_pagination, get_stock_suggestions
 from ..schemas import SearchResponse, SearchResult, ErrorResponse
 
+# 导入现代化异常处理模块
+from ..exceptions import ValidationException, DataServiceException
+
 # 配置日志
 logger = logging.getLogger(__name__)
 
@@ -124,12 +127,12 @@ async def search_stocks(
         
     except HTTPException:
         raise
+    except ValueError as e:
+        logger.error(f"搜索参数验证失败: query='{q}', error={e}")
+        raise ValidationException(f"搜索参数验证失败: {str(e)}")
     except Exception as e:
         logger.error(f"股票搜索失败: query='{q}', error={e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"搜索失败: {str(e)}"
-        )
+        raise DataServiceException(f"搜索失败: {str(e)}")
 
 
 @router.get("/stocks/suggestions")
@@ -179,12 +182,12 @@ async def get_search_suggestions(
         
     except HTTPException:
         raise
+    except ValueError as e:
+        logger.error(f"搜索建议参数验证失败: query='{q}', error={e}")
+        raise ValidationException(f"搜索建议参数验证失败: {str(e)}")
     except Exception as e:
         logger.error(f"获取搜索建议失败: query='{q}', error={e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取搜索建议失败: {str(e)}"
-        )
+        raise DataServiceException(f"获取搜索建议失败: {str(e)}")
 
 
 @router.get("/health")
@@ -205,7 +208,4 @@ async def search_health_check():
         }
     except Exception as e:
         logger.error(f"搜索服务健康检查失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"搜索服务健康检查失败: {str(e)}"
-        )
+        raise DataServiceException(f"搜索服务健康检查失败: {str(e)}")

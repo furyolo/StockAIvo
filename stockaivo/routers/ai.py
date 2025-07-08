@@ -13,6 +13,9 @@ from datetime import date, timedelta
 
 from stockaivo.ai.orchestrator import run_ai_analysis, run_ai_analysis_stream
 
+# 导入现代化异常处理模块
+from ..exceptions import AIServiceException, ValidationException, create_error_response
+
 logger = logging.getLogger(__name__)
 
 # 创建路由器
@@ -110,9 +113,15 @@ async def analyze_stock_stream(nested_request: NestedAnalysisRequest):
                     yield event
             except asyncio.CancelledError:
                 logger.warning("客户端断开了连接，AI分析流已取消。")
+                # 客户端断开连接时不需要发送错误事件
             except Exception as e:
                 logger.error(f"AI分析过程中发生错误: {e}")
-                error_event = f"data: {{'error': '分析过程中发生错误: {str(e)}'}}\n\n"
+                # 使用统一的错误响应格式
+                error_response = create_error_response(
+                    message=f"AI分析过程中发生错误: {str(e)}",
+                    status_code=500
+                )
+                error_event = f"data: {error_response}\n\n"
                 yield error_event
             finally:
                 logger.info("AI分析流结束。")
@@ -120,10 +129,8 @@ async def analyze_stock_stream(nested_request: NestedAnalysisRequest):
         return StreamingResponse(stream_wrapper(), media_type="text/event-stream")
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.error(f"AI分析请求验证失败: {e}")
+        raise ValidationException(f"请求参数验证失败: {str(e)}")
     except Exception as e:
         logger.error(f"启动AI分析失败: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"启动AI分析失败: {str(e)}"
-        )
+        raise AIServiceException(f"启动AI分析失败: {str(e)}")

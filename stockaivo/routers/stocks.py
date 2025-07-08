@@ -13,6 +13,10 @@ from ..database import get_db
 from ..data_service import get_stock_data
 from ..schemas import StockDataResponse, ErrorResponse
 
+# 导入现代化依赖注入和异常处理模块
+from ..dependencies import DatabaseDep
+from ..exceptions import DataServiceException, ValidationException
+
 # 配置日志
 logger = logging.getLogger(__name__)
 
@@ -42,9 +46,9 @@ def validate_ticker(ticker: str) -> str:
 async def get_daily_data(
     ticker: str,
     background_tasks: BackgroundTasks,
+    db: DatabaseDep,
     start_date: Optional[str] = Query(None, description="开始日期 (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
-    db: Session = Depends(get_db)
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)")
 ):
     """
     获取股票日线数据
@@ -61,18 +65,18 @@ async def get_daily_data(
     try:
         # 验证股票代码
         ticker = validate_ticker(ticker)
-        
+
         logger.info(f"获取日线数据请求: {ticker}, 日期范围: {start_date} - {end_date}")
-        
+
         # 调用数据服务获取日线数据
         data = await get_stock_data(db, ticker, "daily", start_date, end_date, background_tasks)
-        
+
         if data is None or data.empty:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"在指定日期范围内未找到股票 {ticker} 的数据"
             )
-        
+
         # 构建响应
         response = StockDataResponse(
             ticker=ticker,
@@ -81,27 +85,27 @@ async def get_daily_data(
             data=data.to_dict('records'),  # type: ignore
             timestamp=datetime.now()
         )
-        
+
         logger.info(f"成功返回日线数据: {ticker}, 记录数: {len(data)}")
         return response
-        
+
     except HTTPException:
         raise
+    except ValueError as e:
+        logger.error(f"股票代码验证失败 {ticker}: {e}")
+        raise ValidationException(f"股票代码验证失败: {str(e)}")
     except Exception as e:
         logger.error(f"获取日线数据失败 {ticker}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取日线数据失败: {str(e)}"
-        )
+        raise DataServiceException(f"获取日线数据失败: {str(e)}")
 
 
 @router.get("/{ticker}/weekly", response_model=StockDataResponse)
 async def get_weekly_data(
     ticker: str,
     background_tasks: BackgroundTasks,
+    db: DatabaseDep,
     start_date: Optional[str] = Query(None, description="开始日期 (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
-    db: Session = Depends(get_db)
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)")
 ):
     """
     获取股票周线数据
@@ -144,21 +148,21 @@ async def get_weekly_data(
         
     except HTTPException:
         raise
+    except ValueError as e:
+        logger.error(f"股票代码验证失败 {ticker}: {e}")
+        raise ValidationException(f"股票代码验证失败: {str(e)}")
     except Exception as e:
         logger.error(f"获取周线数据失败 {ticker}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取周线数据失败: {str(e)}"
-        )
+        raise DataServiceException(f"获取周线数据失败: {str(e)}")
 
 
 @router.get("/{ticker}/hourly", response_model=StockDataResponse)
 async def get_hourly_data(
     ticker: str,
     background_tasks: BackgroundTasks,
+    db: DatabaseDep,
     start_date: Optional[str] = Query(None, description="开始日期 (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
-    db: Session = Depends(get_db)
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)")
 ):
     """
     获取股票小时线数据
@@ -201,9 +205,9 @@ async def get_hourly_data(
         
     except HTTPException:
         raise
+    except ValueError as e:
+        logger.error(f"股票代码验证失败 {ticker}: {e}")
+        raise ValidationException(f"股票代码验证失败: {str(e)}")
     except Exception as e:
         logger.error(f"获取小时线数据失败 {ticker}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取小时线数据失败: {str(e)}"
-        )
+        raise DataServiceException(f"获取小时线数据失败: {str(e)}")

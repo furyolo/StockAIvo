@@ -22,6 +22,11 @@ from stockaivo.routers import stocks_router
 from stockaivo.routers.ai import router as ai_router
 from stockaivo.routers.search import router as search_router
 from stockaivo.background_scheduler import start_scheduler, stop_scheduler
+
+# 导入现代化依赖注入和异常处理模块
+from stockaivo.dependencies import DatabaseDep
+from stockaivo.exceptions import register_exception_handlers
+from stockaivo.middleware import register_middleware
 # from stockaivo.ai.orchestrator import cleanup_orchestrator # Removed after refactor
 # from stockaivo.ai.llm_service import cleanup_llm_service # Removed after refactor
 
@@ -95,6 +100,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册现代化中间件
+register_middleware(app)
+
+# 注册现代化异常处理器
+register_exception_handlers(app)
 
 # 包含路由器
 app.include_router(stocks_router)
@@ -206,7 +217,7 @@ async def check_pending_data():
 
 
 @app.post("/persist-data", tags=["数据持久化"], status_code=status.HTTP_202_ACCEPTED)
-async def persist_data_endpoint(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def persist_data_endpoint(background_tasks: BackgroundTasks, db: DatabaseDep):
     """
     异步执行数据持久化操作。
     将Redis中的待处理数据批量写入PostgreSQL数据库。
@@ -271,17 +282,8 @@ async def get_cache_statistics():
 
 
 # 异常处理器
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """全局异常处理器"""
-    logger.error(f"未处理的异常: {exc}")
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "detail": "服务器内部错误",
-            "timestamp": datetime.now().isoformat()
-        }
-    )
+# 旧的全局异常处理器已被现代化异常处理器替代
+# 新的异常处理器在 stockaivo.exceptions 模块中定义并通过 register_exception_handlers() 注册
 
 
 # 应用入口点
