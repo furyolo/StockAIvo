@@ -17,7 +17,14 @@ class StockPriceBase(BaseModel):
     low: Decimal = Field(..., description="最低价", ge=0)
     close: Decimal = Field(..., description="收盘价", ge=0)
     volume: Optional[int] = Field(None, description="成交量", ge=0)
-    
+
+    # 新增交易指标字段
+    turnover: Optional[int] = Field(None, description="交易额", ge=0)
+    amplitude: Optional[Decimal] = Field(None, description="振幅(%)")
+    price_change_percent: Optional[Decimal] = Field(None, description="涨跌幅(%)")
+    price_change: Optional[Decimal] = Field(None, description="涨跌额")
+    turnover_rate: Optional[Decimal] = Field(None, description="换手率(%)")
+
     class Config:
         from_attributes = True
 

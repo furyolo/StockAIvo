@@ -14,6 +14,8 @@ interface ChartData {
   low: number;
   close: number;
   volume?: number;
+  price_change?: number;
+  price_change_percent?: number;
 }
 
 function App() {
@@ -22,10 +24,25 @@ function App() {
   const [chartData, setChartData] = useState<ChartData[]>([]);
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'hourly'>('daily');
   const [isLoading, setIsLoading] = useState(false);
+  const [currentOHLC, setCurrentOHLC] = useState<ChartData | null>(null);
 
   const handleSelectStock = (symbol: string, name: string) => {
     setSelectedStock(symbol);
     setStockName(name);
+    setCurrentOHLC(null); // 重置 OHLC 数据
+  };
+
+  const handleOHLCChange = (ohlc: ChartData | null) => {
+    setCurrentOHLC(ohlc);
+  };
+
+  // 计算涨跌颜色 - 与K线一致，基于当日收盘价 vs 开盘价
+  const getPriceColor = (ohlc: ChartData) => {
+    const closePrice = ohlc.close;
+    const openPrice = ohlc.open;
+    if (closePrice > openPrice) return 'text-green-600'; // 当日上涨（收盘 > 开盘）
+    if (closePrice < openPrice) return 'text-red-600'; // 当日下跌（收盘 < 开盘）
+    return 'text-black'; // 平盘（收盘 = 开盘）
   };
 
   const fetchStockData = async (symbol: string, selectedPeriod: string) => {
@@ -44,6 +61,8 @@ function App() {
           low: parseFloat(item.low),
           close: parseFloat(item.close),
           volume: item.volume ? parseInt(item.volume) : undefined,
+          price_change: item.price_change ? parseFloat(item.price_change) : undefined,
+          price_change_percent: item.price_change_percent ? parseFloat(item.price_change_percent) : undefined,
         }));
         setChartData(formattedData);
       } else {
@@ -70,6 +89,8 @@ function App() {
     }
   };
 
+
+
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -94,13 +115,51 @@ function App() {
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 flex-wrap">
                     <BarChart3 className="h-5 w-5" />
                     股票图表
                     {selectedStock && (
                       <span className="text-sm font-normal text-gray-600">
                         - {selectedStock} {stockName}
                       </span>
+                    )}
+                    {/* OHLC 信息显示 */}
+                    {currentOHLC && (
+                      <div className="flex items-center gap-3 text-sm font-mono ml-4">
+                        <span>
+                          <span className="text-black">开=</span>
+                          <span className={getPriceColor(currentOHLC)}>
+                            {currentOHLC.open.toFixed(2)}
+                          </span>
+                        </span>
+                        <span>
+                          <span className="text-black">高=</span>
+                          <span className={getPriceColor(currentOHLC)}>
+                            {currentOHLC.high.toFixed(2)}
+                          </span>
+                        </span>
+                        <span>
+                          <span className="text-black">低=</span>
+                          <span className={getPriceColor(currentOHLC)}>
+                            {currentOHLC.low.toFixed(2)}
+                          </span>
+                        </span>
+                        <span>
+                          <span className="text-black">收=</span>
+                          <span className={getPriceColor(currentOHLC)}>
+                            {currentOHLC.close.toFixed(2)}
+                            {currentOHLC.price_change !== undefined && currentOHLC.price_change_percent !== undefined && (
+                              <>
+                                {' '}
+                                {currentOHLC.price_change >= 0 ? '+' : ''}
+                                {currentOHLC.price_change.toFixed(2)}
+                                （{currentOHLC.price_change_percent >= 0 ? '+' : ''}
+                                {currentOHLC.price_change_percent.toFixed(2)}%）
+                              </>
+                            )}
+                          </span>
+                        </span>
+                      </div>
                     )}
                   </CardTitle>
                   <div className="flex items-center gap-2">
@@ -132,7 +191,11 @@ function App() {
                       <div className="text-gray-500">加载中...</div>
                     </div>
                   ) : chartData.length > 0 ? (
-                    <TradingViewChart data={chartData} height={500} />
+                    <TradingViewChart
+                      data={chartData}
+                      height={500}
+                      onOHLCChange={handleOHLCChange}
+                    />
                   ) : (
                     <div className="flex items-center justify-center h-96">
                       <div className="text-gray-500">暂无数据</div>
