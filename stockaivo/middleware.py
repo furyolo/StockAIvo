@@ -154,12 +154,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         
         # 为API添加适当的CSP
         if request.url.path.startswith("/docs") or request.url.path.startswith("/redoc"):
-            # 为API文档页面设置宽松的CSP
+            # 为API文档页面设置宽松的CSP，允许CDN资源
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-                "style-src 'self' 'unsafe-inline'; "
-                "img-src 'self' data:;"
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: https://fastapi.tiangolo.com; "
+                "connect-src 'self';"
             )
         else:
             # 为API端点设置严格的CSP

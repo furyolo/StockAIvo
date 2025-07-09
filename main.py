@@ -18,9 +18,7 @@ from stockaivo.database import get_db
 from stockaivo.database_writer import persist_pending_data
 from stockaivo.cache_manager import get_pending_data_keys, health_check as redis_health_check, get_cache_stats
 from stockaivo.data_service import get_stock_data, check_data_service_health, PeriodType
-from stockaivo.routers import stocks_router
-from stockaivo.routers.ai import router as ai_router
-from stockaivo.routers.search import router as search_router
+from stockaivo.routers import stocks_router, ai_router, search_router
 from stockaivo.background_scheduler import start_scheduler, stop_scheduler
 
 # 导入现代化依赖注入和异常处理模块
