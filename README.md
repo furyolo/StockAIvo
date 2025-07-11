@@ -24,31 +24,35 @@
 
 ## ✨ 核心特性
 
-### � 智能数据管理
+### 📊 智能数据管理
 - **三级缓存策略**: Redis → PostgreSQL → AKShare，确保高效可靠的数据获取
-- **多时间粒度**: 支持日线、周线、小时线数据
+- **多时间粒度**: 支持日线、周线数据（小时线功能待开发）
 - **智能数据补全**: 自动检测并补全缺失数据
 - **交易日历感知**: 基于NYSE交易日历的智能日期处理
+- **动态交易日计算**: AI分析中自动计算实际交易日数量
 
 ### 🤖 AI分析引擎
 - **多Agent协同**: 基于LangGraph的分布式AI分析架构
 - **流式分析**: 实时流式输出分析结果
-- **多维度分析**: 技术面、基本面、情感面综合分析
-- **自定义时间范围**: 灵活的分析时间窗口设置
+- **技术分析**: 完整的技术指标计算（MA、RSI、MACD、布林带、ATR等）
+- **基本面分析**: 基于市场认知的基本面评估（数据源待扩展）
+- **情感分析**: 市场情绪评估（数据源待扩展）
+- **智能时间范围**: 基于实际交易日的精确分析时间窗口
 
 ### 🎨 现代化界面
 - **专业图表**: 基于TradingView Lightweight Charts的K线图表，支持实时OHLC数据显示
 - **智能搜索**: 股票代码、公司名称的模糊匹配和实时建议
 - **响应式设计**: 适配桌面和移动设备
 - **一致性体验**: 图表K线与OHLC信息颜色逻辑统一，完整显示价格变化和百分比
+- **实时分析**: 支持流式AI分析结果展示
 
 ## 🛠️ 技术栈
 
-**后端**: Python 3.12 + FastAPI + PostgreSQL + Redis + LangGraph  
-**前端**: React 19 + TypeScript + Vite + TailwindCSS + shadcn/ui  
-**AI**: LangGraph + LangChain + Google Gemini  
-**数据**: AKShare + pandas-market-calendars  
-**工具**: uv (Python) + pnpm (Node.js) + MyPy + ESLint
+**后端**: Python 3.12 + FastAPI + PostgreSQL + Redis + LangGraph
+**前端**: React 19 + TypeScript + Vite + TailwindCSS 4 + shadcn/ui
+**AI**: LangGraph + LangChain + Google Gemini
+**数据**: AKShare + pandas-market-calendars
+**工具**: uv (Python) + pnpm (Node.js) + MyPy + ESLint + Vitest
 
 ## 🚀 快速开始
 
@@ -90,18 +94,24 @@ cd frontend && pnpm dev  # http://localhost:5173
 ```http
 # 股票数据
 GET /stocks/{ticker}/daily?start_date=2024-01-01&end_date=2024-12-31
-GET /stocks/{ticker}/weekly
-GET /stocks/{ticker}/hourly
+GET /stocks/{ticker}/weekly?start_date=2024-01-01&end_date=2024-12-31
 
 # 股票搜索
-GET /search/stocks?q=apple
-GET /search/stocks/suggestions?q=app
+GET /search/stocks?q=apple&page=1&page_size=10
+GET /search/stocks/suggestions?q=app&limit=5
 
-# AI分析 (支持流式响应)
+# AI分析 (支持流式和非流式响应)
 POST /ai/analyze
 {
   "ticker": "AAPL",
-  "date_range_option": "3m"
+  "date_range_option": "past_90_days"
+}
+
+POST /ai/analyze-stream  # 流式响应
+{
+  "ticker": "AAPL",
+  "start_date": "2024-01-01",
+  "end_date": "2024-12-31"
 }
 
 # 系统监控
@@ -110,6 +120,10 @@ GET /cache-stats         # 缓存统计
 POST /persist-data       # 手动数据持久化
 ```
 
+**支持的日期范围选项**:
+- `past_30_days`, `past_60_days`, `past_90_days`, `past_180_days`, `past_1_year`
+- `past_8_weeks`, `past_16_weeks`, `past_24_weeks`, `past_52_weeks`
+
 完整API文档: `http://127.0.0.1:8000/docs`
 
 ## 📁 项目结构
@@ -117,27 +131,45 @@ POST /persist-data       # 手动数据持久化
 ```
 StockAIvo/
 ├── frontend/                   # React前端
-│   ├── src/components/         # UI组件
-│   └── ...
+│   ├── src/
+│   │   ├── components/         # UI组件
+│   │   │   ├── StockSearch.tsx      # 股票搜索组件
+│   │   │   ├── TradingViewChart.tsx # 图表组件
+│   │   │   ├── AIAnalysis.tsx       # AI分析组件
+│   │   │   └── ui/                  # shadcn/ui组件
+│   │   └── App.tsx             # 主应用组件
+│   ├── package.json            # 前端依赖配置
+│   └── vite.config.ts          # Vite配置
 ├── stockaivo/                  # 后端核心
 │   ├── ai/                     # AI分析引擎
+│   │   ├── agents.py           # AI Agent定义
+│   │   ├── orchestrator.py     # LangGraph工作流编排
+│   │   ├── llm_service.py      # LLM服务封装
+│   │   ├── technical_indicator.py # 技术指标计算
+│   │   └── state.py            # 状态管理
 │   ├── routers/                # API路由
+│   │   ├── stocks.py           # 股票数据API
+│   │   ├── ai.py               # AI分析API
+│   │   └── search.py           # 搜索API
 │   ├── dependencies.py         # 依赖注入
 │   ├── exceptions.py           # 异常处理
 │   ├── middleware.py           # 中间件
 │   ├── data_service.py         # 数据服务
 │   ├── search_service.py       # 搜索服务
-│   └── ...
+│   ├── database.py             # 数据库连接
+│   ├── models.py               # 数据模型
+│   └── schemas.py              # API模式
 ├── tests/                      # 测试代码
-├── database_migrations/        # 数据库迁移
 ├── main.py                     # 应用入口
-└── pyproject.toml              # 项目配置
+├── pyproject.toml              # 项目配置
+├── CONFIGURATION.md            # 配置说明
+└── README.md                   # 项目文档
 ```
 
 ## 🧪 测试 & 开发
 
 ```bash
-# 运行测试
+# 后端测试
 uv run pytest tests/ -v
 
 # 类型检查
@@ -145,10 +177,13 @@ uv run mypy stockaivo/
 
 # 前端测试
 cd frontend && pnpm test
+cd frontend && pnpm test:ui  # 可视化测试界面
 
-# 调试技巧
+# 开发调试
 export LOG_LEVEL=DEBUG
-uv run dev
+uv run dev  # 后端开发服务器
+
+cd frontend && pnpm dev  # 前端开发服务器
 
 # 查看系统状态
 curl http://127.0.0.1:8000/health
@@ -157,11 +192,19 @@ curl http://127.0.0.1:8000/cache-stats
 
 ### 架构最佳实践
 - **依赖注入**: 使用 `DatabaseDep` 等类型别名
-- **异常处理**: 使用 `ValidationException`、`DataServiceException` 等自定义异常
+- **异常处理**: 使用 `ValidationException`、`DataServiceException`、`AIServiceException` 等自定义异常
 - **中间件**: 可配置的请求日志、性能监控、安全头
 - **类型安全**: 完整的 MyPy 类型检查支持
+- **AI工作流**: 基于LangGraph的模块化Agent架构
+- **缓存策略**: Redis优先的三级缓存机制
 
 ## 📋 更新日志
+
+### v1.4.0 (2025-07-11) - AI分析优化
+- 🤖 **智能交易日计算**: AI Prompt中动态显示实际交易日数量，排除周末和假期
+- 📊 **技术指标增强**: 完善技术分析Agent的指标计算和展示逻辑
+- ⚡ **代码优化**: 简化交易日计算逻辑，提高性能和可维护性
+- 🎯 **精确时间范围**: 所有AI分析现在基于实际交易日进行精确预测
 
 ### v1.3.0 (2025-07-09) - 图表显示优化
 - 🎨 **图表数据完整性**: 修复API响应中缺失的price_change和price_change_percent字段

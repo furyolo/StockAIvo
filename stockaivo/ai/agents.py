@@ -7,6 +7,7 @@ Each function represents an agent and will be a node in the graph.
 
 import asyncio
 import pandas as pd
+import pandas_market_calendars as mcal
 from typing import Dict, Any, Optional, AsyncGenerator
 from datetime import date, timedelta, datetime
 from stockaivo.data_service import get_stock_data, PeriodType
@@ -156,10 +157,50 @@ def _get_target_friday_date() -> str:
 
     return target_date.strftime("%Y-%m-%d")
 
+def _calculate_trading_days_until_target(target_date_str: str) -> int:
+    """
+    计算从今天到目标日期的交易日总数（包括今天和目标日期）
+
+    Args:
+        target_date_str: 目标日期字符串 (YYYY-MM-DD)
+
+    Returns:
+        int: 交易日数量
+    """
+    try:
+        today = datetime.now().date()
+        target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
+
+        # 如果目标日期在今天之前，返回0
+        if target_date < today:
+            return 0
+
+        # 使用NYSE日历获取交易日
+        nyse_calendar = mcal.get_calendar('NYSE')
+
+        # 获取从今天到目标日期的所有交易日（包括今天和目标日期）
+        schedule = nyse_calendar.schedule(start_date=today, end_date=target_date)
+
+        # 返回交易日总数
+        return len(schedule)
+
+    except Exception:
+        # 如果出错，返回一个估算值（假设每周5个交易日）
+        try:
+            today = datetime.now().date()
+            target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
+            days_diff = (target_date - today).days + 1  # +1 包括今天
+            # 粗略估算：每7天约5个交易日
+            estimated_trading_days = int(days_diff * 5 / 7)
+            return max(1, estimated_trading_days)  # 至少返回1
+        except:
+            return 1  # 默认返回1
+
 def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_price_str: str,
                                    daily_indicators: list[str] | None = None, weekly_indicators: list[str] | None = None) -> str:
     """构建技术分析的提示词，根据实际计算的指标动态调整"""
     target_date = _get_target_friday_date()
+    trading_days_count = _calculate_trading_days_until_target(target_date)
 
     # 构建技术指标说明
     def build_indicators_description(indicators: list[str]) -> str:
@@ -211,7 +252,7 @@ def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_p
     analysis_requirements = []
 
     # 基础价格分析（总是可用）
-    analysis_requirements.append("1.  **价格趋势分析:** 结合日线和周线图，分析当前的短期趋势（上升、下降、横盘），并识别到 {target_date} 前可能的趋势变化。")
+    analysis_requirements.append(f"1.  **价格趋势分析:** 结合日线和周线图，分析当前的短期趋势（上升、下降、横盘），并识别到 {target_date} 前{trading_days_count}个交易日可能的趋势变化。")
 
     # 移动平均线分析
     if any(ind.startswith('MA') for ind in (daily_indicators or [])):
@@ -245,12 +286,12 @@ def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_p
         analysis_requirements.append("5.  **波动率和风险:** 分析ATR和波动率指标，评估当前市场的波动程度和风险水平。")
 
     # 短期前景（总是包含）
-    analysis_requirements.append(f"6.  **短期前景:** 提供一个简洁的总结，重点关注到 {target_date} 前的短期交易机会和风险点，并给出具体的进出场建议。")
+    analysis_requirements.append(f"6.  **短期前景:** 提供一个简洁的总结，重点关注到 {target_date} 前{trading_days_count}个交易日的短期交易机会和风险点，并给出具体的进出场建议。")
 
     return f"""
     你是一位专业的股票技术分析师。请根据以下为股票代码 {ticker} 提供的日线和周线价格、交易量数据以及已计算的技术指标，进行深入的短期技术分析。
 
-    **分析时间范围:** 重点关注到 {target_date}（最近的周五或交易日）之前的短期走势和交易机会。
+    **分析时间范围:** 重点关注到 {target_date} 之前{trading_days_count}个交易日的短期走势和交易机会。
 
     **日线数据技术指标:**
     {daily_indicators_desc}
@@ -267,7 +308,7 @@ def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_p
     **周线数据（含技术指标）:**
     {weekly_price_str}
 
-    请基于上述可用的技术指标数据提供你的专业短期技术分析报告，重点关注到 {target_date} 前的交易机会。
+    请基于上述可用的技术指标数据提供你的专业短期技术分析报告，重点关注到 {target_date} 前{trading_days_count}个交易日的交易机会。
     """
 
 def _process_technical_analysis_data(state: GraphState) -> tuple[str, str, str, list[str], list[str]]:
@@ -397,6 +438,7 @@ def _build_synthesis_prompt(ticker: str, data_collector_result: str, technical_r
                            fundamental_result: str, news_result: str, available_analyses: list[str]) -> str:
     """构建综合分析的提示词"""
     target_date = _get_target_friday_date()
+    trading_days_count = _calculate_trading_days_until_target(target_date)
 
     # 构建分析部分
     analysis_sections = [f"**数据收集情况:**\n{data_collector_result}"]
@@ -416,16 +458,15 @@ def _build_synthesis_prompt(ticker: str, data_collector_result: str, technical_r
         return f"""
         作为一名资深的投资顾问，请基于以下技术分析报告，为股票 {ticker} 提供一份短期投资建议报告。
 
-        **分析时间范围:** 重点关注到 {target_date} 之前的短期投资机会。
+        **分析时间范围:** 重点关注到 {target_date} 之前{trading_days_count}个交易日的短期投资机会。
 
         {chr(10).join(analysis_sections)}
 
         **请提供以下内容的短期分析:**
-        1. **短期投资建议**: 基于技术分析，给出到 {target_date} 前的明确投资建议（买入/持有/卖出）
-        2. **短期风险评估**: 识别到 {target_date} 前的主要技术风险因素和机会
-        3. **关键技术观察点**: 投资者在 {target_date} 前应该重点关注的技术指标和价格水平
-        4. **短期时间框架**: 建议的短期投资时间框架（1-5个交易日）
-        5. **短期执行策略**: 到 {target_date} 前的具体买卖点位建议
+        1. **短期投资建议**: 基于技术分析，给出到 {target_date} 前{trading_days_count}个交易日的明确投资建议（买入/持有/卖出）
+        2. **短期风险评估**: 识别到 {target_date} 前{trading_days_count}个交易日的主要技术风险因素和机会
+        3. **关键技术观察点**: 投资者在 {target_date} 前{trading_days_count}个交易日应该重点关注的技术指标和价格水平
+        4. **短期执行策略**: 到 {target_date} 前{trading_days_count}个交易日的具体买卖点位建议
 
         请提供专业、客观且实用的短期投资建议。注意：由于缺乏基本面和新闻数据，本分析主要基于技术面。
         """
@@ -434,16 +475,15 @@ def _build_synthesis_prompt(ticker: str, data_collector_result: str, technical_r
         return f"""
         作为一名资深的投资顾问，请基于以下各专业分析师的报告，为股票 {ticker} 提供一份短期综合投资建议报告。
 
-        **分析时间范围:** 重点关注到 {target_date} 之前的短期投资机会。
+        **分析时间范围:** 重点关注到 {target_date} 之前{trading_days_count}个交易日的短期投资机会。
 
         {chr(10).join(analysis_sections)}
 
         **请提供以下内容的短期综合分析:**
-        1. **短期投资建议**: 基于所有可用分析，给出到 {target_date} 前的明确投资建议（买入/持有/卖出）
-        2. **短期风险评估**: 识别到 {target_date} 前的主要风险因素和机会
-        3. **关键观察点**: 投资者在 {target_date} 前应该重点关注的指标和事件
-        4. **短期时间框架**: 建议的短期投资时间框架（1-5个交易日）
-        5. **短期执行策略**: 到 {target_date} 前的具体买卖点位建议
+        1. **短期投资建议**: 基于所有可用分析，给出到 {target_date} 前{trading_days_count}个交易日的明确投资建议（买入/持有/卖出）
+        2. **短期风险评估**: 识别到 {target_date} 前{trading_days_count}个交易日的主要风险因素和机会
+        3. **关键观察点**: 投资者在 {target_date} 前{trading_days_count}个交易日应该重点关注的指标和事件
+        4. **短期执行策略**: 到 {target_date} 前{trading_days_count}个交易日的具体买卖点位建议
 
         请提供专业、客观且实用的短期投资建议。
         """
