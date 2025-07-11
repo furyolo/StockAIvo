@@ -403,8 +403,11 @@ def _get_latest_complete_weekly_end_date(target_date: date) -> date:
 
     对于周线数据，我们需要避免获取当前未完成周的数据：
     - 如果当前是周一到周四，返回上一个完整周的最后一个交易日
-    - 如果当前是周五，检查是否为交易日且市场已收盘，如果是则返回当前周五，否则返回上一个完整周的最后一个交易日
+    - 如果当前是周五且为交易日，当前周还在进行中，跳过当前周，返回上一个完整周的最后一个交易日
+    - 如果当前是周五且非交易日，当前周已结束，返回本周的最后一个交易日
     - 如果当前是周末，返回本周的最后一个交易日（通常是周五，但如果周五是假期则是周四等）
+
+    这样确保了周线数据始终是完整的，避免获取当前不完整周的数据。
 
     Args:
         target_date (date): 目标日期
@@ -450,16 +453,26 @@ def _get_latest_complete_weekly_end_date(target_date: date) -> date:
         elif current_weekday == 4:  # 周五 (4)
             # 检查当前周五是否为交易日
             if target_date in trading_days_set:
-                # 当前周五是交易日，可以使用当前周五
-                logger.info(f"当前是周五且为交易日，使用当前周五 {target_date} 作为周线数据结束日期")
-                return target_date
+                # 当前周五是交易日，当前周还在进行中，数据不完整
+                # 跳过当前周，使用上一个完整周的最后一个交易日
+                days_to_last_sunday = current_weekday + 1  # 到上周日的天数
+                last_sunday = target_date - timedelta(days=days_to_last_sunday)
+
+                # 从上周日开始往前找最近的交易日（这将是上一个完整周的最后一个交易日）
+                search_date = last_sunday
+                while search_date >= search_start:
+                    if search_date in trading_days_set:
+                        logger.info(f"当前是周五交易日，为避免获取不完整周数据，跳过本周，使用上一个完整周的最后交易日 {search_date} 作为周线数据结束日期")
+                        return search_date
+                    search_date -= timedelta(days=1)
             else:
-                # 当前周五不是交易日，找本周的最后一个交易日（往前找到周四、周三等）
+                # 当前周五不是交易日，说明当前周已经结束，数据完整
+                # 找本周的最后一个交易日（往前找到周四、周三等）
                 search_date = target_date - timedelta(days=1)  # 从周四开始
 
                 while search_date >= search_start:
                     if search_date in trading_days_set:
-                        logger.info(f"当前周五非交易日，使用本周最后交易日 {search_date} 作为周线数据结束日期")
+                        logger.info(f"当前周五非交易日，当前周已结束，使用本周最后交易日 {search_date} 作为周线数据结束日期")
                         return search_date
                     search_date -= timedelta(days=1)
 
@@ -516,22 +529,51 @@ def _get_required_dates(period: PeriodType, start_date_str: Optional[str], end_d
             return sorted(list(trading_days_set))
         
         elif period == "weekly":
-            # 1. 获取所有交易日（Datetime对象）
-            all_trading_days = pd.to_datetime([d.date() for d in schedule.index])
+            # 修复周线逻辑：找到每周的最后一个交易日，而不是只考虑周五
+            # 这与 _get_latest_complete_weekly_end_date 的逻辑保持一致
 
-            # 2. 将每个交易日向前滚动到其所在周的周五
-            potential_fridays = all_trading_days.to_series().apply(
-                lambda x: x + pd.offsets.Week(weekday=4, n=0)
-            ).dt.date
+            # 1. 获取所有交易日
+            all_trading_days = sorted([d.date() for d in schedule.index])
+            if not all_trading_days:
+                return []
 
-            # 3. (核心修复) 过滤，只保留那些本身也是交易日的周五
-            actual_fridays = [
-                friday for friday in potential_fridays
-                if friday in trading_days_set
+            # 2. 按周分组，找到每周的最后一个交易日
+            weekly_end_dates = []
+            current_week_start = None
+            current_week_end = None
+
+            for trading_day in all_trading_days:
+                # 计算该交易日所在周的周一和周日
+                weekday = trading_day.weekday()  # 0=Monday, 6=Sunday
+                week_monday = trading_day - timedelta(days=weekday)
+                week_sunday = week_monday + timedelta(days=6)
+
+                if current_week_start is None or week_monday != current_week_start:
+                    # 进入新的一周
+                    if current_week_end is not None:
+                        # 保存上一周的最后交易日
+                        weekly_end_dates.append(current_week_end)
+
+                    current_week_start = week_monday
+                    current_week_end = trading_day
+                else:
+                    # 同一周内，更新最后交易日
+                    current_week_end = trading_day
+
+            # 添加最后一周的结束日期
+            if current_week_end is not None:
+                weekly_end_dates.append(current_week_end)
+
+            # 3. 过滤日期范围内的周线数据点
+            start_date_obj = pd.to_datetime(start_date_str).date()
+            end_date_obj = pd.to_datetime(end_date_str).date()
+
+            filtered_weekly_dates = [
+                week_end for week_end in weekly_end_dates
+                if start_date_obj <= week_end <= end_date_obj
             ]
 
-            # 4. 返回去重和排序后的结果
-            return sorted(list(set(actual_fridays)))
+            return sorted(filtered_weekly_dates)
 
         elif period == "monthly":
             # monthly 逻辑保持不变
