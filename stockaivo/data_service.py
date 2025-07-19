@@ -478,13 +478,13 @@ def _get_latest_complete_weekly_end_date(target_date: date) -> date:
 
         else:  # 周末 (5-6)
             # 找本周的最后一个交易日
-            # 从当前日期往前找到本周一，然后再往前一天到上周日，再往前找最近的交易日
+            # 从当前日期往前找到本周一，然后在本周范围内找最后一个交易日
             days_to_this_monday = current_weekday  # 到本周一的天数
             this_monday = target_date - timedelta(days=days_to_this_monday)
 
-            # 从本周一开始往前找最近的交易日（这将是本周的最后一个交易日）
-            search_date = this_monday - timedelta(days=1)  # 从上周日开始
-            while search_date >= search_start:
+            # 从当前日期（周末）开始往前找，直到本周一，找到本周的最后一个交易日
+            search_date = target_date - timedelta(days=1)  # 从昨天开始（周五或周六）
+            while search_date >= this_monday:
                 if search_date in trading_days_set:
                     logger.info(f"当前是周末，使用本周的最后交易日 {search_date} 作为周线数据结束日期")
                     return search_date

@@ -3,10 +3,11 @@ StockAIvo - SQLAlchemy ORM Models
 智能美股数据与分析平台的数据模型定义
 
 包含以下核心模型：
-- Stock: 股票基本信息
 - StockPriceDaily: 日K线数据
-- StockPriceWeekly: 周K线数据  
+- StockPriceWeekly: 周K线数据
 - StockPriceHourly: 小时K线数据
+- StockSymbols: 股票代码映射表
+- UsStocksName: 美股名称表
 """
 
 from datetime import datetime, date
@@ -24,41 +25,7 @@ metadata_obj = MetaData(schema="public")
 Base = declarative_base(metadata=metadata_obj)
 
 
-class Stock(Base):
-    """
-    股票基本信息表
-    存储美国股票市场中股票的基础信息
-    """
-    __tablename__ = 'stocks'
-    
-    # 主键：股票代码
-    ticker = Column(String(10), primary_key=True, comment='股票代码，如AAPL, TSLA')
-    
-    # 基本信息字段
-    company_name = Column(String(255), nullable=False, comment='公司名称')
-    exchange = Column(String(10), nullable=False, comment='交易所代码，如NASDAQ, NYSE')
-    sector = Column(String(100), nullable=True, comment='所属行业')
-    industry = Column(String(100), nullable=True, comment='细分行业')
-    market_cap = Column(BigInteger, nullable=True, comment='市值（美元）')
-    
-    # 时间戳字段
-    created_at = Column(DateTime, default=datetime.utcnow, comment='记录创建时间')
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
-    
-    # 建立与价格数据表的关系
-    daily_prices = relationship("StockPriceDaily", back_populates="stock", cascade="all, delete-orphan")
-    weekly_prices = relationship("StockPriceWeekly", back_populates="stock", cascade="all, delete-orphan")
-    hourly_prices = relationship("StockPriceHourly", back_populates="stock", cascade="all, delete-orphan")
-    
-    # 创建索引
-    __table_args__ = (
-        Index('idx_stocks_exchange', 'exchange'),
-        Index('idx_stocks_sector', 'sector'),
-        {'comment': '股票基本信息表'}
-    )
-    
-    def __repr__(self):
-        return f"<Stock(ticker='{self.ticker}', company_name='{self.company_name}', exchange='{self.exchange}')>"
+
 
 class StockSymbols(Base):
     """
@@ -88,7 +55,7 @@ class StockPriceDaily(Base):
     __tablename__ = 'stock_prices_daily'
     
     # 复合主键：股票代码 + 日期
-    ticker = Column(String(10), ForeignKey('stocks.ticker'), primary_key=True, nullable=False, comment='股票代码')
+    ticker = Column(String(10), primary_key=True, nullable=False, comment='股票代码')
     date = Column(Date, primary_key=True, nullable=False, comment='交易日期')
     
     # OHLCV数据
@@ -108,9 +75,6 @@ class StockPriceDaily(Base):
     # 时间戳字段
     created_at = Column(DateTime, default=datetime.utcnow, comment='记录创建时间')
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
-    
-    # 外键关系
-    stock = relationship("Stock", back_populates="daily_prices")
     
     # 表约束和索引
     __table_args__ = (
@@ -133,7 +97,7 @@ class StockPriceWeekly(Base):
     __tablename__ = 'stock_prices_weekly'
     
     # 复合主键：股票代码 + 日期
-    ticker = Column(String(10), ForeignKey('stocks.ticker'), primary_key=True, nullable=False, comment='股票代码')
+    ticker = Column(String(10), primary_key=True, nullable=False, comment='股票代码')
     date = Column(Date, primary_key=True, nullable=False, comment='周结束日期（周五）')
     
     # OHLCV数据
@@ -153,9 +117,6 @@ class StockPriceWeekly(Base):
     # 时间戳字段
     created_at = Column(DateTime, default=datetime.utcnow, comment='记录创建时间')
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
-    
-    # 外键关系
-    stock = relationship("Stock", back_populates="weekly_prices")
     
     # 表约束和索引
     __table_args__ = (
@@ -179,7 +140,7 @@ class StockPriceHourly(Base):
     
     # 复合主键：股票代码 + 小时时间戳
     id = Column(Integer, primary_key=True, autoincrement=True, comment='自增主键ID')
-    ticker = Column(String(10), ForeignKey('stocks.ticker'), nullable=False, comment='股票代码')
+    ticker = Column(String(10), nullable=False, comment='股票代码')
     hour_timestamp = Column(DateTime, nullable=False, comment='小时时间戳')
     
     # OHLCV数据
@@ -192,9 +153,6 @@ class StockPriceHourly(Base):
     # 时间戳字段
     created_at = Column(DateTime, default=datetime.utcnow, comment='记录创建时间')
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
-    
-    # 外键关系
-    stock = relationship("Stock", back_populates="hourly_prices")
     
     # 表约束和索引
     __table_args__ = (

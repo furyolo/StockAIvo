@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
 
-from .models import Stock, StockSymbols
+from .models import StockSymbols
 
 # 加载环境变量
 load_dotenv()

@@ -12,7 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from datetime import datetime, date, timezone
 
 from . import database
-from .models import Stock, StockPriceDaily, StockPriceWeekly, StockPriceHourly
+from .models import StockPriceDaily, StockPriceWeekly, StockPriceHourly
 from .cache_manager import get_pending_data_from_redis, clear_saved_data, delete_from_redis
 
 # 配置日志
@@ -27,30 +27,7 @@ class DatabaseWriter:
         """初始化数据库写入器"""
         pass
     
-    def _prepare_stock_data(self, ticker: str) -> Dict[str, Any]:
-        """
-        准备股票基本信息数据
-        
-        Args:
-            ticker: 股票代码
-            
-        Returns:
-            Dict: 股票基本信息字典
-        """
-        # 对于从AKShare获取的数据，我们可能没有完整的公司信息
-        # 这里提供基本的占位符数据，后续可以通过其他API补充
-        stock_data = {
-            'ticker': ticker,
-            'company_name': f'{ticker} Company',  # 占位符，后续可补充
-            'exchange': 'NASDAQ',  # 默认值，后续可根据ticker推断或查询
-            'sector': None,
-            'industry': None,
-            'market_cap': None,
-            'created_at': datetime.now(timezone.utc),
-            'updated_at': datetime.now(timezone.utc)
-        }
-        
-        return stock_data
+
     
     def _prepare_daily_price_data(self, ticker: str, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """
@@ -206,37 +183,7 @@ class DatabaseWriter:
         
         return hourly_data
     
-    def _upsert_stock_info(self, db: Session, ticker: str) -> bool:
-        """
-        插入或更新股票基本信息
-        
-        Args:
-            db: 数据库会话
-            ticker: 股票代码
-            
-        Returns:
-            bool: 操作成功返回True
-        """
-        try:
-            # 准备股票基本信息
-            stock_data = self._prepare_stock_data(ticker)
-            
-            # 使用PostgreSQL的UPSERT语法
-            stmt = insert(Stock).values(**stock_data)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=['ticker'],
-                set_={
-                    'updated_at': datetime.now(timezone.utc)
-                }
-            )
-            
-            db.execute(stmt)
-            logger.info(f"成功处理股票基本信息: {ticker}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"处理股票基本信息失败 {ticker}: {e}")
-            return False
+
     
     def _batch_upsert_prices(self, db: Session, table_class, price_data: List[Dict[str, Any]], 
                            conflict_columns: List[str]) -> int:
@@ -323,12 +270,7 @@ class DatabaseWriter:
                 try:
                     # 开始事务处理这个数据条目
                     with db.begin():
-                        # 2.1 确保股票基本信息存在
-                        stock_success = self._upsert_stock_info(db, ticker)
-                        if not stock_success:
-                            raise Exception(f"处理股票基本信息失败: {ticker}")
-                        
-                        # 2.2 根据period类型处理价格数据
+                        # 根据period类型处理价格数据
                         processed_rows = 0
                         
                         if period == 'daily':
@@ -421,12 +363,7 @@ class DatabaseWriter:
         try:
             with database.SessionLocal() as db:
                 with db.begin():
-                    # 1. 确保股票基本信息存在
-                    stock_success = self._upsert_stock_info(db, ticker)
-                    if not stock_success:
-                        raise Exception(f"处理股票基本信息失败: {ticker}")
-
-                    # 2. 根据period类型处理价格数据
+                    # 根据period类型处理价格数据
                     processed_rows = 0
                     if period == 'daily':
                         daily_data = self._prepare_daily_price_data(ticker, dataframe)

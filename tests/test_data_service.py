@@ -547,7 +547,7 @@ class TestWeeklyEndDateLogic(unittest.TestCase):
 
     @patch('stockaivo.data_service.mcal')
     def test_get_latest_complete_weekly_end_date_friday(self, mock_mcal):
-        """测试周五时应该使用当前周五作为结束日期（如果是交易日）"""
+        """测试周五交易日时应该跳过当前周，使用上一个完整周的最后交易日"""
         from stockaivo.data_service import _get_latest_complete_weekly_end_date
         from datetime import date
 
@@ -580,9 +580,53 @@ class TestWeeklyEndDateLogic(unittest.TestCase):
         test_date = date(2025, 7, 11)  # 周五
         result = _get_latest_complete_weekly_end_date(test_date)
 
-        # 应该返回当前周五（2025-07-11）
-        expected = date(2025, 7, 11)
+        # 应该返回上一个完整周的最后交易日（2025-07-03，上周四）
+        # 因为当前周五是交易日，当前周还在进行中，数据不完整
+        expected = date(2025, 7, 3)
         self.assertEqual(result, expected)
+
+    @patch('stockaivo.data_service.mcal')
+    def test_get_latest_complete_weekly_end_date_weekend(self, mock_mcal):
+        """测试周末时应该使用本周的最后交易日作为结束日期"""
+        from stockaivo.data_service import _get_latest_complete_weekly_end_date
+        from datetime import date
+
+        # 模拟NYSE日历
+        mock_calendar = MagicMock()
+        mock_mcal.get_calendar.return_value = mock_calendar
+
+        # 创建模拟的交易日程表
+        mock_schedule = MagicMock()
+        mock_schedule.index = [
+            pd.Timestamp('2025-07-07'),  # 本周一
+            pd.Timestamp('2025-07-08'),  # 本周二
+            pd.Timestamp('2025-07-09'),  # 本周三
+            pd.Timestamp('2025-07-10'),  # 本周四
+            pd.Timestamp('2025-07-11'),  # 上周五（错误的旧行为会返回这个）
+            pd.Timestamp('2025-07-14'),  # 下周一
+            pd.Timestamp('2025-07-15'),  # 下周二
+            pd.Timestamp('2025-07-16'),  # 下周三
+            pd.Timestamp('2025-07-17'),  # 下周四
+            pd.Timestamp('2025-07-18'),  # 本周五（正确的新行为应该返回这个）
+        ]
+        mock_schedule.empty = False
+        mock_calendar.schedule.return_value = mock_schedule
+
+        # 测试周六和周日
+        test_cases = [
+            (date(2025, 7, 19), "周六"),  # 周六
+            (date(2025, 7, 20), "周日"),  # 周日
+        ]
+
+        for test_date, day_name in test_cases:
+            with self.subTest(date=test_date, day=day_name):
+                result = _get_latest_complete_weekly_end_date(test_date)
+
+                # 应该返回本周五（2025-07-18），而不是上周五（2025-07-11）
+                # 这修复了用户报告的错误：周末时错误地使用上周五作为结束日期
+                expected = date(2025, 7, 18)
+                self.assertEqual(result, expected,
+                    f"{day_name}时应该返回本周五 {expected}，而不是 {result}")
 
     @patch('stockaivo.data_service.mcal')
     def test_get_latest_complete_weekly_end_date_holiday_friday(self, mock_mcal):
