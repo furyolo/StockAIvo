@@ -24,6 +24,7 @@ from .models import StockPriceDaily, StockPriceWeekly, StockPriceHourly
 from . import data_provider
 from . import cache_manager
 from .cache_manager import CacheType
+from . import database_writer
 
  # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -713,6 +714,58 @@ def _query_database(db: Session, ticker: str, period: PeriodType, start_date: Op
         logger.error(f"查询数据库时发生错误: {e}")
         return None
 
+def _append_news_to_pending_save(ticker: str, news_data: pd.DataFrame):
+    """
+    将新闻数据安全地追加到 PENDING_SAVE 缓存中。
+
+    Args:
+        ticker: 股票代码
+        news_data: 新闻数据DataFrame
+    """
+    # {{ AURA-X: Add - 新增新闻数据临时存储函数. Approval: 寸止(ID:1737364800). }}
+    if news_data is None or news_data.empty:
+        return
+
+    # 1. 从Redis读取现有的pending_save新闻数据
+    existing_data = cache_manager.get_from_redis(ticker, "news", CacheType.PENDING_SAVE)
+
+    # 2. 合并数据并去重
+    if existing_data is not None and not existing_data.empty:
+        # {{ AURA-X: Modify - 修复新闻数据去重逻辑. Approval: 寸止(ID:1737364800). }}
+        # 合并现有数据和新数据
+        combined_data = pd.concat([existing_data, news_data], ignore_index=True)
+
+        # 确保时间列格式一致
+        if 'publish_time' in combined_data.columns:
+            combined_data['publish_time'] = pd.to_datetime(combined_data['publish_time'])
+
+        # 基于复合主键去重：title + publish_time
+        # 使用更严格的去重条件
+        if 'title' in combined_data.columns and 'publish_time' in combined_data.columns:
+            original_count = len(combined_data)
+            combined_data = combined_data.drop_duplicates(
+                subset=['title', 'publish_time'],
+                keep='last'  # 保留最新的记录
+            ).reset_index(drop=True)
+
+            duplicates_removed = original_count - len(combined_data)
+            logger.info(f"合并新闻数据: 现有 {len(existing_data)} 条 + 新增 {len(news_data)} 条 = 原始合并 {original_count} 条")
+            if duplicates_removed > 0:
+                logger.info(f"去重处理: 移除 {duplicates_removed} 条重复记录，最终 {len(combined_data)} 条")
+            else:
+                logger.info(f"去重处理: 无重复记录，保持 {len(combined_data)} 条")
+        else:
+            logger.warning("缺少去重所需的字段 (title, publish_time)，跳过去重处理")
+
+    else:
+        combined_data = news_data.copy()
+        logger.info(f"首次存储新闻数据到待持久化缓存: {len(combined_data)} 条")
+
+    # 3. 将合并后的数据写回Redis
+    cache_manager.save_to_redis(ticker, "news", combined_data, CacheType.PENDING_SAVE)
+    logger.info(f"新闻数据已更新到待持久化缓存: {ticker}, 总记录数: {len(combined_data)}")
+
+
 def _append_to_pending_save(ticker: str, period: PeriodType, new_data: pd.DataFrame):
     """
     安全地将新数据追加到 PENDING_SAVE 缓存中。
@@ -766,7 +819,7 @@ def get_cached_data_summary() -> dict:
 def check_data_service_health() -> dict:
     """
     检查数据服务健康状态
-    
+
     Returns:
         dict: 包含各组件健康状态的字典
     """
@@ -776,21 +829,82 @@ def check_data_service_health() -> dict:
         "database_connection": False,
         "akshare_available": True  # 假设AKShare总是可用的
     }
-    
+
     try:
         # 检查Redis连接
         health_status["redis_connection"] = cache_manager.health_check()
-        
+
         # 检查数据库连接
         health_status["database_connection"] = database.check_db_connection()
-        
+
         logger.info("数据服务健康检查完成")
-        
+
     except Exception as e:
         logger.error(f"数据服务健康检查失败: {e}")
         health_status["error"] = str(e)
-    
+
     return health_status
+
+
+async def get_stock_news(db: Session, ticker: str, background_tasks: Optional[BackgroundTasks] = None) -> Optional[pd.DataFrame]:
+    """
+    获取股票新闻数据的核心函数
+
+    实现逻辑流程：
+    1. 检查Redis缓存中是否有今日新闻数据
+    2. 如果没有或数据过期，从AKShare获取最新数据
+    3. 处理数据并保存到Redis和数据库
+    4. 返回处理后的新闻数据
+
+    Args:
+        db (Session): SQLAlchemy 数据库会话
+        ticker (str): 股票代码
+        background_tasks (Optional[BackgroundTasks]): 后台任务管理器
+
+    Returns:
+        Optional[pd.DataFrame]: 新闻数据DataFrame，失败时返回None
+    """
+
+    if not ticker:
+        logger.error("股票代码不能为空")
+        return None
+
+    logger.info(f"开始获取股票 {ticker} 的新闻数据...")
+
+    # 1. 检查Redis缓存
+    cached_data = cache_manager.get_from_redis(ticker, "news", CacheType.GENERAL_CACHE)
+
+    # 检查缓存数据是否仍然有效（缓存时间内的数据）
+    if cached_data is not None and not cached_data.empty:
+        logger.info(f"从缓存获取到 {ticker} 的新闻数据，共 {len(cached_data)} 条")
+        return cached_data
+
+    # 2. 从AKShare获取新闻数据
+    logger.info(f"缓存中无今日新闻数据，从AKShare获取 {ticker} 的新闻数据...")
+    try:
+        news_data = await data_provider.fetch_stock_news_from_akshare(db, ticker)
+
+        if news_data is None or news_data.empty:
+            logger.warning(f"无法从AKShare获取 {ticker} 的新闻数据")
+            return None
+
+        logger.info(f"成功从AKShare获取 {len(news_data)} 条新闻数据")
+
+        # 3. 保存到Redis缓存（设置较短的过期时间，因为新闻数据更新频繁）
+        cache_manager.save_to_redis(ticker, "news", news_data, CacheType.GENERAL_CACHE)
+
+        # 4. 将新闻数据存入待持久化缓存，等待定时任务批量处理
+        # {{ AURA-X: Modify - 实现新闻数据异步持久化机制. Approval: 寸止(ID:1737364800). }}
+        # {{ Source: 用户需求 - 新闻数据不立即写入数据库，而是暂存等待批量处理 }}
+        _append_news_to_pending_save(ticker, news_data)
+        logger.info(f"新闻数据已存入待持久化缓存: {ticker}, 记录数: {len(news_data)}")
+        # 定时任务 scheduled_persist_job 将在后台处理数据入库
+
+        return news_data
+
+    except Exception as e:
+        logger.error(f"获取股票 {ticker} 新闻数据时发生错误: {e}")
+        return None
 
 
 async def test_data_service():

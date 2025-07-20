@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, Background
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..data_service import get_stock_data
-from ..schemas import StockDataResponse, ErrorResponse
+from ..data_service import get_stock_data, get_stock_news
+from ..schemas import StockDataResponse, ErrorResponse, StockNewsResponse
 
 # 导入现代化依赖注入和异常处理模块
 from ..dependencies import DatabaseDep
@@ -211,3 +211,61 @@ async def get_hourly_data(
     except Exception as e:
         logger.error(f"获取小时线数据失败 {ticker}: {e}")
         raise DataServiceException(f"获取小时线数据失败: {str(e)}")
+
+
+@router.get("/{ticker}/news")
+async def get_stock_news_data(
+    ticker: str,
+    background_tasks: BackgroundTasks,
+    db: DatabaseDep,
+):
+    """
+    获取指定股票的新闻数据
+
+    Args:
+        ticker: 股票代码 (如: AAPL, TSLA)
+        background_tasks: 后台任务管理器
+        db: 数据库会话依赖
+
+    Returns:
+        包含新闻数据的响应对象
+
+    Raises:
+        HTTPException: 当股票代码无效或数据获取失败时
+    """
+    try:
+        # 验证股票代码
+        ticker = validate_ticker(ticker)
+
+        logger.info(f"获取新闻数据请求: {ticker}")
+
+        # 调用数据服务获取新闻数据
+        news_data = await get_stock_news(db, ticker, background_tasks)
+
+        if news_data is None or news_data.empty:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"未找到股票 {ticker} 的新闻数据"
+            )
+
+        # 构建响应
+        response = StockNewsResponse(
+            ticker=ticker,
+            data_type="news",
+            data_count=len(news_data),
+            data=news_data.to_dict('records'),  # type: ignore
+            timestamp=datetime.now(),
+            message=f"成功获取 {len(news_data)} 条新闻数据"
+        )
+
+        logger.info(f"成功返回新闻数据: {ticker}, 记录数: {len(news_data)}")
+        return response
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"股票代码验证失败 {ticker}: {e}")
+        raise ValidationException(f"股票代码验证失败: {str(e)}")
+    except Exception as e:
+        logger.error(f"获取新闻数据失败 {ticker}: {e}")
+        raise DataServiceException(f"获取新闻数据失败: {str(e)}")

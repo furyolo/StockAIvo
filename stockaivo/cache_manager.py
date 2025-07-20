@@ -190,7 +190,11 @@ class CacheManager:
                 ttl = 86400  # 24小时，等待持久化
             elif cache_type == CacheType.GENERAL_CACHE:
                 cache_key = f"general_cache:{ticker}:{period}"
-                ttl = 3600  # 1小时，作为通用查询缓存
+                # {{ AURA-X: Modify - 为新闻数据设置30分钟TTL. Approval: 寸止(ID:1737364800). }}
+                if period == "news":
+                    ttl = 1800  # 30分钟，新闻数据更新频繁
+                else:
+                    ttl = 3600  # 1小时，作为通用查询缓存
             elif cache_type == CacheType.SEARCH_CACHE:
                 cache_key = f"search_cache:{ticker}:{period}"
                 ttl = 300  # 5分钟，搜索结果缓存

@@ -14,7 +14,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Column, String, Integer, DateTime, Date, Numeric, BigInteger, ForeignKey, UniqueConstraint, Index, MetaData
+from sqlalchemy import Column, String, Integer, DateTime, Date, Numeric, BigInteger, Text, ForeignKey, UniqueConstraint, Index, MetaData
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -186,13 +186,26 @@ class UsStocksName(Base):
     fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment='数据获取时间')
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
 
-    # 创建索引以支持搜索优化
-    __table_args__ = (
-        Index('idx_us_stocks_name_search', 'name', 'cname'),  # 复合索引支持搜索
-        Index('idx_us_stocks_name_name', 'name'),  # 英文名称索引
-        Index('idx_us_stocks_name_cname', 'cname'),  # 中文名称索引
-        {'comment': '美股名称映射表，用于股票搜索功能'}
-    )
 
-    def __repr__(self):
-        return f"<UsStocksName(symbol='{self.symbol}', name='{self.name}', cname='{self.cname}')>"
+class StockNews(Base):
+    """
+    股票新闻数据表
+    存储股票相关的新闻资讯数据，来源于东方财富
+    """
+    __tablename__ = 'stock_news'
+
+    # 按指定顺序定义字段：ticker, keyword, title, content, publish_time, created_at, updated_at
+    ticker = Column(String(10), primary_key=True, nullable=False, comment='股票代码')
+    keyword = Column(String(100), nullable=False, comment='搜索关键词，清理后的公司名称')
+    title = Column(Text, primary_key=True, nullable=False, comment='新闻标题')
+    content = Column(Text, nullable=True, comment='新闻内容摘要')
+    publish_time = Column(DateTime, primary_key=True, nullable=False, comment='发布时间')
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment='记录创建时间')
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
+
+    # 创建复合索引以提高查询性能
+    __table_args__ = (
+        Index('idx_stock_news_ticker_time', 'ticker', 'publish_time'),
+        Index('idx_stock_news_publish_time', 'publish_time'),
+        Index('idx_stock_news_keyword', 'keyword'),
+    )

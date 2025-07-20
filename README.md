@@ -30,14 +30,16 @@
 - **智能数据补全**: 自动检测并补全缺失数据
 - **交易日历感知**: 基于NYSE交易日历的智能日期处理
 - **动态交易日计算**: AI分析中自动计算实际交易日数量
+- **新闻数据集成**: 实时获取股票相关新闻，支持异步持久化和智能去重
 
 ### 🤖 AI分析引擎
 - **多Agent协同**: 基于LangGraph的分布式AI分析架构
-- **流式分析**: 实时流式输出分析结果
+- **流式分析**: 实时流式输出分析结果，动态阶段编号
 - **技术分析**: 完整的技术指标计算（MA、RSI、MACD、布林带、ATR等）
 - **基本面分析**: 基于市场认知的基本面评估（数据源待扩展）
-- **情感分析**: 市场情绪评估（数据源待扩展）
+- **新闻情感分析**: 基于实时新闻数据的市场情绪评估和投资者关注点分析
 - **智能时间范围**: 基于实际交易日的精确分析时间窗口
+- **数据驱动决策**: AI Agent自动获取新闻数据，提供更全面的投资分析
 
 ### 🎨 现代化界面
 - **专业图表**: 基于TradingView Lightweight Charts的K线图表，支持实时OHLC数据显示
@@ -48,11 +50,11 @@
 
 ## 🛠️ 技术栈
 
-**后端**: Python 3.12 + FastAPI + PostgreSQL + Redis + LangGraph
-**前端**: React 19 + TypeScript + Vite + TailwindCSS 4 + shadcn/ui
-**AI**: LangGraph + LangChain + Google Gemini
-**数据**: AKShare + pandas-market-calendars
-**工具**: uv (Python) + pnpm (Node.js) + MyPy + ESLint + Vitest
+- **后端**: Python 3.12 + FastAPI + PostgreSQL + Redis + LangGraph
+- **前端**: React 19 + TypeScript + Vite + TailwindCSS 4 + shadcn/ui
+- **AI**: LangGraph + LangChain + Google Gemini
+- **数据**: AKShare + pandas-market-calendars
+- **工具**: uv (Python) + pnpm (Node.js) + MyPy + ESLint + Vitest
 
 ## 🚀 快速开始
 
@@ -95,6 +97,7 @@ cd frontend && pnpm dev  # http://localhost:5173
 # 股票数据
 GET /stocks/{ticker}/daily?start_date=2024-01-01&end_date=2024-12-31
 GET /stocks/{ticker}/weekly?start_date=2024-01-01&end_date=2024-12-31
+GET /stocks/{ticker}/news  # 获取股票新闻数据
 
 # 股票搜索
 GET /search/stocks?q=apple&page=1&page_size=10
@@ -199,6 +202,13 @@ curl http://127.0.0.1:8000/cache-stats
 - **缓存策略**: Redis优先的三级缓存机制
 
 ## 📋 更新日志
+
+### v1.5.0 (2025-07-20) - 新闻数据与AI增强
+- 📰 **新闻数据集成**: 新增股票新闻数据获取功能，支持实时新闻获取和异步持久化
+- 🤖 **AI Agent增强**: AI分析引擎现可自动获取新闻数据，提供基于实际新闻内容的情感分析
+- ⚡ **异步持久化**: 实现新闻数据的批量处理机制，提高系统性能和数据一致性
+- 🎯 **动态阶段编号**: AI分析流程支持动态阶段编号，适应不同数据可用性场景
+- 🔧 **智能去重**: 新闻数据支持基于标题和发布时间的智能去重机制
 
 ### v1.4.0 (2025-07-11) - AI分析优化
 - 🤖 **智能交易日计算**: AI Prompt中动态显示实际交易日数量，排除周末和假期

@@ -85,3 +85,27 @@ class SearchResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class StockNewsItem(BaseModel):
+    """股票新闻单项模型"""
+    ticker: str = Field(..., description="股票代码")
+    title: str = Field(..., description="新闻标题")
+    publish_time: datetime = Field(..., description="发布时间")
+    content: Optional[str] = Field(None, description="新闻内容摘要")
+
+    class Config:
+        from_attributes = True
+
+
+class StockNewsResponse(BaseModel):
+    """股票新闻响应模型"""
+    ticker: str = Field(..., description="股票代码")
+    data_type: str = Field(default="news", description="数据类型")
+    data_count: int = Field(..., description="新闻条数", ge=0)
+    data: List[StockNewsItem] = Field(..., description="新闻数据列表")
+    timestamp: datetime = Field(..., description="响应时间戳")
+    message: Optional[str] = Field(None, description="响应消息")
+
+    class Config:
+        from_attributes = True

@@ -173,10 +173,13 @@ class StreamingLangGraphOrchestrator:
         # 检查是否有基本面数据和新闻数据
         raw_data = state.get("raw_data", {})
         has_fundamental_data = any(key in raw_data for key in ['financials', 'company_info', 'earnings'])
-        has_news_data = any(key in raw_data for key in ['news', 'sentiment'])
+        has_news_data = 'news' in raw_data and raw_data['news']  # 更准确的新闻数据检查
+
+        # {{ AURA-X: Modify - 实现动态阶段编号以适应跳过的分析阶段. Approval: 寸止(ID:1737364800). }}
+        current_phase = 2  # 从技术分析开始
 
         # 2. 技术分析阶段（流式）
-        print("\n---Phase 2: Technical Analysis (Streaming)---")
+        print(f"\n---Phase {current_phase}: Technical Analysis (Streaming)---")
         async for chunk in technical_analysis_agent_stream(state):
             analysis_results = chunk.get("analysis_results", {})
             technical_result = analysis_results.get("technical_analyst")
@@ -221,8 +224,9 @@ class StreamingLangGraphOrchestrator:
             return
 
         # 3. 基本面分析阶段（流式，如果有数据）
+        current_phase += 1
         if has_fundamental_data:
-            print("\n---Phase 3: Fundamental Analysis (Streaming)---")
+            print(f"\n---Phase {current_phase}: Fundamental Analysis (Streaming)---")
             async for chunk in fundamental_analysis_agent_stream(state):
                 analysis_results = chunk.get("analysis_results", {})
                 fundamental_result = analysis_results.get("fundamental_analyst")
@@ -239,10 +243,12 @@ class StreamingLangGraphOrchestrator:
                     yield f"data: {json.dumps(result_data)}\n\n"
         else:
             print("\n---Skipping Fundamental Analysis (no data)---")
+            current_phase -= 1  # 如果跳过，则不增加阶段编号
 
         # 4. 新闻情感分析阶段（流式，如果有数据）
+        current_phase += 1
         if has_news_data:
-            print("\n---Phase 4: News Sentiment Analysis (Streaming)---")
+            print(f"\n---Phase {current_phase}: News Sentiment Analysis (Streaming)---")
             async for chunk in news_sentiment_analysis_agent_stream(state):
                 analysis_results = chunk.get("analysis_results", {})
                 news_result = analysis_results.get("news_sentiment_analyst")
@@ -259,6 +265,7 @@ class StreamingLangGraphOrchestrator:
                     yield f"data: {json.dumps(result_data)}\n\n"
         else:
             print("\n---Skipping News Sentiment Analysis (no data)---")
+            current_phase -= 1  # 如果跳过，则不增加阶段编号
 
         # 5. 综合分析阶段（流式）- 检查是否有足够的分析结果
         analysis_results = state.get("analysis_results", {})
@@ -284,7 +291,8 @@ class StreamingLangGraphOrchestrator:
             yield f"data: {json.dumps(error_data)}\n\n"
             return
 
-        print("\n---Phase 5: Synthesis (Streaming)---")
+        current_phase += 1
+        print(f"\n---Phase {current_phase}: Synthesis (Streaming)---")
         async for chunk in synthesis_agent_stream(state):
             final_report = chunk.get("final_report")
             if final_report:

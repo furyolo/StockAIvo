@@ -10,7 +10,7 @@ import pandas as pd
 import pandas_market_calendars as mcal
 from typing import Dict, Any, Optional, AsyncGenerator
 from datetime import date, timedelta, datetime
-from stockaivo.data_service import get_stock_data, PeriodType
+from stockaivo.data_service import get_stock_data, get_stock_news, PeriodType
 from stockaivo.database import get_db
 from stockaivo.ai.state import GraphState
 from stockaivo.ai.llm_service import llm_service
@@ -81,14 +81,16 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
     db = next(db_session_gen)
     
     try:
+        # {{ AURA-X: Modify - 为AI Agent添加新闻数据获取功能. Approval: 寸止(ID:1737364800). }}
         periods_to_fetch: list[PeriodType] = ["daily", "weekly"]
-        
-        tasks = []
+
+        # 1. 获取股票价格数据
+        price_tasks = []
         for period in periods_to_fetch:
             # 为每个周期单独计算日期范围
             start_date, end_date = _calculate_date_range(period, date_range_option, custom_date_range)
             print(f"  - For {period} data, calculated range: {start_date or 'default start'} to {end_date or 'default end'}")
-            
+
             task = get_stock_data(
                 db=db,
                 ticker=ticker,
@@ -97,16 +99,40 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
                 end_date=end_date,
                 background_tasks=None, # No background tasks needed for agent context
             )
-            tasks.append(task)
-        
-        results = await asyncio.gather(*tasks)
-        
-        for period, data_df in zip(periods_to_fetch, results):
-            if data_df is not None and not data_df.empty:
-                collected_data[f'{period}_prices'] = data_df.to_dict(orient='split')
+            price_tasks.append(task)
+
+        # 2. 获取新闻数据
+        print(f"  - Fetching news data for {ticker}")
+        news_task = get_stock_news(
+            db=db,
+            ticker=ticker,
+            background_tasks=None  # No background tasks needed for agent context
+        )
+
+        # 3. 并行执行所有数据获取任务
+        all_tasks = price_tasks + [news_task]
+        results = await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        # 4. 处理价格数据结果
+        price_results = results[:len(periods_to_fetch)]
+        for period, result in zip(periods_to_fetch, price_results):
+            if isinstance(result, Exception):
+                print(f"Error collecting {period} data for {ticker}: {result}")
+            elif isinstance(result, pd.DataFrame) and not result.empty:
+                collected_data[f'{period}_prices'] = result.to_dict(orient='split')
                 print(f"Successfully collected {period} data for {ticker}.")
             else:
                 print(f"Could not find {period} data for {ticker}.")
+
+        # 5. 处理新闻数据结果
+        news_result = results[-1]
+        if isinstance(news_result, Exception):
+            print(f"Error collecting news data for {ticker}: {news_result}")
+        elif isinstance(news_result, pd.DataFrame) and not news_result.empty:
+            collected_data['news'] = news_result.to_dict(orient='records')
+            print(f"Successfully collected news data for {ticker}: {len(news_result)} articles.")
+        else:
+            print(f"Could not find news data for {ticker}.")
 
     finally:
         db.close()
@@ -117,6 +143,10 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
     for key, value in collected_data.items():
         if isinstance(value, dict) and 'data' in value:
             data_count = len(value['data'])
+            data_summary += f"- {key}: {data_count} 条记录\n"
+        elif isinstance(value, list):
+            # 处理新闻数据（以records格式存储）
+            data_count = len(value)
             data_summary += f"- {key}: {data_count} 条记录\n"
         else:
             data_summary += f"- {key}: 已收集\n"
@@ -390,28 +420,54 @@ def _build_fundamental_analysis_prompt(ticker: str) -> str:
     """
 
 
-def _check_news_data_and_get_ticker(state: GraphState) -> tuple[bool, str]:
-    """检查新闻数据是否可用，返回数据可用性和ticker"""
+def _check_news_data_and_get_ticker(state: GraphState) -> tuple[bool, str, Optional[list]]:
+    """检查新闻数据是否可用，返回数据可用性、ticker和新闻数据"""
+    # {{ AURA-X: Modify - 更新新闻数据检查函数以返回实际新闻数据. Approval: 寸止(ID:1737364800). }}
     raw_data = state.get("raw_data", {})
-    has_news_data = any(key in raw_data for key in ['news', 'sentiment', 'social_media'])
     ticker = state.get("ticker", "UNKNOWN_TICKER")
-    return has_news_data, ticker
+
+    # 检查是否有新闻数据
+    news_data = raw_data.get('news')
+    has_news_data = news_data is not None and len(news_data) > 0 if isinstance(news_data, list) else False
+
+    return has_news_data, ticker, news_data if has_news_data else None
 
 
-def _build_news_sentiment_analysis_prompt(ticker: str) -> str:
+def _build_news_sentiment_analysis_prompt(ticker: str, news_data: Optional[list] = None) -> str:
     """构建新闻情感分析的提示词"""
-    return f"""
+    # {{ AURA-X: Modify - 增强新闻情感分析prompt以处理实际新闻数据. Approval: 寸止(ID:1737364800). }}
+    base_prompt = f"""
     作为一名专业的市场情绪分析师，请为股票 {ticker} 提供新闻情感分析。
 
     **分析要求:**
-    1. **市场情绪概况**: 基于一般市场认知评估当前市场对该股票的整体情绪
-    2. **关键事件影响**: 分析可能影响股价的重要事件或新闻
-    3. **投资者关注点**: 识别投资者当前最关注的因素
-    4. **情绪指标**: 评估市场情绪是偏向乐观、悲观还是中性
-    5. **短期影响**: 预测情绪变化对短期股价的可能影响
-
-    请提供专业的市场情绪分析报告。
+    1. **市场情绪概况**: 基于提供的新闻数据评估当前市场对该股票的整体情绪
+    2. **关键事件影响**: 分析新闻中提到的可能影响股价的重要事件
+    3. **投资者关注点**: 识别新闻中反映的投资者当前最关注的因素
+    4. **情绪指标**: 评估新闻整体情绪是偏向乐观、悲观还是中性
+    5. **短期影响**: 基于新闻内容预测情绪变化对短期股价的可能影响
     """
+
+    if news_data and len(news_data) > 0:
+        # 限制新闻数量以避免prompt过长
+        limited_news = news_data[:10]  # 只取前10条新闻
+
+        news_content = "\n**相关新闻数据:**\n"
+        for i, news in enumerate(limited_news, 1):
+            title = news.get('title', '无标题')
+            content = news.get('content', '无内容')
+            publish_time = news.get('publish_time', '未知时间')
+
+            # 限制内容长度
+            if len(content) > 200:
+                content = content[:200] + "..."
+
+            news_content += f"{i}. 标题: {title}\n"
+            news_content += f"   时间: {publish_time}\n"
+            news_content += f"   内容: {content}\n\n"
+
+        return base_prompt + news_content + "\n请基于以上新闻数据提供专业的市场情绪分析报告。"
+    else:
+        return base_prompt + "\n注意：当前没有可用的新闻数据，请基于一般市场认知提供分析。"
 
 
 def _extract_analysis_results(state: GraphState) -> tuple[str, str, str, str, list[str]]:
@@ -536,14 +592,14 @@ async def news_sentiment_analysis_agent(state: GraphState) -> Dict[str, Any]:
     print("\n---Executing News Sentiment Analysis Agent---")
 
     # 使用共用函数检查数据和获取ticker
-    has_news_data, ticker = _check_news_data_and_get_ticker(state)
+    has_news_data, ticker, news_data = _check_news_data_and_get_ticker(state)
 
     if not has_news_data:
         print("缺少新闻情感数据，跳过新闻情感分析")
         return {"analysis_results": {"news_sentiment_analyst": None}}
 
-    # 使用共用函数构建prompt
-    sentiment_prompt = _build_news_sentiment_analysis_prompt(ticker)
+    # 使用共用函数构建prompt，传入实际新闻数据
+    sentiment_prompt = _build_news_sentiment_analysis_prompt(ticker, news_data)
 
     analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": sentiment_prompt}})
     return {"analysis_results": {"news_sentiment_analyst": analysis_result}}
@@ -650,15 +706,15 @@ async def news_sentiment_analysis_agent_stream(state: GraphState) -> AsyncGenera
     print("\n---Executing News Sentiment Analysis Agent (Stream)---")
 
     # 使用共用函数检查数据和获取ticker
-    has_news_data, ticker = _check_news_data_and_get_ticker(state)
+    has_news_data, ticker, news_data = _check_news_data_and_get_ticker(state)
 
     if not has_news_data:
         print("缺少新闻情感数据，跳过新闻情感分析")
         yield {"analysis_results": {"news_sentiment_analyst": None}}
         return
 
-    # 使用共用函数构建prompt
-    sentiment_prompt = _build_news_sentiment_analysis_prompt(ticker)
+    # 使用共用函数构建prompt，传入实际新闻数据
+    sentiment_prompt = _build_news_sentiment_analysis_prompt(ticker, news_data)
 
     # 流式生成分析结果
     accumulated_result = ""

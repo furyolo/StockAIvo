@@ -10,11 +10,14 @@ import pandas as pd
 import akshare as ak
 import requests
 import asyncio
+import re
 from typing import Optional, Literal
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .database import get_fullsymbol_from_db
+from .models import UsStocksName
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -303,6 +306,197 @@ def test_fetch_function():
     #             print(f"数据预览:\n{result.head()}")
     #     else:
     #         print("获取数据失败")
+
+
+def _clean_company_name(cname: str) -> str:
+    """
+    清理公司名称，删除"公司"、"集团"等字样
+
+    Args:
+        cname (str): 原始中文公司名称
+
+    Returns:
+        str: 清理后的公司名称
+    """
+    if not cname:
+        return ""
+
+    # 删除常见的公司后缀
+    suffixes_to_remove = ["公司", "集团", "股份有限公司", "有限公司", "股份公司", "控股", "投资"]
+    cleaned_name = cname
+
+    for suffix in suffixes_to_remove:
+        cleaned_name = cleaned_name.replace(suffix, "")
+
+    # 去除首尾空格
+    return cleaned_name.strip()
+
+
+def _get_company_chinese_name(db: Session, ticker: str) -> Optional[str]:
+    """
+    从us_stocks_name表获取股票的中文名称
+
+    Args:
+        db (Session): 数据库会话
+        ticker (str): 股票代码
+
+    Returns:
+        Optional[str]: 清理后的中文公司名称，如果未找到则返回None
+    """
+    try:
+        # 查询us_stocks_name表获取中文名称
+        stmt = select(UsStocksName.cname).where(UsStocksName.symbol == ticker)
+        result = db.execute(stmt).scalar_one_or_none()
+
+        if result:
+            # 清理公司名称
+            return _clean_company_name(result)
+        else:
+            logger.warning(f"未找到股票 {ticker} 的中文名称")
+            return None
+
+    except Exception as e:
+        logger.error(f"查询股票 {ticker} 中文名称时发生错误: {e}")
+        return None
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry=retry_if_exception_type((IOError, requests.exceptions.RequestException))
+)
+async def _fetch_stock_news_from_akshare(keyword: str) -> Optional[pd.DataFrame]:
+    """
+    从AKShare获取股票新闻数据（带重试机制）
+
+    Args:
+        keyword (str): 搜索关键词（清理后的公司名称）
+
+    Returns:
+        Optional[pd.DataFrame]: 新闻数据DataFrame，失败时返回None
+    """
+    def sync_akshare_call():
+        return ak.stock_news_em(symbol=keyword)
+
+    df = await asyncio.to_thread(sync_akshare_call)
+
+    # 如果 API 返回 None 或空的 DataFrame，主动抛出 IOError 触发重试
+    if df is None or df.empty:
+        raise IOError("API returned empty news data.")
+
+    return df
+
+
+async def fetch_stock_news_from_akshare(db: Session, ticker: str) -> Optional[pd.DataFrame]:
+    """
+    从AKShare获取指定股票的新闻数据
+
+    Args:
+        db (Session): 数据库会话
+        ticker (str): 股票代码，如 'AAPL', 'TSLA'
+
+    Returns:
+        Optional[pd.DataFrame]: 成功时返回包含新闻数据的DataFrame，失败时返回None
+    """
+
+    if not ticker:
+        logger.error("股票代码不能为空")
+        return None
+
+    # 获取股票的中文名称作为搜索关键词
+    chinese_name = _get_company_chinese_name(db, ticker)
+    if not chinese_name:
+        logger.error(f"无法获取股票 {ticker} 的中文名称，无法进行新闻搜索")
+        return None
+
+    logger.info(f"开始获取股票 {ticker} ({chinese_name}) 的新闻数据...")
+
+    try:
+        # 从AKShare获取新闻数据
+        df = await _fetch_stock_news_from_akshare(chinese_name)
+
+        if df is None or df.empty:
+            logger.warning(f"未获取到股票 {ticker} 的新闻数据")
+            return None
+
+        logger.info(f"成功获取到 {len(df)} 条新闻数据")
+
+        # 数据预处理
+        processed_df = _process_news_data(df, ticker)
+
+        return processed_df
+
+    except Exception as e:
+        logger.error(f"获取股票 {ticker} 新闻数据时发生错误: {e}")
+        return None
+
+
+def _process_news_data(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """
+    处理新闻数据：字段重命名、数据清理、时间过滤
+
+    Args:
+        df (pd.DataFrame): 原始新闻数据
+        ticker (str): 股票代码
+
+    Returns:
+        pd.DataFrame: 处理后的新闻数据
+    """
+    try:
+        # 创建副本避免修改原数据
+        processed_df = df.copy()
+
+        # 添加股票代码列
+        processed_df['ticker'] = ticker
+
+        # 字段重命名映射（中文到英文）
+        column_mapping = {
+            '关键词': 'keyword',
+            '新闻标题': 'title',
+            '新闻内容': 'content',
+            '发布时间': 'publish_time',
+            '文章来源': 'source',  # 将被删除
+            '新闻链接': 'link'     # 将被删除
+        }
+
+        # 重命名列
+        processed_df = processed_df.rename(columns=column_mapping)
+
+        # 删除不需要的字段
+        columns_to_drop = ['source', 'link']
+        for col in columns_to_drop:
+            if col in processed_df.columns:
+                processed_df = processed_df.drop(columns=[col])
+
+        # 处理发布时间
+        if 'publish_time' in processed_df.columns:
+            processed_df['publish_time'] = pd.to_datetime(processed_df['publish_time'], errors='coerce')
+
+        # 过滤最近3天的数据（今日、昨日、前天）
+        current_date = datetime.now().date()
+        three_days_ago_date = current_date - timedelta(days=2)  # 前天的日期
+
+        if 'publish_time' in processed_df.columns:
+            # 转换为日期进行比较
+            processed_df['publish_date'] = processed_df['publish_time'].dt.date
+            processed_df = processed_df[processed_df['publish_date'] >= three_days_ago_date]
+            # 删除临时的日期列
+            processed_df = processed_df.drop(columns=['publish_date'])
+
+        # 按发布时间倒序排列（最新的在前）
+        if 'publish_time' in processed_df.columns:
+            processed_df = processed_df.sort_values('publish_time', ascending=False)
+
+        # 重置索引
+        processed_df = processed_df.reset_index(drop=True)
+
+        logger.info(f"新闻数据处理完成，过滤后剩余 {len(processed_df)} 条记录")
+
+        return processed_df
+
+    except Exception as e:
+        logger.error(f"处理新闻数据时发生错误: {e}")
+        return df  # 返回原始数据
 
 
 if __name__ == "__main__":
