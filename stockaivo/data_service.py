@@ -894,7 +894,7 @@ async def get_stock_news(db: Session, ticker: str, background_tasks: Optional[Ba
         cache_manager.save_to_redis(ticker, "news", news_data, CacheType.GENERAL_CACHE)
 
         # 4. 将新闻数据存入待持久化缓存，等待定时任务批量处理
-        # {{ AURA-X: Modify - 实现新闻数据异步持久化机制. Approval: 寸止(ID:1737364800). }}
+        # 实现新闻数据异步持久化机制
         # {{ Source: 用户需求 - 新闻数据不立即写入数据库，而是暂存等待批量处理 }}
         _append_news_to_pending_save(ticker, news_data)
         logger.info(f"新闻数据已存入待持久化缓存: {ticker}, 记录数: {len(news_data)}")

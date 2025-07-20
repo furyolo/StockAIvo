@@ -6,7 +6,8 @@
 
 import os
 import logging
-from sqlalchemy import create_engine, select
+from typing import Iterator, Optional, Union
+from sqlalchemy import create_engine, select, Engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
@@ -21,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 # 从环境变量获取数据库连接URL，并提供默认值
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/stockaivo_db")
+
+# 声明全局变量的类型
+engine: Optional[Engine] = None
+SessionLocal: Optional[sessionmaker[Session]] = None
 
 try:
     # 创建SQLAlchemy引擎
@@ -43,7 +48,7 @@ except SQLAlchemyError as e:
     engine = None
 
 
-def get_db():
+def get_db() -> Iterator[Session]:
     """
     FastAPI依赖项函数，用于获取数据库会话。
     
@@ -60,7 +65,7 @@ def get_db():
     finally:
         db.close()
 
-def check_db_connection():
+def check_db_connection() -> bool:
     """
     检查数据库连接是否正常。
     
@@ -79,7 +84,7 @@ def check_db_connection():
         return False
 
 
-def get_fullsymbol_from_db(db: Session, symbol: str) -> str | None:
+def get_fullsymbol_from_db(db: Session, symbol: str) -> Optional[str]:
     """
     根据 symbol 从 stock_symbols 表中查询并返回其对应的 full_symbol。
 
@@ -92,11 +97,11 @@ def get_fullsymbol_from_db(db: Session, symbol: str) -> str | None:
     """
     try:
         stmt = select(StockSymbols.full_symbol).where(StockSymbols.symbol == symbol)
-        full_symbol = db.execute(stmt).scalar_one_or_none()
-        
+        full_symbol: Optional[str] = db.execute(stmt).scalar_one_or_none()
+
         if full_symbol:
             logger.info(f"成功为 symbol '{symbol}' 从数据库 stock_symbols 表中找到 full_symbol: '{full_symbol}'")
-            return full_symbol
+            return str(full_symbol)  # 确保返回字符串类型
         else:
             logger.warning(f"无法在 stock_symbols 表中为 symbol '{symbol}' 找到匹配的记录。")
             return None

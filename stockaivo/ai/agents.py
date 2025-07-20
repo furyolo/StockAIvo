@@ -81,7 +81,7 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
     db = next(db_session_gen)
     
     try:
-        # {{ AURA-X: Modify - 为AI Agent添加新闻数据获取功能. Approval: 寸止(ID:1737364800). }}
+        # 为AI Agent添加新闻数据获取功能
         periods_to_fetch: list[PeriodType] = ["daily", "weekly"]
 
         # 1. 获取股票价格数据
@@ -422,7 +422,7 @@ def _build_fundamental_analysis_prompt(ticker: str) -> str:
 
 def _check_news_data_and_get_ticker(state: GraphState) -> tuple[bool, str, Optional[list]]:
     """检查新闻数据是否可用，返回数据可用性、ticker和新闻数据"""
-    # {{ AURA-X: Modify - 更新新闻数据检查函数以返回实际新闻数据. Approval: 寸止(ID:1737364800). }}
+    # 更新新闻数据检查函数以返回实际新闻数据
     raw_data = state.get("raw_data", {})
     ticker = state.get("ticker", "UNKNOWN_TICKER")
 
@@ -435,7 +435,7 @@ def _check_news_data_and_get_ticker(state: GraphState) -> tuple[bool, str, Optio
 
 def _build_news_sentiment_analysis_prompt(ticker: str, news_data: Optional[list] = None) -> str:
     """构建新闻情感分析的提示词"""
-    # {{ AURA-X: Modify - 增强新闻情感分析prompt以处理实际新闻数据. Approval: 寸止(ID:1737364800). }}
+    # 新闻情感分析prompt
     base_prompt = f"""
     作为一名专业的市场情绪分析师，请为股票 {ticker} 提供新闻情感分析。
 
@@ -449,7 +449,7 @@ def _build_news_sentiment_analysis_prompt(ticker: str, news_data: Optional[list]
 
     if news_data and len(news_data) > 0:
         # 限制新闻数量以避免prompt过长
-        limited_news = news_data[:10]  # 只取前10条新闻
+        limited_news = news_data[:100]  # 只取前100条新闻
 
         news_content = "\n**相关新闻数据:**\n"
         for i, news in enumerate(limited_news, 1):
@@ -458,8 +458,8 @@ def _build_news_sentiment_analysis_prompt(ticker: str, news_data: Optional[list]
             publish_time = news.get('publish_time', '未知时间')
 
             # 限制内容长度
-            if len(content) > 200:
-                content = content[:200] + "..."
+            if len(content) > 500:
+                content = content[:500] + "..."
 
             news_content += f"{i}. 标题: {title}\n"
             news_content += f"   时间: {publish_time}\n"

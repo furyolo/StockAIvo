@@ -4,3 +4,4 @@
 - 删除了 stocks 表及其关联字段。移除了 Stock 模型类、所有价格表中的外键引用（ForeignKey('stocks.ticker')）、关系映射（relationship），以及 database_writer.py 中的 _prepare_stock_data 和 _upsert_stock_info 方法。现在价格表直接使用 ticker 字段作为主键，不再依赖 stocks 表。
 - 股票新闻数据获取功能设计：使用AKShare的stock_news_em()函数，通过us_stocks_name表的cname字段作为查询关键词，删除"公司"和"集团"等字样，仅保留最近3天数据，今日数据每次重新获取，历史数据可缓存。数据字段需要中英文映射，删除"文章来源"和"新闻链接"字段。
 - stock_news表字段顺序为ticker、keyword、title、content、publish_time、created_at、updated_at，数据按发布时间逆序排列（最新在前）。不要生成总结性文档、测试脚本，不要编译或运行代码。
+- 类型错误修复完成：stockaivo/ai/orchestrator.py 和 stockaivo/search_service.py 以及 stockaivo/database.py 的所有类型错误已修复。主要修复包括：添加完整类型导入、函数返回类型注解、SQLAlchemy 列类型转换、全局变量类型声明等。

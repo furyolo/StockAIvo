@@ -18,7 +18,7 @@ def scheduled_persist_job():
     为每个作业运行创建一个新的数据库会话。
     支持股票价格数据和新闻数据的批量持久化。
     """
-    # {{ AURA-X: Modify - 增强定时任务日志记录以监控新闻数据处理状态. Approval: 寸止(ID:1737364800). }}
+    # 增强定时任务日志记录以监控新闻数据处理状态
     logger.info("开始执行预定的数据持久化任务（包括股票价格和新闻数据）...")
     db_session: Session | None = None
     try:

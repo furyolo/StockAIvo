@@ -10,7 +10,7 @@ StockAIvo - SQLAlchemy ORM Models
 - UsStocksName: 美股名称表
 """
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -73,8 +73,8 @@ class StockPriceDaily(Base):
     turnover_rate = Column(Numeric(10, 4), nullable=True, comment='换手率(%)')
     
     # 时间戳字段
-    created_at = Column(DateTime, default=datetime.utcnow, comment='记录创建时间')
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
     
     # 表约束和索引
     __table_args__ = (
@@ -115,8 +115,8 @@ class StockPriceWeekly(Base):
     turnover_rate = Column(Numeric(10, 4), nullable=True, comment='换手率(%)')
     
     # 时间戳字段
-    created_at = Column(DateTime, default=datetime.utcnow, comment='记录创建时间')
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
     
     # 表约束和索引
     __table_args__ = (
@@ -151,8 +151,8 @@ class StockPriceHourly(Base):
     volume = Column(BigInteger, nullable=True, comment='小时交易量')
     
     # 时间戳字段
-    created_at = Column(DateTime, default=datetime.utcnow, comment='记录创建时间')
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
     
     # 表约束和索引
     __table_args__ = (
@@ -183,8 +183,8 @@ class UsStocksName(Base):
     cname = Column(String, nullable=True, comment='中文公司名称')
 
     # 时间戳字段
-    fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment='数据获取时间')
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
+    fetched_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), comment='数据获取时间')
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
 
 
 class StockNews(Base):
@@ -200,8 +200,8 @@ class StockNews(Base):
     title = Column(Text, primary_key=True, nullable=False, comment='新闻标题')
     content = Column(Text, nullable=True, comment='新闻内容摘要')
     publish_time = Column(DateTime, primary_key=True, nullable=False, comment='发布时间')
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment='记录创建时间')
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, comment='记录更新时间')
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
 
     # 创建复合索引以提高查询性能
     __table_args__ = (

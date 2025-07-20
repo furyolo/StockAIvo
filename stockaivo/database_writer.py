@@ -270,7 +270,7 @@ class DatabaseWriter:
                 try:
                     # 开始事务处理这个数据条目
                     with db.begin():
-                        # {{ AURA-X: Modify - 扩展持久化函数支持新闻数据批量处理. Approval: 寸止(ID:1737364800). }}
+                        # 扩展持久化函数支持新闻数据批量处理
                         processed_rows = 0
 
                         # 根据period类型处理不同数据
@@ -414,7 +414,7 @@ class DatabaseWriter:
         Returns:
             List[Dict[str, Any]]: 准备好的新闻数据列表
         """
-        # {{ AURA-X: Modify - 增强新闻数据准备函数的数据验证和清理. Approval: 寸止(ID:1737364800). }}
+        # 增强新闻数据准备函数的数据验证和清理
         if dataframe is None or dataframe.empty:
             logger.warning(f"新闻数据DataFrame为空: {ticker}")
             return []
@@ -481,7 +481,7 @@ class DatabaseWriter:
         Returns:
             int: 处理的记录数
         """
-        # {{ AURA-X: Modify - 增强新闻数据批量处理的错误处理和重试机制. Approval: 寸止(ID:1737364800). }}
+        # 增强新闻数据批量处理的错误处理和重试机制
         if not news_data:
             return 0
 

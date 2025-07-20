@@ -10,10 +10,10 @@ from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy import select, or_, func, case
 from sqlalchemy.orm import Session
 
-from .models import UsStocksName
-from .database import get_db
-from .cache_manager import save_search_results, get_search_results
-from .schemas import SearchResult
+from stockaivo.models import UsStocksName
+from stockaivo.database import get_db
+from stockaivo.cache_manager import save_search_results, get_search_results
+from stockaivo.schemas import SearchResult
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ def search_stocks_by_name(
     
     # 缓存未命中，查询数据库
     try:
-        db = next(get_db())
+        db: Session = next(get_db())
         
         # 构建模糊搜索查询
         search_pattern = f"%{query}%"
@@ -145,7 +145,7 @@ def search_stocks_by_name(
         
         # 查询总数
         count_stmt = select(func.count(UsStocksName.symbol)).where(search_condition)
-        total_count = db.execute(count_stmt).scalar() or 0
+        total_count: int = db.execute(count_stmt).scalar() or 0
         
         # 查询结果
         stmt = (
@@ -157,11 +157,18 @@ def search_stocks_by_name(
         )
         
         result = db.execute(stmt).scalars().all()
-        
+
         # 转换为字典格式并计算相关性评分
-        search_results = []
+        search_results: List[Dict[str, Any]] = []
         for stock in result:
-            relevance_score = calculate_relevance_score(query, stock.symbol, stock.name, stock.cname)
+            # 将 SQLAlchemy 列值转换为字符串类型
+            cname_value = stock.cname
+            relevance_score: float = calculate_relevance_score(
+                query,
+                str(stock.symbol),
+                str(stock.name),
+                str(cname_value) if cname_value is not None else None
+            )
             search_results.append({
                 'symbol': stock.symbol,
                 'name': stock.name,
@@ -214,17 +221,17 @@ def search_stocks_with_pagination(
     if page_size < 1 or page_size > 100:
         page_size = 10
     
-    offset = (page - 1) * page_size
-    
+    offset: int = (page - 1) * page_size
+
     results, total_count = search_stocks_by_name(
         query=query,
         limit=page_size,
         offset=offset,
         use_cache=use_cache
     )
-    
-    total_pages = (total_count + page_size - 1) // page_size
-    has_more = page < total_pages
+
+    total_pages: int = (total_count + page_size - 1) // page_size
+    has_more: bool = page < total_pages
     
     return {
         'query': query,

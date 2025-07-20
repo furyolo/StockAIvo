@@ -4,7 +4,7 @@ AI Analysis Orchestrator using LangGraph
 This file builds and runs the multi-agent workflow for stock analysis.
 """
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END  # type: ignore
 from stockaivo.ai.state import GraphState
 from stockaivo.ai.agents import (
     data_collection_agent,
@@ -17,17 +17,17 @@ from stockaivo.ai.agents import (
     news_sentiment_analysis_agent_stream,
     synthesis_agent_stream,
 )
-from typing import AsyncGenerator, cast
+from typing import AsyncGenerator, Dict, Any, Optional
 import json
 
 class LangGraphOrchestrator:
     """
     Orchestrates the multi-agent stock analysis workflow using LangGraph.
     """
-    def __init__(self):
+    def __init__(self) -> None:
         self.app = self._create_workflow()
 
-    def _create_workflow(self):
+    def _create_workflow(self) -> Any:
         """
         Creates the LangGraph workflow by defining nodes and edges.
         """
@@ -66,7 +66,7 @@ class LangGraphOrchestrator:
         # 4. Compile the graph into a runnable application
         return workflow.compile()
 
-    async def run_analysis(self, ticker: str, date_range_option: str | None = None, custom_date_range: dict | None = None) -> AsyncGenerator[str, None]:
+    async def run_analysis(self, ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
         """
         Runs the full AI analysis workflow for a given stock ticker
         and yields the output of each agent as a JSON string.
@@ -116,7 +116,7 @@ class LangGraphOrchestrator:
 orchestrator = LangGraphOrchestrator()
 
 # Main async function to run the analysis and stream results
-async def run_ai_analysis(ticker: str, date_range_option: str | None = None, custom_date_range: dict | None = None) -> AsyncGenerator[str, None]:
+async def run_ai_analysis(ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
     """
     Runs the full AI analysis workflow for a given stock ticker
     and yields the output of each agent as a JSON string.
@@ -131,10 +131,10 @@ class StreamingLangGraphOrchestrator:
     """
     流式版本的多智能体股票分析工作流编排器
     """
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
-    async def run_analysis_stream(self, ticker: str, date_range_option: str | None = None, custom_date_range: dict | None = None) -> AsyncGenerator[str, None]:
+    async def run_analysis_stream(self, ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
         """
         运行流式AI分析工作流
         """
@@ -175,7 +175,7 @@ class StreamingLangGraphOrchestrator:
         has_fundamental_data = any(key in raw_data for key in ['financials', 'company_info', 'earnings'])
         has_news_data = 'news' in raw_data and raw_data['news']  # 更准确的新闻数据检查
 
-        # {{ AURA-X: Modify - 实现动态阶段编号以适应跳过的分析阶段. Approval: 寸止(ID:1737364800). }}
+        # 实现动态阶段编号以适应跳过的分析阶段
         current_phase = 2  # 从技术分析开始
 
         # 2. 技术分析阶段（流式）
@@ -198,7 +198,7 @@ class StreamingLangGraphOrchestrator:
         # 检查技术分析是否有有效结果
         final_technical_result = state.get("analysis_results", {}).get("technical_analyst")
 
-        def is_valid_analysis_result(result) -> bool:
+        def is_valid_analysis_result(result: Any) -> bool:
             """检查分析结果是否有效（不是空或错误信息）"""
             if not result or not isinstance(result, str) or result.strip() == "":
                 return False
@@ -310,7 +310,7 @@ class StreamingLangGraphOrchestrator:
 streaming_orchestrator = StreamingLangGraphOrchestrator()
 
 # 流式分析主函数
-async def run_ai_analysis_stream(ticker: str, date_range_option: str | None = None, custom_date_range: dict | None = None) -> AsyncGenerator[str, None]:
+async def run_ai_analysis_stream(ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
     """
     运行流式AI分析工作流并产生结果
     """
@@ -318,7 +318,7 @@ async def run_ai_analysis_stream(ticker: str, date_range_option: str | None = No
         yield chunk
 
 # Example usage for testing
-async def main():
+async def main() -> None:
     """Main async function to test the orchestrator."""
     async for chunk in run_ai_analysis("AAPL"):
         print(chunk)
