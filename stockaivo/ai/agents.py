@@ -558,7 +558,7 @@ async def technical_analysis_agent(state: GraphState) -> Dict[str, Any]:
 
     # 使用共享的prompt构建函数
     prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators)
-    analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": prompt}})
+    analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": prompt, "agent_name": "technical_analysis_agent"}})
 
     return {"analysis_results": {"technical_analyst": analysis_result}}
 
@@ -622,7 +622,7 @@ async def synthesis_agent(state: GraphState) -> Dict[str, Any]:
                                              fundamental_result, news_result, available_analyses)
 
     # 调用LLM生成综合分析
-    synthesis_result = await llm_tool.ainvoke({"input_dict": {"prompt": synthesis_prompt}})
+    synthesis_result = await llm_tool.ainvoke({"input_dict": {"prompt": synthesis_prompt, "agent_name": "synthesis_agent"}})
 
     return {"final_report": synthesis_result}
 
@@ -643,7 +643,7 @@ async def technical_analysis_agent_stream(state: GraphState) -> AsyncGenerator[D
 
     # 流式生成分析结果
     accumulated_result = ""
-    async for chunk in llm_service.invoke_stream(prompt):
+    async for chunk in llm_service.invoke_stream(prompt, "technical_analysis_agent"):
         accumulated_result += chunk
         # 实时返回累积的结果
         yield {"analysis_results": {"technical_analyst": accumulated_result}}
@@ -666,7 +666,7 @@ async def synthesis_agent_stream(state: GraphState) -> AsyncGenerator[Dict[str, 
 
     # 流式生成综合分析结果
     accumulated_result = ""
-    async for chunk in llm_service.invoke_stream(synthesis_prompt):
+    async for chunk in llm_service.invoke_stream(synthesis_prompt, "synthesis_agent"):
         accumulated_result += chunk
         # 实时返回累积的结果
         yield {"final_report": accumulated_result}

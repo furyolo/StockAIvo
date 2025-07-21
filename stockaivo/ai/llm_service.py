@@ -29,11 +29,22 @@ class LLMService:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
 
+        # 加载AI模型配置
+        self.ai_default_model = os.getenv("AI_DEFAULT_MODEL", "gemini-2.5-flash")
+
+        # 代理特定模型配置
+        self.agent_model_overrides = {
+            "technical_analysis_agent": os.getenv("AI_TECHNICAL_ANALYSIS_MODEL"),
+            "synthesis_agent": os.getenv("AI_SYNTHESIS_MODEL"),
+            "fundamental_analysis_agent": os.getenv("AI_FUNDAMENTAL_ANALYSIS_MODEL"),
+            "news_sentiment_analysis_agent": os.getenv("AI_NEWS_SENTIMENT_MODEL"),
+            "data_collection_agent": os.getenv("AI_DATA_COLLECTION_MODEL"),
+        }
+
         if self.openai_api_base and self.openai_api_key:
             self.mode = "openai"
-            self.openai_model_name = os.getenv("OPENAI_MODEL_NAME")
-            if not self.openai_model_name:
-                raise ValueError("OPENAI_MODEL_NAME 环境变量必须在 .env 文件中设置")
+            # 使用默认模型作为服务级别的基础模型
+            self.openai_model_name = self.ai_default_model
             self.client = httpx.AsyncClient(
                 base_url=self.openai_api_base,
                 headers={
@@ -54,32 +65,51 @@ class LLMService:
                 follow_redirects=True,
                 trust_env=False  # 禁用环境变量代理设置
             )
-            logger.info(f"LLM服务已配置为使用OpenAI兼容API (模型: {self.openai_model_name})。")
+            logger.info(f"LLM服务已配置为使用OpenAI兼容API (默认模型: {self.openai_model_name})。")
         elif self.gemini_api_key:
             self.mode = "gemini"
-            self.gemini_model_name = os.getenv("GEMINI_MODEL_NAME")
-            if not self.gemini_model_name:
-                raise ValueError("GEMINI_MODEL_NAME 环境变量必须在 .env 文件中设置")
+            # 使用默认模型作为服务级别的基础模型
+            self.gemini_model_name = self.ai_default_model
             genai.configure(api_key=self.gemini_api_key)  # type: ignore
             self.model = genai.GenerativeModel(self.gemini_model_name)  # type: ignore
-            logger.info(f"LLM服务已配置为使用Google Gemini API (模型: {self.gemini_model_name})。")
+            logger.info(f"LLM服务已配置为使用Google Gemini API (默认模型: {self.gemini_model_name})。")
         else:
             raise ValueError("必须配置OpenAI或Gemini的API密钥环境变量")
 
-    async def invoke(self, prompt: str) -> str:
+    def get_model_name_for_agent(self, agent_name: Optional[str] = None) -> str:
+        """
+        获取指定代理的模型名称
+
+        Args:
+            agent_name: 代理名称，如果为None则使用默认模型
+
+        Returns:
+            模型名称
+        """
+        # 1. 首先检查代理特定的模型配置
+        if agent_name and agent_name in self.agent_model_overrides:
+            override_model = self.agent_model_overrides[agent_name]
+            if override_model:  # 如果配置了非空值
+                return override_model
+
+        # 2. 使用默认模型
+        return self.ai_default_model
+
+    async def invoke(self, prompt: str, agent_name: Optional[str] = None) -> str:
         """
         调用LLM并返回文本响应。
 
         Args:
             prompt: 发送给LLM的提示词。
+            agent_name: 代理名称，用于选择特定的模型。
 
         Returns:
             LLM的文本响应。
         """
         if self.mode == "openai":
-            return await self._invoke_openai(prompt)
+            return await self._invoke_openai(prompt, agent_name)
         elif self.mode == "gemini":
-            return await self._invoke_gemini(prompt)
+            return await self._invoke_gemini(prompt, agent_name)
         else:
             return "LLM服务未正确配置"
 
@@ -115,19 +145,21 @@ class LLMService:
         # 最大延迟不超过60秒
         return min(total_delay, 60.0)
 
-    def _build_request_data(self, prompt: str, stream: bool = False) -> dict:
+    def _build_request_data(self, prompt: str, stream: bool = False, agent_name: Optional[str] = None) -> dict:
         """
         构建请求数据
 
         Args:
             prompt: 提示词
             stream: 是否为流式请求
+            agent_name: 代理名称，用于选择特定的模型
 
         Returns:
             请求数据字典
         """
+        model_name = self.get_model_name_for_agent(agent_name)
         request_data = {
-            "model": self.openai_model_name,
+            "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 9000
         }
@@ -198,37 +230,39 @@ class LLMService:
         logger.error(f"{request_type}HTTP错误 (httpx): {e.response.status_code} - {error_text}")
         return f"HTTP Error {e.response.status_code}: {error_text}"
 
-    async def invoke_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+    async def invoke_stream(self, prompt: str, agent_name: Optional[str] = None) -> AsyncGenerator[str, None]:
         """
         调用LLM并返回流式文本响应。
 
         Args:
             prompt: 发送给LLM的提示词。
+            agent_name: 代理名称，用于选择特定的模型。
 
         Yields:
             LLM的流式文本响应片段。
         """
         if self.mode == "openai":
             # 尝试真正的流式请求
-            async for chunk in self._invoke_openai_stream(prompt):
+            async for chunk in self._invoke_openai_stream(prompt, agent_name):
                 yield chunk
         elif self.mode == "gemini":
             # Gemini 支持真正的流式输出
-            async for chunk in self._invoke_gemini_stream(prompt):
+            async for chunk in self._invoke_gemini_stream(prompt, agent_name):
                 yield chunk
         else:
             yield "LLM服务未正确配置"
 
-    async def _invoke_openai(self, prompt: str) -> str:
+    async def _invoke_openai(self, prompt: str, agent_name: Optional[str] = None) -> str:
         """
         调用OpenAI兼容API（带重试机制）
         """
         max_retries = 3
+        model_name = self.get_model_name_for_agent(agent_name)
 
         for attempt in range(1, max_retries + 1):
             try:
-                request_data = self._build_request_data(prompt, stream=False)
-                logger.info(f"Sending request to OpenAI API using httpx: model={self.openai_model_name}, prompt_length={len(prompt)}")
+                request_data = self._build_request_data(prompt, stream=False, agent_name=agent_name)
+                logger.info(f"Sending request to OpenAI API using httpx: model={model_name}, agent={agent_name}, prompt_length={len(prompt)}")
 
                 response = await self.client.post(
                     "/chat/completions",
@@ -262,9 +296,17 @@ class LLMService:
         # 如果所有重试都失败了，返回错误信息
         return f"所有重试都失败了，请稍后再试"
 
-    async def _invoke_gemini(self, prompt: str) -> str:
+    async def _invoke_gemini(self, prompt: str, agent_name: Optional[str] = None) -> str:
         try:
-            response = await self.model.generate_content_async(prompt)
+            model_name = self.get_model_name_for_agent(agent_name)
+            # 如果需要使用不同的模型，创建新的模型实例
+            if model_name != self.gemini_model_name:
+                model = genai.GenerativeModel(model_name)  # type: ignore
+                logger.info(f"Using specific model for agent {agent_name}: {model_name}")
+            else:
+                model = self.model
+
+            response = await model.generate_content_async(prompt)
             if response.candidates and response.candidates[0].content.parts:
                 return response.candidates[0].content.parts[0].text
             else:
@@ -276,15 +318,23 @@ class LLMService:
             logger.error(f"调用LLM时发生意外错误: {e}")
             return f"Error calling LLM: {str(e)}"
 
-    async def _invoke_gemini_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+    async def _invoke_gemini_stream(self, prompt: str, agent_name: Optional[str] = None) -> AsyncGenerator[str, None]:
         """
         流式调用 Gemini API
         """
         try:
-            logger.info(f"Sending streaming request to Gemini API: prompt_length={len(prompt)}")
+            model_name = self.get_model_name_for_agent(agent_name)
+            # 如果需要使用不同的模型，创建新的模型实例
+            if model_name != self.gemini_model_name:
+                model = genai.GenerativeModel(model_name)  # type: ignore
+                logger.info(f"Using specific model for streaming agent {agent_name}: {model_name}")
+            else:
+                model = self.model
+
+            logger.info(f"Sending streaming request to Gemini API: model={model_name}, agent={agent_name}, prompt_length={len(prompt)}")
 
             # 使用 Gemini 的流式生成方法
-            response_stream = await self.model.generate_content_async(
+            response_stream = await model.generate_content_async(
                 prompt,
                 stream=True
             )
@@ -311,7 +361,7 @@ class LLMService:
                 logger.error(f"Gemini 回退调用也失败: {fallback_e}")
                 yield f"Error calling Gemini: {str(e)}"
 
-    async def _invoke_openai_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+    async def _invoke_openai_stream(self, prompt: str, agent_name: Optional[str] = None) -> AsyncGenerator[str, None]:
         """
         流式调用OpenAI兼容API（带重试机制）
         """
@@ -319,7 +369,7 @@ class LLMService:
 
         for attempt in range(1, max_retries + 1):
             try:
-                async for chunk in self._invoke_openai_stream_single_attempt(prompt):
+                async for chunk in self._invoke_openai_stream_single_attempt(prompt, agent_name):
                     yield chunk
                 return  # 成功完成，退出重试循环
 
@@ -334,7 +384,7 @@ class LLMService:
                     self._log_http_error(e, "流式调用")
                     logger.warning(f"httpx流式调用失败，回退到模拟流式: {type(e).__name__}: {e}")
                     # 回退到非流式调用并模拟流式输出
-                    async for chunk in self._fallback_to_simulated_stream(prompt):
+                    async for chunk in self._fallback_to_simulated_stream(prompt, agent_name):
                         yield chunk
                     return
 
@@ -342,17 +392,18 @@ class LLMService:
                 # 网络错误等，直接执行原有的回退逻辑
                 logger.error(f"httpx 流式请求错误: {e}")
                 logger.warning(f"httpx流式调用失败，回退到模拟流式: {type(e).__name__}: {e}")
-                async for chunk in self._fallback_to_simulated_stream(prompt):
+                async for chunk in self._fallback_to_simulated_stream(prompt, agent_name):
                     yield chunk
                 return
 
-    async def _invoke_openai_stream_single_attempt(self, prompt: str) -> AsyncGenerator[str, None]:
+    async def _invoke_openai_stream_single_attempt(self, prompt: str, agent_name: Optional[str] = None) -> AsyncGenerator[str, None]:
         """
         单次流式调用OpenAI兼容API（不包含重试逻辑）
         """
         # 优先使用 httpx 的 client.stream 进行流式请求
-        request_data = self._build_request_data(prompt, stream=True)
-        logger.info(f"Sending streaming request to OpenAI API using httpx.stream: model={self.openai_model_name}, prompt_length={len(prompt)}")
+        model_name = self.get_model_name_for_agent(agent_name)
+        request_data = self._build_request_data(prompt, stream=True, agent_name=agent_name)
+        logger.info(f"Sending streaming request to OpenAI API using httpx.stream: model={model_name}, agent={agent_name}, prompt_length={len(prompt)}")
 
         async with self.client.stream(
             "POST",
@@ -406,12 +457,12 @@ class LLMService:
                             # 跳过无法解析的行
                             continue
 
-    async def _fallback_to_simulated_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+    async def _fallback_to_simulated_stream(self, prompt: str, agent_name: Optional[str] = None) -> AsyncGenerator[str, None]:
         """
         回退到非流式调用并模拟流式输出
         """
         try:
-            result = await self._invoke_openai(prompt)
+            result = await self._invoke_openai(prompt, agent_name)
             # 模拟流式输出：按句子分割
             sentences = result.split('。')
             for sentence in sentences:

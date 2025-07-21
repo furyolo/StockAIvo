@@ -34,6 +34,7 @@
 
 ### 🤖 AI分析引擎
 - **多Agent协同**: 基于LangGraph的分布式AI分析架构
+- **智能模型配置**: 支持按Agent类型配置专用AI模型，技术分析和综合分析使用高性能模型
 - **流式分析**: 实时流式输出分析结果，动态阶段编号
 - **技术分析**: 完整的技术指标计算（MA、RSI、MACD、布林带、ATR等）
 - **基本面分析**: 基于市场认知的基本面评估（数据源待扩展）
@@ -72,6 +73,11 @@ cd StockAIvo
 DATABASE_URL="postgresql://postgres:password@localhost:5432/stockaivo"
 REDIS_URL="redis://localhost:6379"
 GEMINI_API_KEY="your_google_api_key"
+
+# AI模型配置 (可选)
+AI_DEFAULT_MODEL="gemini-2.5-flash"                    # 全局默认模型
+AI_TECHNICAL_ANALYSIS_MODEL="gemini-2.5-pro"          # 技术分析专用模型
+AI_SYNTHESIS_MODEL="gemini-2.5-pro"                   # 综合分析专用模型
 
 # 3. 安装后端依赖
 uv sync --extra dev
@@ -202,6 +208,12 @@ curl http://127.0.0.1:8000/cache-stats
 - **缓存策略**: Redis优先的三级缓存机制
 
 ## 📋 更新日志
+
+### v1.6.0 (2025-07-21) - AI模型配置优化
+- 🤖 **智能模型配置**: 新增按Agent类型配置专用AI模型的功能，支持为不同分析任务选择最适合的模型
+- ⚡ **性能优化**: 技术分析和综合分析Agent默认使用高性能模型(gemini-2.5-pro)，提升分析质量
+- 🔧 **配置简化**: 统一AI模型配置命名规范，使用AI_前缀的环境变量，支持全局默认和Agent特定配置
+- 🎯 **向下兼容**: 保持现有API完全兼容，新配置为可选项
 
 ### v1.5.0 (2025-07-20) - 新闻数据与AI增强
 - 📰 **新闻数据集成**: 新增股票新闻数据获取功能，支持实时新闻获取和异步持久化
