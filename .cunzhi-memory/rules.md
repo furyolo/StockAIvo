@@ -9,3 +9,4 @@
 - AI模型配置已重新设计：使用AI_前缀的统一命名约定，AI_DEFAULT_MODEL为全局默认，AI_TECHNICAL_ANALYSIS_MODEL和AI_SYNTHESIS_MODEL为特定代理覆盖，AI_OPENAI_FALLBACK_MODEL和AI_GEMINI_FALLBACK_MODEL为服务级回退模型。移除了旧的OPENAI_MODEL_NAME和GEMINI_MODEL_NAME依赖。
 - AI模型配置已简化：只使用AI_DEFAULT_MODEL作为全局默认模型(gemini-2.5-flash)，AI_TECHNICAL_ANALYSIS_MODEL和AI_SYNTHESIS_MODEL等代理特定配置。如果代理特定配置为空，则使用全局默认模型。移除了复杂的服务级回退模型配置。
 - 用户明确要求：不要生成总结性Markdown文档，不要生成测试脚本，不要编译，不要运行代码。用户会自己处理这些操作。
+- 用户要求实现三个独立分析代理（技术分析、基本面分析、新闻情感分析）的并行执行，以提高性能。需要保持当前的流式用户体验，同时支持多个代理同时流式输出到前端。

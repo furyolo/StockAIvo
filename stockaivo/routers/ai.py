@@ -11,7 +11,7 @@ from typing import Optional
 from enum import Enum
 from datetime import date, timedelta
 
-from stockaivo.ai.orchestrator import run_ai_analysis, run_ai_analysis_stream
+from stockaivo.ai.orchestrator import run_ai_analysis, run_ai_analysis_stream, run_ai_analysis_parallel_stream
 
 # 导入现代化异常处理模块
 from ..exceptions import AIServiceException, ValidationException, create_error_response
@@ -134,3 +134,59 @@ async def analyze_stock_stream(nested_request: NestedAnalysisRequest):
     except Exception as e:
         logger.error(f"启动AI分析失败: {e}")
         raise AIServiceException(f"启动AI分析失败: {str(e)}")
+
+
+@router.post("/analyze-parallel")
+async def analyze_stock_parallel_stream(nested_request: NestedAnalysisRequest):
+    """
+    启动AI投资分析并行流式返回结果。
+
+    三个分析代理（技术分析、基本面分析、新闻情感分析）将并行执行，
+    提供更快的分析速度和更好的用户体验。
+    """
+    try:
+        request = nested_request.value
+        logger.info(f"收到AI并行分析请求: {request.ticker}, 日期选项: {request.date_range_option}, 自定义范围: {request.start_date}-{request.end_date}")
+
+        custom_date_range = None
+        if request.start_date and request.end_date:
+            custom_date_range = {
+                "start_date": request.start_date.isoformat(),
+                "end_date": request.end_date.isoformat()
+            }
+
+        # 创建并行流式响应
+        analysis_generator = run_ai_analysis_parallel_stream(
+            ticker=request.ticker,
+            date_range_option=request.date_range_option.value if request.date_range_option else None,
+            custom_date_range=custom_date_range
+        )
+
+        async def parallel_stream_wrapper():
+            """包装并行生成器以处理错误和清理"""
+            try:
+                async for event in analysis_generator:
+                    yield event
+            except asyncio.CancelledError:
+                logger.warning("客户端断开了连接，AI并行分析流已取消。")
+                # 客户端断开连接时不需要发送错误事件
+            except Exception as e:
+                logger.error(f"AI并行分析过程中发生错误: {e}")
+                # 使用统一的错误响应格式
+                error_response = create_error_response(
+                    message=f"AI并行分析过程中发生错误: {str(e)}",
+                    status_code=500
+                )
+                error_event = f"data: {error_response}\n\n"
+                yield error_event
+            finally:
+                logger.info("AI并行分析流结束。")
+
+        return StreamingResponse(parallel_stream_wrapper(), media_type="text/event-stream")
+
+    except ValueError as e:
+        logger.error(f"AI并行分析请求验证失败: {e}")
+        raise ValidationException(f"请求参数验证失败: {str(e)}")
+    except Exception as e:
+        logger.error(f"启动AI并行分析失败: {e}")
+        raise AIServiceException(f"启动AI并行分析失败: {str(e)}")
