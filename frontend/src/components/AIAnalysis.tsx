@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { DateRangePicker, type DateRange } from './ui/date-range-picker';
-import { Play, Square, Sparkles, TrendingUp } from 'lucide-react';
+import { Play, Square, Sparkles, TrendingUp, Zap } from 'lucide-react';
 
 interface AIAnalysisProps {
   selectedStock: string | null;
@@ -15,6 +15,9 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState('');
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
+  const useParallelAnalysis = true; // 固定使用并行分析模式
+  const [parallelProgress, setParallelProgress] = useState<{[key: string]: boolean}>({}); // 跟踪并行任务进度
+  const [availableAnalyses, setAvailableAnalyses] = useState<string[]>([]); // 跟踪可用的分析类型
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const handleStartAnalysis = async (e: React.MouseEvent) => {
@@ -27,6 +30,8 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
 
     setIsAnalyzing(true);
     setAnalysisResult('');
+    setParallelProgress({}); // 重置并行进度
+    setAvailableAnalyses([]); // 重置可用分析列表
 
     try {
       // 准备请求数据
@@ -42,8 +47,11 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
         },
       };
 
+      // 固定使用并行分析
+      const endpoint = 'analyze-parallel';
+
       // 发送 POST 请求并直接获取流式响应
-      const response = await fetch('http://127.0.0.1:8000/ai/analyze', {
+      const response = await fetch(`http://127.0.0.1:8000/ai/${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -89,15 +97,30 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                 if (data.error) {
                   setAnalysisResult((prev) => prev + `\n**错误:** ${data.error}\n`);
                 } else if (data.output) {
+                  // 更新并行进度跟踪
+                  if (data.phase === 'parallel_analysis') {
+                    setParallelProgress(prev => ({
+                      ...prev,
+                      [data.agent]: true
+                    }));
+                  }
+
+                  // 检查是否是数据可用性信息
+                  if (data.phase === 'data_collection' && data.available_analyses) {
+                    setAvailableAnalyses(data.available_analyses);
+                  }
+
                   // 检查是否是流式数据
                   if (data.streaming) {
                     // 流式数据：实时更新对应agent的内容
                     setAnalysisResult((prev) => {
                       const agentName = data.agent?.toUpperCase() || 'UNKNOWN';
-                      const agentHeader = `\n## ${agentName}\n\n`;
+                      // 为并行分析添加特殊标识
+                      const parallelIndicator = data.phase === 'parallel_analysis' ? ' 🔄' : '';
+                      const agentHeader = `\n## ${agentName}${parallelIndicator}\n\n`;
 
                       // 查找是否已经有这个agent的内容
-                      const agentHeaderIndex = prev.indexOf(agentHeader);
+                      const agentHeaderIndex = prev.indexOf(`\n## ${agentName}`);
 
                       if (agentHeaderIndex !== -1) {
                         // 找到下一个agent的开始位置或文本结尾
@@ -115,7 +138,9 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                     });
                   } else {
                     // 非流式数据：一次性添加完整内容
-                    const formattedOutput = `\n## ${data.agent?.toUpperCase() || 'UNKNOWN'}\n\n${data.output}\n\n`;
+                    const agentName = data.agent?.toUpperCase() || 'UNKNOWN';
+                    const parallelIndicator = data.phase === 'parallel_analysis' ? ' ✅' : '';
+                    const formattedOutput = `\n## ${agentName}${parallelIndicator}\n\n${data.output}\n\n`;
                     setAnalysisResult((prev) => prev + formattedOutput);
                   }
                 }
@@ -164,18 +189,20 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* 控制面板 - 日期范围和分析按钮在同一行 */}
-        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">
-              分析时间范围
-            </label>
-            <DateRangePicker
-              date={dateRange}
-              onDateChange={setDateRange}
-              placeholder="选择日期范围（可选）"
-              className=""
-            />
+        {/* 控制面板 - 日期范围和分析按钮 */}
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">
+                分析时间范围
+              </label>
+              <DateRangePicker
+                date={dateRange}
+                onDateChange={setDateRange}
+                placeholder="选择日期范围（可选）"
+                className=""
+              />
+            </div>
           </div>
 
           <div className="flex gap-3 w-full sm:w-auto">
@@ -202,6 +229,56 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
           </div>
         </div>
 
+        {/* 并行分析进度指示器 */}
+        {isAnalyzing && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Zap className="h-4 w-4 text-blue-600" />
+              <span className="text-sm font-medium text-blue-800">并行分析进度</span>
+            </div>
+            {availableAnalyses.length > 0 ? (
+              <div className={`grid gap-2 ${
+                availableAnalyses.length === 1 ? 'grid-cols-1' :
+                availableAnalyses.length === 2 ? 'grid-cols-1 sm:grid-cols-2' :
+                'grid-cols-1 sm:grid-cols-3'
+              }`}>
+                {availableAnalyses.map((analysisType) => {
+                  // 将分析类型映射到agent名称
+                  const agentMap = {
+                    'technical_analysis': 'technical_analyst',
+                    'fundamental_analysis': 'fundamental_analyst',
+                    'news_sentiment': 'news_sentiment_analyst'
+                  };
+                  const agent = agentMap[analysisType as keyof typeof agentMap];
+                  const isActive = parallelProgress[agent];
+                  const agentNames = {
+                    'technical_analysis': '技术分析',
+                    'fundamental_analysis': '基本面分析',
+                    'news_sentiment': '新闻情感分析'
+                  };
+                  return (
+                    <div key={analysisType} className={`flex items-center gap-2 p-3 rounded-lg transition-colors ${
+                      isActive ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-gray-100 text-gray-600 border border-gray-200'
+                    }`}>
+                      <div className={`w-3 h-3 rounded-full transition-colors ${
+                        isActive ? 'bg-green-500' : 'bg-gray-400 animate-pulse'
+                      }`}></div>
+                      <span className="text-sm font-medium">{agentNames[analysisType as keyof typeof agentNames]}</span>
+                      {isActive && <span className="text-sm ml-auto">✓</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              // 如果还没有收到可用分析信息，显示加载状态
+              <div className="flex items-center gap-2 p-3 bg-gray-100 rounded-lg">
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+                <span className="text-sm font-medium text-gray-600">正在检查数据可用性...</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* 分析结果显示 */}
         <div className="space-y-3">
           <div className="flex items-center gap-2">
@@ -209,7 +286,7 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
             {isAnalyzing && (
               <div className="flex items-center gap-2 text-xs text-blue-600">
                 <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
-                实时更新中
+                并行分析中
               </div>
             )}
           </div>
