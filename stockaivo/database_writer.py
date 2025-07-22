@@ -5,11 +5,11 @@
 
 import logging
 import pandas as pd
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Type, Union
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from datetime import datetime, date, timezone
+
+from datetime import datetime, date, timezone, time
 
 from . import database
 from .models import StockPriceDaily, StockPriceWeekly, StockPriceHourly, StockNews
@@ -158,7 +158,7 @@ class DatabaseWriter:
                     hour_timestamp = timestamp
                 elif isinstance(timestamp, date):
                     # 如果只有日期，设置为当日9:30（美股开盘时间）
-                    hour_timestamp = datetime.combine(timestamp, datetime.min.time().replace(hour=9, minute=30))
+                    hour_timestamp = datetime.combine(timestamp, time(hour=9, minute=30))
                 else:
                     logger.warning(f"无效的时间戳格式: {timestamp}")
                     continue
@@ -185,7 +185,7 @@ class DatabaseWriter:
     
 
     
-    def _batch_upsert_prices(self, db: Session, table_class, price_data: List[Dict[str, Any]], 
+    def _batch_upsert_prices(self, db: Session, table_class: Type[Union[StockPriceDaily, StockPriceWeekly, StockPriceHourly]], price_data: List[Dict[str, Any]],
                            conflict_columns: List[str]) -> int:
         """
         批量插入或更新价格数据
@@ -264,7 +264,7 @@ class DatabaseWriter:
             logger.info(f"从Redis获取到 {len(pending_data)} 个待处理数据条目")
             
             # 2. 按ticker分组处理数据
-            processed_keys = []
+            processed_keys: List[Tuple[str, str]] = []
 
             for ticker, period, dataframe in pending_data:
                 try:
@@ -367,6 +367,11 @@ class DatabaseWriter:
             bool: 保存成功返回True，失败返回False
         """
         try:
+            # 检查数据库会话是否已初始化
+            if database.SessionLocal is None:
+                logger.error("数据库会话未初始化，无法保存数据")
+                return False
+
             with database.SessionLocal() as db:
                 with db.begin():
                     # 根据period类型处理价格数据
@@ -445,7 +450,7 @@ class DatabaseWriter:
                     'ticker': ticker,
                     'keyword': str(keyword).strip(),
                     'title': str(title).strip(),
-                    'content': str(row.get('content', '')).strip() if pd.notnull(row.get('content')) else None,
+                    'content': str(row.get('content', '')).strip() if pd.notna(row.get('content')) and row.get('content') is not None else None,
                     'publish_time': pd.to_datetime(publish_time),
                     'created_at': current_time,
                     'updated_at': current_time
@@ -486,7 +491,7 @@ class DatabaseWriter:
             return 0
 
         # 数据去重：基于复合主键 (ticker, title, publish_time)
-        unique_news = {}
+        unique_news: Dict[Tuple[Any, Any, Any], Dict[str, Any]] = {}
         for item in news_data:
             key = (item.get('ticker'), item.get('title'), item.get('publish_time'))
             if key not in unique_news:
@@ -541,6 +546,11 @@ class DatabaseWriter:
             bool: 保存成功返回True，失败返回False
         """
         try:
+            # 检查数据库会话是否已初始化
+            if database.SessionLocal is None:
+                logger.error("数据库会话未初始化，无法保存新闻数据")
+                return False
+
             with database.SessionLocal() as db:
                 with db.begin():
                     # 准备新闻数据

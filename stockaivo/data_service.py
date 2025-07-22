@@ -1057,7 +1057,7 @@ async def test_data_service():
     ]
 
     # 创建一个临时的数据库会话用于测试
-    if not database.SessionLocal:
+    if database.SessionLocal is None:
         print("数据库未初始化，跳过测试。")
         return
 
