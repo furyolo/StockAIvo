@@ -70,7 +70,7 @@ def _filter_dataframe_by_date(df: pd.DataFrame, period: PeriodType, start_date: 
     return df
 
 
-async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_date: Optional[str] = None, end_date: Optional[str] = None, background_tasks: Optional[BackgroundTasks] = None) -> Optional[pd.DataFrame]:
+async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_date: Optional[str] = None, end_date: Optional[str] = None, background_tasks: Optional[BackgroundTasks] = None, market_aware_date: Optional[date] = None) -> Optional[pd.DataFrame]:
     """
     获取股票数据的核心函数（缓存优先策略）
 
@@ -98,15 +98,21 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
     # =================================================================
     # == 新增：默认日期范围逻辑 ==
     # =================================================================
+    # 获取市场感知的基准日期，在整个函数中复用以避免重复调用
+    if market_aware_date is None:
+        market_aware_date = get_market_aware_current_date()
+
     # 如果没有提供开始和结束日期，则应用默认值
     if start_date is None and end_date is None:
         logger.info(f"未提供日期范围，为 '{period}' 周期应用默认值。")
-        today = date.today()
+        today = market_aware_date
 
         if period == "daily":
-            # 对于日线数据，使用昨天作为结束日期，避免获取不完整的当日数据
-            yesterday = today - timedelta(days=1)
-            end_date_obj = _get_latest_trading_day(yesterday)
+            # 对于日线数据，market_aware_date已经考虑了市场状态，直接使用作为结束日期
+            # 如果市场尚未收盘或在缓冲期内，market_aware_date已经是前一交易日
+            # 如果市场已完全收盘，market_aware_date就是当前交易日，数据应该是完整的
+            end_date_obj = market_aware_date
+
             # start_date_obj在end_date_obj基础上往前40天
             start_date_obj = end_date_obj - timedelta(days=40)
             start_date = start_date_obj.strftime('%Y-%m-%d')
@@ -126,11 +132,11 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
 
     logger.info(f"开始获取数据: {ticker} ({period}) | 范围: {start_date} -> {end_date}")
 
-    # 修正结束日期，确保不包含今天及以后的日期
-    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    if end_date and end_date > yesterday:
-        logger.info(f"请求的结束日期 {end_date} 超出允许范围，已自动修正为昨天: {yesterday}")
-        end_date = yesterday
+    # 修正结束日期，确保不超过市场感知的安全日期
+    max_allowed_date = market_aware_date.strftime('%Y-%m-%d')
+    if end_date and end_date > max_allowed_date:
+        logger.info(f"请求的结束日期 {end_date} 超出允许范围，已自动修正为: {max_allowed_date}")
+        end_date = max_allowed_date
 
     # =================================================================
     # == 新增的前置检查逻辑 ==
@@ -164,7 +170,7 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
             cached_dates = pd.to_datetime(redis_data[date_col]).dt.date.tolist()
 
             # 找出所有缺失的、不连续的日期范围
-            missing_ranges = _find_missing_date_ranges(required_dates, cached_dates)
+            missing_ranges = _find_missing_date_ranges(required_dates, cached_dates, market_aware_date)
 
             if not missing_ranges:
                 logger.info("缓存数据完全覆盖请求范围")
@@ -192,10 +198,10 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
                     # 步骤 2.2: 重新计算仍然缺失的日期
                     db_dates = pd.to_datetime(data_from_db[date_col]).dt.date.tolist()
                     required_dates_in_range = [d for d in required_dates if missing_start <= d <= missing_end]
-                    still_missing_ranges = _find_missing_date_ranges(required_dates_in_range, db_dates)
+                    still_missing_ranges = _find_missing_date_ranges(required_dates_in_range, db_dates, market_aware_date)
                 else:
                     # 如果数据库完全没有这个范围的数据，则整个范围都需要从远程获取
-                    logger.info(f"数据库中未找到范围 {ms_str}-{me_str} 的数据。")
+                    logger.debug(f"数据库中未找到范围 {ms_str} -> {me_str} 的数据，将从远程API获取。")
                     still_missing_ranges = [(missing_start, missing_end)]
 
                 # 步骤 2.3: 从远程API获取仍然缺失的数据
@@ -257,7 +263,7 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
             return _filter_dataframe_by_date(db_data, period, start_date, end_date)
 
         db_dates = pd.to_datetime(db_data[date_col]).dt.date.tolist()
-        missing_ranges = _find_missing_date_ranges(required_dates, db_dates)
+        missing_ranges = _find_missing_date_ranges(required_dates, db_dates, market_aware_date)
 
         if not missing_ranges:
             # 数据库数据是完整的
@@ -366,6 +372,135 @@ def _get_date_col(period: PeriodType) -> str:
     return 'date'
 
 
+def get_market_aware_current_date() -> date:
+    """
+    获取基于美股交易状态的当前日期
+    只有当美股完全收盘后，才认为当日数据是完整的
+
+    实现逻辑：
+    1. 获取NYSE日历和美东时区（自动处理EST/EDT转换）
+    2. 获取当前美东时间并生成交易时间表
+    3. 判断市场开放状态和收盘后缓冲期
+    4. 根据交易状态返回合适的日期
+    5. 提供异常回退机制
+
+    Returns:
+        date: 数据完整性安全的当前日期
+    """
+    try:
+        # 获取NYSE日历和美东时区
+        nyse = mcal.get_calendar('NYSE')
+        et_tz = nyse.tz  # 自动处理EST/EDT时区转换
+
+        # 获取当前美东时间
+        now_et = datetime.now(et_tz)
+        current_date_et = now_et.date()
+
+        logger.debug(f"市场感知日期检查: 美东当前时间 {now_et}, 日期 {current_date_et}")
+
+        # 生成今日的交易时间表，使用扩展范围以确保覆盖
+        # 为了避免边界问题，我们生成一个包含前后几天的范围
+        range_start = current_date_et - timedelta(days=2)
+        range_end = current_date_et + timedelta(days=2)
+
+        extended_schedule = nyse.schedule(start_date=range_start, end_date=range_end)
+        logger.debug(f"扩展交易时间表生成: 范围 {range_start} 到 {range_end}, schedule.shape={extended_schedule.shape}")
+
+        # 检查今日是否有交易时间表
+        today_schedule = extended_schedule[extended_schedule.index.to_series().dt.date == current_date_et] if not extended_schedule.empty else pd.DataFrame()
+        logger.debug(f"今日交易时间表: schedule.empty={today_schedule.empty}, schedule.shape={today_schedule.shape if not today_schedule.empty else 'N/A'}")
+
+        # 如果今天不是交易日，我们需要检查是否是在前一个交易日收盘后的缓冲期内
+        if today_schedule.empty:
+            logger.info(f"今日 {current_date_et} 不是交易日，检查是否在前一交易日收盘后缓冲期内")
+
+            # 获取前一个交易日的时间表
+            yesterday_et = current_date_et - timedelta(days=1)
+            yesterday_schedule = extended_schedule[extended_schedule.index.to_series().dt.date == yesterday_et] if not extended_schedule.empty else pd.DataFrame()
+
+            if not yesterday_schedule.empty:
+                # 检查是否在前一交易日收盘后的缓冲期内
+                yesterday_close = yesterday_schedule.iloc[0]['market_close']
+                buffer_end_time = yesterday_close + timedelta(hours=3)
+
+                # 计算实际经过的时间用于日志显示
+                time_since_close = now_et - yesterday_close
+                hours_since_close = time_since_close.total_seconds() / 3600
+
+                logger.debug(f"前一交易日收盘时间: {yesterday_close}")
+                logger.debug(f"缓冲期结束时间: {buffer_end_time}")
+                logger.debug(f"当前时间: {now_et}")
+                logger.debug(f"时间比较: now_et < buffer_end_time = {now_et < buffer_end_time}")
+                logger.debug(f"实际经过时间: {hours_since_close:.2f} 小时")
+
+                if now_et < buffer_end_time:
+                    # 仍在前一交易日的缓冲期内
+                    logger.info(f"在前一交易日收盘后缓冲期内（收盘时间 {yesterday_close.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
+                    return _get_latest_trading_day(yesterday_et)
+                else:
+                    # 已超过缓冲期
+                    logger.info(f"已超过前一交易日收盘后缓冲期（收盘时间 {yesterday_close.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回当前日期")
+                    return current_date_et
+
+            # 不在缓冲期内，返回最近的交易日
+            logger.info(f"不在交易日缓冲期内，返回最近交易日")
+            return _get_latest_trading_day(current_date_et)
+
+        # 确保today_schedule不为空后再进行后续检查
+        try:
+            # 检查是否在交易时间内，使用扩展的schedule来避免时间戳覆盖问题
+            is_market_open = nyse.open_at_time(extended_schedule, now_et)
+            logger.debug(f"市场开放状态检查: is_market_open={is_market_open}")
+
+            if is_market_open:
+                # 市场仍在交易，返回前一个交易日
+                logger.info(f"美股市场仍在交易中（美东时间 {now_et.strftime('%H:%M:%S')}），返回前一交易日")
+                yesterday_et = current_date_et - timedelta(days=1)
+                return _get_latest_trading_day(yesterday_et)
+
+        except Exception as open_check_error:
+            # 如果open_at_time检查失败，记录详细错误并继续处理
+            logger.warning(f"市场开放状态检查失败: {open_check_error}, 继续处理收盘后逻辑")
+
+        # 检查是否刚收盘（给一个缓冲时间，收盘后3小时内数据可能不完整）
+        try:
+            market_close = today_schedule.iloc[0]['market_close']
+            logger.debug(f"今日市场收盘时间: {market_close}")
+
+            # 如果当前时间在今日收盘时间之前，说明市场还没收盘，应该返回前一交易日
+            if now_et < market_close:
+                logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在今日收盘时间 {market_close.strftime('%H:%M:%S')} 之前，市场尚未收盘，返回前一交易日")
+                yesterday_et = current_date_et - timedelta(days=1)
+                return _get_latest_trading_day(yesterday_et)
+
+            # 计算缓冲期结束时间（收盘后3小时）
+            buffer_end_time = market_close + timedelta(hours=3)
+            logger.debug(f"缓冲期结束时间: {buffer_end_time}")
+
+            # 检查是否在收盘后的缓冲期内
+            if now_et < buffer_end_time:
+                # 仍在缓冲期内，数据可能不完整，返回前一个交易日
+                time_since_close = now_et - market_close
+                hours_since_close = time_since_close.total_seconds() / 3600
+                logger.info(f"美股收盘后缓冲期内（收盘时间 {market_close.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
+                yesterday_et = current_date_et - timedelta(days=1)
+                return _get_latest_trading_day(yesterday_et)
+
+        except Exception as close_check_error:
+            # 如果收盘时间检查失败，记录错误并返回前一交易日作为安全选择
+            logger.warning(f"收盘时间检查失败: {close_check_error}, 返回前一交易日作为安全选择")
+            yesterday_et = current_date_et - timedelta(days=1)
+            return _get_latest_trading_day(yesterday_et)
+
+        # 市场已完全收盘，当日数据应该完整
+        logger.info(f"美股已完全收盘超过3小时，数据稳定，返回市场基准日期: {current_date_et}")
+        return current_date_et
+
+    except Exception as e:
+        logger.warning(f"获取市场感知日期时出错: {e}，回退到本地日期")
+        return date.today()
+
+
 def _get_latest_trading_day(target_date: date) -> date:
     """
     获取指定日期或之前的最近交易日
@@ -402,16 +537,12 @@ def _get_latest_complete_weekly_end_date(target_date: date) -> date:
     """
     获取最近的完整周的结束日期
 
-    对于周线数据，我们需要避免获取当前未完成周的数据：
-    - 如果当前是周一到周四，返回上一个完整周的最后一个交易日
-    - 如果当前是周五且为交易日，当前周还在进行中，跳过当前周，返回上一个完整周的最后一个交易日
-    - 如果当前是周五且非交易日，当前周已结束，返回本周的最后一个交易日
-    - 如果当前是周末，返回本周的最后一个交易日（通常是周五，但如果周五是假期则是周四等）
-
-    这样确保了周线数据始终是完整的，避免获取当前不完整周的数据。
+    使用与_get_target_friday_date()相同的市场状态判断逻辑来确定周是否完整：
+    - 如果本周交易未结束，返回上一个完整周的最后交易日
+    - 如果本周交易已结束，返回本周的最后交易日
 
     Args:
-        target_date (date): 目标日期
+        target_date (date): 目标日期（通常是market_aware_date）
 
     Returns:
         date: 最近的完整周的结束日期
@@ -419,9 +550,11 @@ def _get_latest_complete_weekly_end_date(target_date: date) -> date:
     try:
         # 使用NYSE日历获取交易日
         nyse_calendar = mcal.get_calendar('NYSE')
+        et_tz = nyse_calendar.tz  # 美东时区
 
-        # 获取当前日期的星期几 (0=Monday, 6=Sunday)
-        current_weekday = target_date.weekday()
+        # 获取当前美东时间
+        now_et = datetime.now(et_tz)
+        current_weekday = target_date.weekday()  # 0=Monday, 6=Sunday
 
         # 从目标日期往前查找30天，确保能找到交易日
         search_start = target_date - timedelta(days=30)
@@ -434,11 +567,46 @@ def _get_latest_complete_weekly_end_date(target_date: date) -> date:
         # 获取所有交易日
         trading_days_set = {d.date() for d in schedule.index}
 
+        # 判断市场交易状态（与_get_target_friday_date相同的逻辑）
+        is_market_open = False
+        try:
+            is_market_open = nyse_calendar.open_at_time(schedule, now_et)
+        except Exception:
+            # 如果无法判断市场状态，基于时间简单判断
+            market_hour = now_et.hour
+            market_minute = now_et.minute
+            is_market_open = (market_hour > 9 or (market_hour == 9 and market_minute >= 30)) and market_hour < 16
+
+        # 判断本周交易是否已经结束（与_get_target_friday_date相同的逻辑）
+        week_trading_ended = False
+
+        if current_weekday < 5:  # 周一到周五
+            if current_weekday == 4:  # 周五
+                # 如果是周五且市场已收盘，本周交易结束
+                if not is_market_open:
+                    week_trading_ended = True
+            # 周一到周四，本周交易未结束
+        else:  # 周末（周六、周日）
+            # 周末，本周交易已结束
+            week_trading_ended = True
+
         # 定义中文星期名称
         weekday_names = ["一", "二", "三", "四", "五", "六", "日"]
 
-        if current_weekday < 4:  # 周一到周四 (0-3)
-            # 当前周还未完成，找上一个完整周的最后一个交易日
+        if week_trading_ended:
+            # 本周交易已结束，返回本周最后交易日
+            # 从本周五开始往前找最近的交易日
+            days_since_monday = current_weekday
+            week_start = target_date - timedelta(days=days_since_monday)
+
+            # 找本周的最后一个交易日
+            for i in range(5):  # 周五到周一
+                check_date = week_start + timedelta(days=4-i)  # 4=周五, 3=周四, ..., 0=周一
+                if check_date in trading_days_set:
+                    logger.info(f"当前是周{weekday_names[current_weekday]}，本周交易已结束，使用本周最后交易日 {check_date} 作为周线数据结束日期")
+                    return check_date
+        else:
+            # 本周交易未结束，返回上一个完整周的最后交易日
             # 先找到上周的周日，然后往前找最近的交易日
             days_to_last_sunday = current_weekday + 1  # 到上周日的天数
             last_sunday = target_date - timedelta(days=days_to_last_sunday)
@@ -447,47 +615,7 @@ def _get_latest_complete_weekly_end_date(target_date: date) -> date:
             search_date = last_sunday
             while search_date >= search_start:
                 if search_date in trading_days_set:
-                    logger.info(f"当前是周{weekday_names[current_weekday]}，使用上一个完整周的最后交易日 {search_date} 作为周线数据结束日期")
-                    return search_date
-                search_date -= timedelta(days=1)
-
-        elif current_weekday == 4:  # 周五 (4)
-            # 检查当前周五是否为交易日
-            if target_date in trading_days_set:
-                # 当前周五是交易日，当前周还在进行中，数据不完整
-                # 跳过当前周，使用上一个完整周的最后一个交易日
-                days_to_last_sunday = current_weekday + 1  # 到上周日的天数
-                last_sunday = target_date - timedelta(days=days_to_last_sunday)
-
-                # 从上周日开始往前找最近的交易日（这将是上一个完整周的最后一个交易日）
-                search_date = last_sunday
-                while search_date >= search_start:
-                    if search_date in trading_days_set:
-                        logger.info(f"当前是周五交易日，为避免获取不完整周数据，跳过本周，使用上一个完整周的最后交易日 {search_date} 作为周线数据结束日期")
-                        return search_date
-                    search_date -= timedelta(days=1)
-            else:
-                # 当前周五不是交易日，说明当前周已经结束，数据完整
-                # 找本周的最后一个交易日（往前找到周四、周三等）
-                search_date = target_date - timedelta(days=1)  # 从周四开始
-
-                while search_date >= search_start:
-                    if search_date in trading_days_set:
-                        logger.info(f"当前周五非交易日，当前周已结束，使用本周最后交易日 {search_date} 作为周线数据结束日期")
-                        return search_date
-                    search_date -= timedelta(days=1)
-
-        else:  # 周末 (5-6)
-            # 找本周的最后一个交易日
-            # 从当前日期往前找到本周一，然后在本周范围内找最后一个交易日
-            days_to_this_monday = current_weekday  # 到本周一的天数
-            this_monday = target_date - timedelta(days=days_to_this_monday)
-
-            # 从当前日期（周末）开始往前找，直到本周一，找到本周的最后一个交易日
-            search_date = target_date - timedelta(days=1)  # 从昨天开始（周五或周六）
-            while search_date >= this_monday:
-                if search_date in trading_days_set:
-                    logger.info(f"当前是周末，使用本周的最后交易日 {search_date} 作为周线数据结束日期")
+                    logger.info(f"当前是周{weekday_names[current_weekday]}，本周交易未结束，使用上一个完整周的最后交易日 {search_date} 作为周线数据结束日期")
                     return search_date
                 search_date -= timedelta(days=1)
 
@@ -544,10 +672,9 @@ def _get_required_dates(period: PeriodType, start_date_str: Optional[str], end_d
             current_week_end = None
 
             for trading_day in all_trading_days:
-                # 计算该交易日所在周的周一和周日
+                # 计算该交易日所在周的周一
                 weekday = trading_day.weekday()  # 0=Monday, 6=Sunday
                 week_monday = trading_day - timedelta(days=weekday)
-                week_sunday = week_monday + timedelta(days=6)
 
                 if current_week_start is None or week_monday != current_week_start:
                     # 进入新的一周
@@ -596,9 +723,14 @@ def _get_required_dates(period: PeriodType, start_date_str: Optional[str], end_d
     # 'hourly' 周期不进行日期点检查，依赖于 start/end date 范围查询
     return []
 
-def _find_missing_date_ranges(required_dates: List[date], cached_dates: List[date]) -> List[Tuple[date, date]]:
+def _find_missing_date_ranges(required_dates: List[date], cached_dates: List[date], market_aware_date: date) -> List[Tuple[date, date]]:
     """
     通过状态转换法，准确比较必需日期和已缓存日期，找出所有缺失的、不连续的日期范围。
+
+    Args:
+        required_dates: 需要的日期列表
+        cached_dates: 已缓存的日期列表
+        market_aware_date: 市场感知的基准日期，避免重复调用
     """
     cached_dates_set = set(cached_dates)
     missing_ranges = []
@@ -632,15 +764,14 @@ def _find_missing_date_ranges(required_dates: List[date], cached_dates: List[dat
     if not missing_ranges:
         return []
 
-    today = date.today()
     adjusted_ranges = []
     for start, end in missing_ranges:
-        if start > today:
+        if start > market_aware_date:
             # 如果整个范围都在未来，则跳过
             continue
-        
-        # 如果结束日期在未来，则将其截断为今天
-        adjusted_end = min(end, today)
+
+        # 如果结束日期在未来，则将其截断为市场基准日期
+        adjusted_end = min(end, market_aware_date)
         adjusted_ranges.append((start, adjusted_end))
 
     if adjusted_ranges != missing_ranges:
@@ -859,11 +990,14 @@ async def get_stock_news(db: Session, ticker: str, background_tasks: Optional[Ba
     Args:
         db (Session): SQLAlchemy 数据库会话
         ticker (str): 股票代码
-        background_tasks (Optional[BackgroundTasks]): 后台任务管理器
+        background_tasks (Optional[BackgroundTasks]): 后台任务管理器（未使用，保留用于API兼容性）
 
     Returns:
         Optional[pd.DataFrame]: 新闻数据DataFrame，失败时返回None
     """
+
+    # 参数 background_tasks 保留用于API兼容性，当前未使用
+    _ = background_tasks
 
     if not ticker:
         logger.error("股票代码不能为空")

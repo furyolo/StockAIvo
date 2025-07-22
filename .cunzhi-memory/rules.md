@@ -10,3 +10,27 @@
 - AI模型配置已简化：只使用AI_DEFAULT_MODEL作为全局默认模型(gemini-2.5-flash)，AI_TECHNICAL_ANALYSIS_MODEL和AI_SYNTHESIS_MODEL等代理特定配置。如果代理特定配置为空，则使用全局默认模型。移除了复杂的服务级回退模型配置。
 - 用户明确要求：不要生成总结性Markdown文档，不要生成测试脚本，不要编译，不要运行代码。用户会自己处理这些操作。
 - 用户要求实现三个独立分析代理（技术分析、基本面分析、新闻情感分析）的并行执行，以提高性能。需要保持当前的流式用户体验，同时支持多个代理同时流式输出到前端。
+- 系统日期判断逻辑需要基于美股交易状态而非本地时区，只有美股完全收盘后才认为当日数据完整，需要考虑EST/EDT时区转换和夏令时
+- 修复了get_market_aware_current_date()函数中的"The provided timestamp is not covered by the schedule"错误，通过使用扩展日期范围(前后2天)生成schedule，并添加详细的错误处理和调试日志来避免时间戳覆盖问题
+- 修复了get_market_aware_current_date()函数中缓冲期逻辑错误，将收盘后缓冲期从1小时延长到3小时，确保在美股收盘3小时后（23:00 ET后）返回当前交易日而非前一交易日，并添加了详细的时间计算日志
+- 修复了get_market_aware_current_date()函数中跨日期时间计算错误，当当前时间在第二天凌晨时，需要在负时间差基础上加24小时来正确计算收盘后经过的时间
+- 优化了get_market_aware_current_date()函数的重复调用问题，在get_stock_data函数开始时调用一次并复用，避免单个请求中重复调用3次。同时改进了日志语义，将"返回当前日期"改为"返回市场基准日期"以避免歧义
+- 改进了get_market_aware_current_date()函数的时间计算逻辑，使用完整的datetime对象进行比较而非手动处理跨日期情况，通过计算buffer_end_time并直接与now_et比较，让Python自动处理日期时间的复杂性，代码更简洁可靠
+- 修复了get_market_aware_current_date()函数中跨日期逻辑错误，当当前时间是非交易日（如周末凌晨）时，需要检查前一个交易日的收盘时间和缓冲期，而不是只检查当日的交易时间表。正确处理了凌晨时段的市场状态判断
+- 为get_market_aware_current_date()函数添加了详细的调试日志，包括收盘时间、缓冲期结束时间、当前时间、时间比较结果和实际经过时间，以便诊断跨日期时间计算问题
+- 修复了get_market_aware_current_date()函数中的关键逻辑错误：当当前时间在今日收盘时间之前时（如凌晨01:48 < 20:00），应该直接返回前一交易日，而不是进行错误的跨日期时间计算。这解决了9.8小时仍被认为在缓冲期内的问题
+- 优化了日线数据默认范围设置逻辑，避免重复调用_get_latest_trading_day函数。当market_aware_date已经是前一交易日时直接使用，只有当市场完全收盘时才需要额外调用_get_latest_trading_day，减少了不必要的重复计算
+- 修复了变量作用域错误：在get_stock_data函数中错误引用了current_date_et变量（该变量只存在于get_market_aware_current_date函数内部），改为使用date.today()进行比较
+- 修复了结束日期修正逻辑错误：不应该对market_aware_date再减去1天，而应该直接使用market_aware_date作为允许的最大日期，因为该日期已经基于市场状态计算过了
+- 优化了重复的数据库查询日志，将缺失范围处理中的重复日志从INFO级别改为DEBUG级别，并修正了日期格式（从"2025-07-21-2025-07-21"改为"2025-07-21 -> 2025-07-21"），避免与主要的数据库查询日志重复
+- 修正了日线数据默认范围设置的错误逻辑：如果市场已完全收盘，应该直接使用当前交易日的数据，而不是"为了保险起见"退回到前一天。market_aware_date已经基于市场状态做了正确的判断，无需额外的保守处理
+- 修复了AI代理中的日期逻辑不一致问题：_get_target_friday_date()函数现在基于市场感知日期计算最近的周五（不超过基准日期），_calculate_trading_days_to_target()函数重命名并修正逻辑以处理目标日期可能在基准日期之前的情况
+- 纠正AI代理日期逻辑：_get_target_friday_date()函数的原始逻辑是正确的，目的是找到未来最近的周五让AI预测未来股价。修正后确保基于市场感知日期计算未来周五，_calculate_trading_days_to_target()函数相应调整以处理未来日期的交易日计算
+- 重写了_get_target_friday_date()函数逻辑，现在基于市场交易状态判断返回本周还是下周的最后一个交易日：如果本周市场交易还未结束（市场正在交易且今天是交易日），返回本周最后一个交易日；如果本周市场交易已经结束（市场已收盘或今天不是交易日），返回下周最后一个交易日。使用NYSE交易日历处理节假日，包含完整的错误处理和回退逻辑。
+- 修正了_get_target_friday_date()函数的周度交易结束判断逻辑：周一到周四本周交易未结束，返回本周最后交易日；周五如果市场已收盘则本周交易结束，返回下周最后交易日；周五如果市场仍在交易则本周交易未结束，返回本周最后交易日；周末本周交易已结束，返回下周最后交易日。这确保了周一未开盘时返回本周五而不是下周五。
+- 优化了get_market_aware_current_date()函数的重复调用问题：在AI分析代理中，现在每个代理只在开始时调用一次get_market_aware_current_date()，然后将结果作为可选参数传递给_get_target_friday_date()、_calculate_trading_days_to_target()、_build_technical_analysis_prompt()和_build_synthesis_prompt()函数。这将单次分析中的调用次数从9次减少到4次，显著提升性能并减少日志噪音。所有函数保持向后兼容性。
+- 进一步优化了数据收集阶段的get_market_aware_current_date()重复调用：修改get_stock_data()函数支持可选的market_aware_date参数，数据收集代理现在只在开始时调用一次get_market_aware_current_date()，然后传递给所有get_stock_data()调用。这将数据收集阶段的调用次数从5次减少到1次，结合AI分析阶段的优化，单次完整分析的总调用次数从9次减少到4次。
+- 完成了get_market_aware_current_date()函数的最终优化：修改_calculate_date_range()函数支持可选的market_aware_date参数，彻底消除了数据收集阶段的重复调用。现在数据收集代理只在开始时调用一次get_market_aware_current_date()，然后传递给_calculate_date_range()和get_stock_data()函数。这将数据收集阶段的调用次数从3次减少到1次，整个分析流程的总调用次数从9次减少到3次（数据收集1次、技术分析1次、综合分析1次）。
+- 统一了周度数据完整性判断逻辑：修改_get_latest_complete_weekly_end_date()函数使用与_get_target_friday_date()相同的市场状态判断逻辑。两个函数现在都基于实时市场交易状态判断本周是否完整：如果本周交易未结束，_get_latest_complete_weekly_end_date返回上一个完整周的最后交易日，_get_target_friday_date返回本周最后交易日；如果本周交易已结束，两者都认为本周是完整的。这确保了数据获取和AI分析的逻辑一致性。
+- 修复了data_service.py中的类型错误：1) 修复了extended_schedule.index.date的属性访问问题，改为使用extended_schedule.index.to_series().dt.date；2) 删除了未使用的week_sunday变量；3) 将未使用的background_tasks参数重命名为_background_tasks并在文档中标注为保留用于API兼容性。所有类型错误已修复。
+- 修复了get_stock_news函数参数名变更导致的调用错误：恢复了background_tasks参数名以保持API兼容性，在函数内部添加了"_ = background_tasks"语句来消除未使用参数的警告，同时在文档中标注该参数保留用于API兼容性。这确保了所有现有的调用都能正常工作。
