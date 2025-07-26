@@ -115,7 +115,6 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
         # 2. 获取新闻数据
         print(f"  - Fetching news data for {ticker}")
         news_task = get_stock_news(
-            db=db,
             ticker=ticker,
             background_tasks=None  # No background tasks needed for agent context
         )
@@ -559,38 +558,75 @@ def _check_news_data_and_get_ticker(state: GraphState) -> tuple[bool, str, Optio
 
 
 def _build_news_sentiment_analysis_prompt(ticker: str, news_data: Optional[list] = None) -> str:
-    """构建新闻情感分析的提示词"""
+    """构建新闻情感分析的提示词 - 基于时间序列情感演变分析"""
     # 新闻情感分析prompt
     base_prompt = f"""
-    作为一名专业的市场情绪分析师，请为股票 {ticker} 提供新闻情感分析。
+    作为一名专业的市场情绪分析师，请为股票 {ticker} 提供基于时间演变的新闻情感分析。
+
+    **核心分析方法 - 情感演变时间线:**
 
     **分析要求:**
-    1. **市场情绪概况**: 基于提供的新闻数据评估当前市场对该股票的整体情绪
-    2. **关键事件影响**: 分析新闻中提到的可能影响股价的重要事件
-    3. **投资者关注点**: 识别新闻中反映的投资者当前最关注的因素
-    4. **情绪指标**: 评估新闻整体情绪是偏向乐观、悲观还是中性
-    5. **短期影响**: 基于新闻内容预测情绪变化对短期股价的可能影响
+    - 新闻数据已重新排序为时间顺序（从最早到最新），请按此顺序分析情感演变
+    - 构建从早期到最新的情感演变时间线，识别关键转折点
+    - 重点关注最新消息的情感状态，确定当前市场真实情绪
+    - 预测短期情感发展趋势
     """
 
     if news_data and len(news_data) > 0:
         # 限制新闻数量以避免prompt过长
-        limited_news = news_data[:100]  # 只取前100条新闻
+        limited_news = news_data[:50]  # 减少到50条新闻以提高分析效率
 
-        news_content = "\n**相关新闻数据:**\n"
-        for i, news in enumerate(limited_news, 1):
+        # 简单处理新闻数据，按时间排序（从最早到最新）
+        processed_news = []
+        for news in limited_news:
             title = news.get('title', '无标题')
             content = news.get('content', '无内容')
             publish_time = news.get('publish_time', '未知时间')
 
-            # 限制内容长度
-            if len(content) > 500:
-                content = content[:500] + "..."
+            processed_news.append({
+                'title': title,
+                'content': content,
+                'publish_time': publish_time
+            })
 
-            news_content += f"{i}. 标题: {title}\n"
-            news_content += f"   时间: {publish_time}\n"
-            news_content += f"   内容: {content}\n\n"
 
-        return base_prompt + news_content + "\n请基于以上新闻数据提供专业的市场情绪分析报告。"
+        # 按发布时间排序（从最早到最新）
+        try:
+            processed_news.sort(key=lambda x: x['publish_time'])
+        except:
+            # 如果排序失败，保持原顺序并反转（因为原数据是最新在前）
+            processed_news.reverse()
+
+        news_content = f"""
+**新闻情感演变分析数据:**
+
+**分析说明:**
+- 数据包含 {len(processed_news)} 条新闻（美国东部时区）
+- 新闻按时间顺序排列（从最早到最新）
+- 请构建情感演变时间线，重点关注最新消息的情感状态
+
+**新闻数据（按时间顺序排列）:**
+"""
+
+        # 显示按时间排序的新闻
+        for i, news in enumerate(processed_news, 1):
+            # 简单的时间标记
+            if i <= len(processed_news) // 4:
+                time_marker = "【早期】"
+            elif i <= len(processed_news) // 2:
+                time_marker = "【中期】"
+            elif i <= len(processed_news) * 3 // 4:
+                time_marker = "【近期】"
+            else:
+                time_marker = "【最新】"
+
+            news_content += f"""
+{i}. {time_marker} 标题: {news['title']}
+   时间: {news['publish_time']}
+   内容: {news['content']}
+"""
+
+        return base_prompt + news_content
     else:
         return base_prompt + "\n注意：当前没有可用的新闻数据，请基于一般市场认知提供分析。"
 
@@ -649,6 +685,10 @@ def _build_synthesis_prompt(ticker: str, data_collector_result: str, technical_r
         2. **短期风险评估**: 识别到 {target_date} 前{trading_days_count}个交易日的主要技术风险因素和机会
         3. **关键技术观察点**: 投资者在 {target_date} 前{trading_days_count}个交易日应该重点关注的技术指标和价格水平
         4. **短期执行策略**: 到 {target_date} 前{trading_days_count}个交易日的具体买卖点位建议
+        5. **已持股投资者专项建议**:
+           - **持仓管理建议**: 基于当前技术分析，对已持有该股票的投资者给出到 {target_date} 前{trading_days_count}个交易日的加仓、减仓或继续持有的具体建议
+           - **风险控制策略**: 针对已持股者在 {target_date} 前{trading_days_count}个交易日的止损位设置和风险管理建议
+           - **操作时机指导**: 为已持股投资者提供到 {target_date} 前{trading_days_count}个交易日的具体操作时机和执行策略
 
         请提供专业、客观且实用的短期投资建议。注意：由于缺乏基本面和新闻数据，本分析主要基于技术面。
         """
@@ -666,6 +706,10 @@ def _build_synthesis_prompt(ticker: str, data_collector_result: str, technical_r
         2. **短期风险评估**: 识别到 {target_date} 前{trading_days_count}个交易日的主要风险因素和机会
         3. **关键观察点**: 投资者在 {target_date} 前{trading_days_count}个交易日应该重点关注的指标和事件
         4. **短期执行策略**: 到 {target_date} 前{trading_days_count}个交易日的具体买卖点位建议
+        5. **已持股投资者专项建议**:
+           - **持仓管理建议**: 综合技术面、基本面和市场情绪分析，对已持有该股票的投资者给出到 {target_date} 前{trading_days_count}个交易日的加仓、减仓或继续持有的具体建议
+           - **风险控制策略**: 基于多维度分析为已持股者制定到 {target_date} 前{trading_days_count}个交易日的止损位、止盈位和风险管理策略
+           - **操作时机指导**: 结合各项分析结果，为已持股投资者提供到 {target_date} 前{trading_days_count}个交易日的精准操作时机和执行建议
 
         请提供专业、客观且实用的短期投资建议。
         """

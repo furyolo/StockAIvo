@@ -81,7 +81,7 @@ def verify_migration():
                 """))
 
                 indexes = [row[0] for row in result.fetchall()]
-                expected_indexes = ['idx_stock_news_ticker_time', 'idx_stock_news_publish_time', 'idx_stock_news_keyword']
+                expected_indexes = ['idx_stock_news_keyword_time', 'idx_stock_news_publish_time', 'idx_stock_news_keyword']
 
                 for index in expected_indexes:
                     if index in indexes:

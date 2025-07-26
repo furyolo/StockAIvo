@@ -411,9 +411,10 @@ class DatabaseWriter:
     def _prepare_news_data(self, ticker: str, dataframe: pd.DataFrame) -> List[Dict[str, Any]]:
         """
         准备新闻数据用于数据库插入，包含数据验证和清理
+        注意：ticker 参数保留用于日志记录，但不再存储到数据库中
 
         Args:
-            ticker: 股票代码
+            ticker: 股票代码（仅用于日志记录）
             dataframe: 新闻数据DataFrame
 
         Returns:
@@ -445,9 +446,8 @@ class DatabaseWriter:
                     logger.debug(f"跳过缺少发布时间的新闻记录")
                     continue
 
-                # 数据清理和格式化
+                # 数据清理和格式化（移除ticker字段，符合新的表结构）
                 news_record = {
-                    'ticker': ticker,
                     'keyword': str(keyword).strip(),
                     'title': str(title).strip(),
                     'content': str(row.get('content', '')).strip() if pd.notna(row.get('content')) and row.get('content') is not None else None,
@@ -490,10 +490,10 @@ class DatabaseWriter:
         if not news_data:
             return 0
 
-        # 数据去重：基于复合主键 (ticker, title, publish_time)
+        # 数据去重：基于新的复合主键 (keyword, title, publish_time)
         unique_news: Dict[Tuple[Any, Any, Any], Dict[str, Any]] = {}
         for item in news_data:
-            key = (item.get('ticker'), item.get('title'), item.get('publish_time'))
+            key = (item.get('keyword'), item.get('title'), item.get('publish_time'))
             if key not in unique_news:
                 unique_news[key] = item
             else:
@@ -516,9 +516,9 @@ class DatabaseWriter:
                 'updated_at': datetime.now(timezone.utc)
             }
 
-            # 基于复合主键进行冲突处理（ticker, title, publish_time）
+            # 基于新的复合主键进行冲突处理（keyword, title, publish_time）
             stmt = stmt.on_conflict_do_update(
-                index_elements=['ticker', 'title', 'publish_time'],
+                index_elements=['keyword', 'title', 'publish_time'],
                 set_=update_dict
             )
 

@@ -89,9 +89,9 @@ class SearchResponse(BaseModel):
 
 class StockNewsItem(BaseModel):
     """股票新闻单项模型"""
-    ticker: str = Field(..., description="股票代码")
+    keyword: str = Field(..., description="搜索关键词")
     title: str = Field(..., description="新闻标题")
-    publish_time: datetime = Field(..., description="发布时间")
+    publish_time: datetime = Field(..., description="发布时间（美国东部时间）")
     content: Optional[str] = Field(None, description="新闻内容摘要")
 
     class Config:
@@ -100,7 +100,7 @@ class StockNewsItem(BaseModel):
 
 class StockNewsResponse(BaseModel):
     """股票新闻响应模型"""
-    ticker: str = Field(..., description="股票代码")
+    keyword: str = Field(..., description="搜索关键词")
     data_type: str = Field(default="news", description="数据类型")
     data_count: int = Field(..., description="新闻条数", ge=0)
     data: List[StockNewsItem] = Field(..., description="新闻数据列表")

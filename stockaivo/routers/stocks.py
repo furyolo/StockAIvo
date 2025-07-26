@@ -217,7 +217,6 @@ async def get_hourly_data(
 async def get_stock_news_data(
     ticker: str,
     background_tasks: BackgroundTasks,
-    db: DatabaseDep,
 ):
     """
     获取指定股票的新闻数据
@@ -225,7 +224,6 @@ async def get_stock_news_data(
     Args:
         ticker: 股票代码 (如: AAPL, TSLA)
         background_tasks: 后台任务管理器
-        db: 数据库会话依赖
 
     Returns:
         包含新闻数据的响应对象
@@ -240,7 +238,7 @@ async def get_stock_news_data(
         logger.info(f"获取新闻数据请求: {ticker}")
 
         # 调用数据服务获取新闻数据
-        news_data = await get_stock_news(db, ticker, background_tasks)
+        news_data = await get_stock_news(ticker, background_tasks)
 
         if news_data is None or news_data.empty:
             raise HTTPException(
@@ -248,9 +246,10 @@ async def get_stock_news_data(
                 detail=f"未找到股票 {ticker} 的新闻数据"
             )
 
-        # 构建响应
+        # 构建响应（使用第一条记录的keyword，如果没有数据则使用ticker作为fallback）
+        keyword = news_data.iloc[0]['keyword'] if not news_data.empty and 'keyword' in news_data.columns else ticker
         response = StockNewsResponse(
-            ticker=ticker,
+            keyword=keyword,
             data_type="news",
             data_count=len(news_data),
             data=news_data.to_dict('records'),  # type: ignore

@@ -191,21 +191,24 @@ class StockNews(Base):
     """
     股票新闻数据表
     存储股票相关的新闻资讯数据，来源于东方财富
+    主键：(keyword, title, publish_time)
+    时间存储为美国东部时间
     """
     __tablename__ = 'stock_news'
 
-    # 按指定顺序定义字段：ticker, keyword, title, content, publish_time, created_at, updated_at
-    ticker = Column(String(10), primary_key=True, nullable=False, comment='股票代码')
-    keyword = Column(String(100), nullable=False, comment='搜索关键词，清理后的公司名称')
+    # 新的复合主键字段：keyword, title, publish_time
+    keyword = Column(String(100), primary_key=True, nullable=False, comment='搜索关键词，清理后的公司名称')
     title = Column(Text, primary_key=True, nullable=False, comment='新闻标题')
+    publish_time = Column(DateTime, primary_key=True, nullable=False, comment='发布时间（美国东部时间）')
+
+    # 其他字段
     content = Column(Text, nullable=True, comment='新闻内容摘要')
-    publish_time = Column(DateTime, primary_key=True, nullable=False, comment='发布时间')
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
 
     # 创建复合索引以提高查询性能
     __table_args__ = (
-        Index('idx_stock_news_ticker_time', 'ticker', 'publish_time'),
+        Index('idx_stock_news_keyword_time', 'keyword', 'publish_time'),
         Index('idx_stock_news_publish_time', 'publish_time'),
         Index('idx_stock_news_keyword', 'keyword'),
     )

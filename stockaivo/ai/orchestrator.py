@@ -138,6 +138,183 @@ class StreamingLangGraphOrchestrator:
     def __init__(self) -> None:
         pass
 
+    async def run_analysis_stream(self, ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
+        """
+        运行流式AI分析工作流
+        """
+        print(f"\n=== Starting Streaming AI Analysis for {ticker} ===")
+
+        # 初始化状态
+        initial_state: GraphState = {
+            "ticker": ticker,
+            "date_range_option": date_range_option,
+            "custom_date_range": custom_date_range,
+            "raw_data": {},
+            "analysis_results": {},
+            "final_report": ""
+        }
+
+        # 1. 数据收集阶段（非流式）
+        print("\n---Phase 1: Data Collection---")
+        data_collection_result = await data_collection_agent(initial_state)
+
+        # 手动合并状态（在流式版本中需要手动处理状态合并）
+        state = initial_state.copy()
+        if "raw_data" in data_collection_result:
+            state["raw_data"] = {**state.get("raw_data", {}), **data_collection_result["raw_data"]}
+        if "analysis_results" in data_collection_result:
+            state["analysis_results"] = {**state.get("analysis_results", {}), **data_collection_result["analysis_results"]}
+
+        # 发送数据收集结果
+        data_collector_result = state.get("analysis_results", {}).get("data_collector")
+        if data_collector_result:
+            result_data = {
+                "agent": "data_collector",
+                "output": data_collector_result
+            }
+            yield f"data: {json.dumps(result_data)}\n\n"
+
+        # 检查是否有基本面数据和新闻数据
+        raw_data = state.get("raw_data", {})
+        has_fundamental_data = any(key in raw_data for key in ['financials', 'company_info', 'earnings'])
+        has_news_data = 'news' in raw_data and raw_data['news']  # 更准确的新闻数据检查
+
+        # 实现动态阶段编号以适应跳过的分析阶段
+        current_phase = 2  # 从技术分析开始
+
+        # 2. 技术分析阶段（流式）
+        print(f"\n---Phase {current_phase}: Technical Analysis (Streaming)---")
+        async for chunk in technical_analysis_agent_stream(state):
+            analysis_results = chunk.get("analysis_results", {})
+            technical_result = analysis_results.get("technical_analyst")
+            if technical_result:
+                # 更新状态
+                state["analysis_results"]["technical_analyst"] = technical_result
+
+                # 发送流式结果
+                result_data = {
+                    "agent": "technical_analyst",
+                    "output": technical_result,
+                    "streaming": True
+                }
+                yield f"data: {json.dumps(result_data)}\n\n"
+
+        # 检查技术分析是否有有效结果
+        final_technical_result = state.get("analysis_results", {}).get("technical_analyst")
+
+        def is_valid_analysis_result(result: Any) -> bool:
+            """检查分析结果是否有效（不是空或错误信息）"""
+            if not result or not isinstance(result, str) or result.strip() == "":
+                return False
+            # 检查是否是错误信息
+            error_indicators = [
+                "Error calling",
+                "HTTP Error",
+                "Error:",
+                "所有重试都失败了",
+                "LLM服务未正确配置"
+            ]
+            return not any(indicator in result for indicator in error_indicators)
+
+        if not is_valid_analysis_result(final_technical_result):
+            print("\n---Technical Analysis returned invalid result, skipping remaining analysis---")
+            error_data = {
+                "agent": "system",
+                "output": "技术分析未返回有效结果，跳过后续分析。",
+                "error": True
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
+            return
+
+        current_phase += 1
+
+        # 3. 基本面分析阶段（流式，如果有数据）
+        if has_fundamental_data:
+            print(f"\n---Phase {current_phase}: Fundamental Analysis (Streaming)---")
+            async for chunk in fundamental_analysis_agent_stream(state):
+                analysis_results = chunk.get("analysis_results", {})
+                fundamental_result = analysis_results.get("fundamental_analyst")
+                if fundamental_result:
+                    # 更新状态
+                    state["analysis_results"]["fundamental_analyst"] = fundamental_result
+
+                    # 发送流式结果
+                    result_data = {
+                        "agent": "fundamental_analyst",
+                        "output": fundamental_result,
+                        "streaming": True
+                    }
+                    yield f"data: {json.dumps(result_data)}\n\n"
+            current_phase += 1
+        else:
+            print(f"\n---Skipping Phase {current_phase}: Fundamental Analysis (No data available)---")
+            skip_data = {
+                "agent": "system",
+                "output": "跳过基本面分析：无可用的财务数据。"
+            }
+            yield f"data: {json.dumps(skip_data)}\n\n"
+            current_phase += 1
+
+        # 4. 新闻情感分析阶段（流式，如果有数据）
+        if has_news_data:
+            print(f"\n---Phase {current_phase}: News Sentiment Analysis (Streaming)---")
+            async for chunk in news_sentiment_analysis_agent_stream(state):
+                analysis_results = chunk.get("analysis_results", {})
+                news_result = analysis_results.get("news_sentiment_analyst")
+                if news_result:
+                    # 更新状态
+                    state["analysis_results"]["news_sentiment_analyst"] = news_result
+
+                    # 发送流式结果
+                    result_data = {
+                        "agent": "news_sentiment_analyst",
+                        "output": news_result,
+                        "streaming": True
+                    }
+                    yield f"data: {json.dumps(result_data)}\n\n"
+            current_phase += 1
+        else:
+            print(f"\n---Skipping Phase {current_phase}: News Sentiment Analysis (No data available)---")
+            skip_data = {
+                "agent": "system",
+                "output": "跳过新闻情感分析：无可用的新闻数据。"
+            }
+            yield f"data: {json.dumps(skip_data)}\n\n"
+            current_phase += 1
+
+        # 5. 综合分析阶段（流式）
+        print(f"\n---Phase {current_phase}: Synthesis (Streaming)---")
+
+        # 检查是否有有效的分析结果
+        analysis_results = state.get("analysis_results", {})
+        has_valid_analysis = any([
+            is_valid_analysis_result(analysis_results.get("technical_analyst")),
+            is_valid_analysis_result(analysis_results.get("fundamental_analyst")),
+            is_valid_analysis_result(analysis_results.get("news_sentiment_analyst"))
+        ])
+
+        if not has_valid_analysis:
+            error_data = {
+                "agent": "system",
+                "output": "所有分析阶段都未返回有效结果，无法进行综合分析。",
+                "error": True
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
+            return
+
+        # 执行综合分析
+        async for chunk in synthesis_agent_stream(state):
+            final_report = chunk.get("final_report")
+            if final_report:
+                result_data = {
+                    "agent": "synthesis",
+                    "output": final_report,
+                    "streaming": True
+                }
+                yield f"data: {json.dumps(result_data)}\n\n"
+
+        print("\n---Streaming AI Analysis Complete---")
+
 
 # ==================== 并行流式版本的Orchestrator ====================
 
@@ -516,176 +693,7 @@ class ParallelStreamingOrchestrator:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def run_analysis_stream(self, ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
-        """
-        运行流式AI分析工作流
-        """
-        print(f"\n=== Starting Streaming AI Analysis for {ticker} ===")
-
-        # 初始化状态
-        initial_state: GraphState = {
-            "ticker": ticker,
-            "date_range_option": date_range_option,
-            "custom_date_range": custom_date_range,
-            "raw_data": {},
-            "analysis_results": {},
-            "final_report": ""
-        }
-
-        # 1. 数据收集阶段（非流式）
-        print("\n---Phase 1: Data Collection---")
-        data_collection_result = await data_collection_agent(initial_state)
-
-        # 手动合并状态（在流式版本中需要手动处理状态合并）
-        state = initial_state.copy()
-        if "raw_data" in data_collection_result:
-            state["raw_data"] = {**state.get("raw_data", {}), **data_collection_result["raw_data"]}
-        if "analysis_results" in data_collection_result:
-            state["analysis_results"] = {**state.get("analysis_results", {}), **data_collection_result["analysis_results"]}
-
-        # 发送数据收集结果
-        data_collector_result = state.get("analysis_results", {}).get("data_collector")
-        if data_collector_result:
-            result_data = {
-                "agent": "data_collector",
-                "output": data_collector_result
-            }
-            yield f"data: {json.dumps(result_data)}\n\n"
-
-        # 检查是否有基本面数据和新闻数据
-        raw_data = state.get("raw_data", {})
-        has_fundamental_data = any(key in raw_data for key in ['financials', 'company_info', 'earnings'])
-        has_news_data = 'news' in raw_data and raw_data['news']  # 更准确的新闻数据检查
-
-        # 实现动态阶段编号以适应跳过的分析阶段
-        current_phase = 2  # 从技术分析开始
-
-        # 2. 技术分析阶段（流式）
-        print(f"\n---Phase {current_phase}: Technical Analysis (Streaming)---")
-        async for chunk in technical_analysis_agent_stream(state):
-            analysis_results = chunk.get("analysis_results", {})
-            technical_result = analysis_results.get("technical_analyst")
-            if technical_result:
-                # 更新状态
-                state["analysis_results"]["technical_analyst"] = technical_result
-
-                # 发送流式结果
-                result_data = {
-                    "agent": "technical_analyst",
-                    "output": technical_result,
-                    "streaming": True
-                }
-                yield f"data: {json.dumps(result_data)}\n\n"
-
-        # 检查技术分析是否有有效结果
-        final_technical_result = state.get("analysis_results", {}).get("technical_analyst")
-
-        def is_valid_analysis_result(result: Any) -> bool:
-            """检查分析结果是否有效（不是空或错误信息）"""
-            if not result or not isinstance(result, str) or result.strip() == "":
-                return False
-            # 检查是否是错误信息
-            error_indicators = [
-                "Error calling",
-                "HTTP Error",
-                "Error:",
-                "所有重试都失败了",
-                "LLM服务未正确配置"
-            ]
-            return not any(indicator in result for indicator in error_indicators)
-
-        if not is_valid_analysis_result(final_technical_result):
-            print("\n---Technical Analysis returned invalid result, skipping remaining analysis---")
-            error_data = {
-                "agent": "system",
-                "output": "技术分析未返回有效结果，可能是网络连接问题或API服务异常。请稍后重试。",
-                "streaming": False,
-                "error": True
-            }
-            yield f"data: {json.dumps(error_data)}\n\n"
-            return
-
-        # 3. 基本面分析阶段（流式，如果有数据）
-        current_phase += 1
-        if has_fundamental_data:
-            print(f"\n---Phase {current_phase}: Fundamental Analysis (Streaming)---")
-            async for chunk in fundamental_analysis_agent_stream(state):
-                analysis_results = chunk.get("analysis_results", {})
-                fundamental_result = analysis_results.get("fundamental_analyst")
-                if fundamental_result:
-                    # 更新状态
-                    state["analysis_results"]["fundamental_analyst"] = fundamental_result
-
-                    # 发送流式结果
-                    result_data = {
-                        "agent": "fundamental_analyst",
-                        "output": fundamental_result,
-                        "streaming": True
-                    }
-                    yield f"data: {json.dumps(result_data)}\n\n"
-        else:
-            print("\n---Skipping Fundamental Analysis (no data)---")
-            current_phase -= 1  # 如果跳过，则不增加阶段编号
-
-        # 4. 新闻情感分析阶段（流式，如果有数据）
-        current_phase += 1
-        if has_news_data:
-            print(f"\n---Phase {current_phase}: News Sentiment Analysis (Streaming)---")
-            async for chunk in news_sentiment_analysis_agent_stream(state):
-                analysis_results = chunk.get("analysis_results", {})
-                news_result = analysis_results.get("news_sentiment_analyst")
-                if news_result:
-                    # 更新状态
-                    state["analysis_results"]["news_sentiment_analyst"] = news_result
-
-                    # 发送流式结果
-                    result_data = {
-                        "agent": "news_sentiment_analyst",
-                        "output": news_result,
-                        "streaming": True
-                    }
-                    yield f"data: {json.dumps(result_data)}\n\n"
-        else:
-            print("\n---Skipping News Sentiment Analysis (no data)---")
-            current_phase -= 1  # 如果跳过，则不增加阶段编号
-
-        # 5. 综合分析阶段（流式）- 检查是否有足够的分析结果
-        analysis_results = state.get("analysis_results", {})
-        technical_result = analysis_results.get("technical_analyst")
-        fundamental_result = analysis_results.get("fundamental_analyst")
-        news_result = analysis_results.get("news_sentiment_analyst")
-
-        # 检查是否至少有一个有效的分析结果
-        has_valid_analysis = any([
-            is_valid_analysis_result(technical_result),
-            is_valid_analysis_result(fundamental_result),
-            is_valid_analysis_result(news_result)
-        ])
-
-        if not has_valid_analysis:
-            print("\n---No valid analysis results available, skipping synthesis---")
-            error_data = {
-                "agent": "system",
-                "output": "所有分析阶段都未返回有效结果，无法进行综合分析。请检查数据源或稍后重试。",
-                "streaming": False,
-                "error": True
-            }
-            yield f"data: {json.dumps(error_data)}\n\n"
-            return
-
-        current_phase += 1
-        print(f"\n---Phase {current_phase}: Synthesis (Streaming)---")
-        async for chunk in synthesis_agent_stream(state):
-            final_report = chunk.get("final_report")
-            if final_report:
-                result_data = {
-                    "agent": "synthesis",
-                    "output": final_report,
-                    "streaming": True
-                }
-                yield f"data: {json.dumps(result_data)}\n\n"
-
-        print("\n---Streaming AI Analysis Complete---")
+    # run_analysis_stream 方法已移至 StreamingLangGraphOrchestrator 类中
 
 
 # 流式orchestrator实例

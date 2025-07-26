@@ -8,7 +8,6 @@
 import logging
 import pandas as pd
 import pandas_market_calendars as mcal
-from pandas.tseries.frequencies import to_offset
 from typing import Optional, Literal, List, Tuple
 from datetime import datetime, date, timedelta
 from fastapi import BackgroundTasks
@@ -17,14 +16,12 @@ from fastapi import BackgroundTasks
 from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 from . import database
-from . import database_writer
 from .models import StockPriceDaily, StockPriceWeekly, StockPriceHourly
 
  # 导入数据提供者和缓存管理器
 from . import data_provider
 from . import cache_manager
 from .cache_manager import CacheType
-from . import database_writer
 
  # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -419,15 +416,24 @@ def get_market_aware_current_date() -> date:
             yesterday_schedule = extended_schedule[extended_schedule.index.to_series().dt.date == yesterday_et] if not extended_schedule.empty else pd.DataFrame()
 
             if not yesterday_schedule.empty:
-                # 检查是否在前一交易日收盘后的缓冲期内
+                # 检查是否在前一交易日收盘后的缓冲期内（1小时）
                 yesterday_close = yesterday_schedule.iloc[0]['market_close']
-                buffer_end_time = yesterday_close + timedelta(hours=3)
+
+                # 确保收盘时间使用正确的美东时区
+                if hasattr(yesterday_close, 'tz') and yesterday_close.tz is not None:
+                    # 如果有时区信息，转换为美东时区
+                    yesterday_close_et = yesterday_close.tz_convert(et_tz)
+                else:
+                    # 如果没有时区信息，假设已经是美东时区
+                    yesterday_close_et = yesterday_close
+
+                buffer_end_time = yesterday_close_et + timedelta(hours=1)
 
                 # 计算实际经过的时间用于日志显示
-                time_since_close = now_et - yesterday_close
+                time_since_close = now_et - yesterday_close_et
                 hours_since_close = time_since_close.total_seconds() / 3600
 
-                logger.debug(f"前一交易日收盘时间: {yesterday_close}")
+                logger.debug(f"前一交易日收盘时间: {yesterday_close_et}")
                 logger.debug(f"缓冲期结束时间: {buffer_end_time}")
                 logger.debug(f"当前时间: {now_et}")
                 logger.debug(f"时间比较: now_et < buffer_end_time = {now_et < buffer_end_time}")
@@ -435,12 +441,12 @@ def get_market_aware_current_date() -> date:
 
                 if now_et < buffer_end_time:
                     # 仍在前一交易日的缓冲期内
-                    logger.info(f"在前一交易日收盘后缓冲期内（收盘时间 {yesterday_close.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
+                    logger.info(f"在前一交易日收盘后缓冲期内（收盘时间 {yesterday_close_et.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
                     return _get_latest_trading_day(yesterday_et)
                 else:
-                    # 已超过缓冲期
-                    logger.info(f"已超过前一交易日收盘后缓冲期（收盘时间 {yesterday_close.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回当前日期")
-                    return current_date_et
+                    # 已超过缓冲期，返回前一交易日
+                    logger.info(f"已超过前一交易日收盘后缓冲期（收盘时间 {yesterday_close_et.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
+                    return _get_latest_trading_day(yesterday_et)
 
             # 不在缓冲期内，返回最近的交易日
             logger.info(f"不在交易日缓冲期内，返回最近交易日")
@@ -462,27 +468,36 @@ def get_market_aware_current_date() -> date:
             # 如果open_at_time检查失败，记录详细错误并继续处理
             logger.warning(f"市场开放状态检查失败: {open_check_error}, 继续处理收盘后逻辑")
 
-        # 检查是否刚收盘（给一个缓冲时间，收盘后3小时内数据可能不完整）
+        # 检查是否刚收盘（给一个缓冲时间，收盘后1小时内数据可能不完整）
         try:
             market_close = today_schedule.iloc[0]['market_close']
-            logger.debug(f"今日市场收盘时间: {market_close}")
+
+            # 确保收盘时间使用正确的美东时区
+            if hasattr(market_close, 'tz') and market_close.tz is not None:
+                # 如果有时区信息，转换为美东时区
+                market_close_et = market_close.tz_convert(et_tz)
+            else:
+                # 如果没有时区信息，假设已经是美东时区
+                market_close_et = market_close
+
+            logger.debug(f"今日市场收盘时间: {market_close_et}")
 
             # 如果当前时间在今日收盘时间之前，说明市场还没收盘，应该返回前一交易日
-            if now_et < market_close:
-                logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在今日收盘时间 {market_close.strftime('%H:%M:%S')} 之前，市场尚未收盘，返回前一交易日")
+            if now_et < market_close_et:
+                logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在今日收盘时间 {market_close_et.strftime('%H:%M:%S')} 之前，市场尚未收盘，返回前一交易日")
                 yesterday_et = current_date_et - timedelta(days=1)
                 return _get_latest_trading_day(yesterday_et)
 
-            # 计算缓冲期结束时间（收盘后3小时）
-            buffer_end_time = market_close + timedelta(hours=3)
+            # 计算缓冲期结束时间（收盘后1小时）
+            buffer_end_time = market_close_et + timedelta(hours=1)
             logger.debug(f"缓冲期结束时间: {buffer_end_time}")
 
             # 检查是否在收盘后的缓冲期内
             if now_et < buffer_end_time:
                 # 仍在缓冲期内，数据可能不完整，返回前一个交易日
-                time_since_close = now_et - market_close
+                time_since_close = now_et - market_close_et
                 hours_since_close = time_since_close.total_seconds() / 3600
-                logger.info(f"美股收盘后缓冲期内（收盘时间 {market_close.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
+                logger.info(f"美股收盘后缓冲期内（收盘时间 {market_close_et.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
                 yesterday_et = current_date_et - timedelta(days=1)
                 return _get_latest_trading_day(yesterday_et)
 
@@ -493,7 +508,7 @@ def get_market_aware_current_date() -> date:
             return _get_latest_trading_day(yesterday_et)
 
         # 市场已完全收盘，当日数据应该完整
-        logger.info(f"美股已完全收盘超过3小时，数据稳定，返回市场基准日期: {current_date_et}")
+        logger.info(f"美股已完全收盘超过1小时，数据稳定，返回市场基准日期: {current_date_et}")
         return current_date_et
 
     except Exception as e:
@@ -977,18 +992,18 @@ def check_data_service_health() -> dict:
     return health_status
 
 
-async def get_stock_news(db: Session, ticker: str, background_tasks: Optional[BackgroundTasks] = None) -> Optional[pd.DataFrame]:
+async def get_stock_news(ticker: str, background_tasks: Optional[BackgroundTasks] = None) -> Optional[pd.DataFrame]:
     """
     获取股票新闻数据的核心函数
 
     实现逻辑流程：
     1. 检查Redis缓存中是否有今日新闻数据
-    2. 如果没有或数据过期，从AKShare获取最新数据
-    3. 处理数据并保存到Redis和数据库
-    4. 返回处理后的新闻数据
+    2. 如果没有或数据过期，从TickerTick获取最新数据
+    3. 如果TickerTick失败，说明近期没有新闻数据，直接返回空数据
+    4. 处理数据并保存到Redis缓存
+    5. 返回处理后的新闻数据
 
     Args:
-        db (Session): SQLAlchemy 数据库会话
         ticker (str): 股票代码
         background_tasks (Optional[BackgroundTasks]): 后台任务管理器（未使用，保留用于API兼容性）
 
@@ -1013,16 +1028,17 @@ async def get_stock_news(db: Session, ticker: str, background_tasks: Optional[Ba
         logger.info(f"从缓存获取到 {ticker} 的新闻数据，共 {len(cached_data)} 条")
         return cached_data
 
-    # 2. 从AKShare获取新闻数据
-    logger.info(f"缓存中无今日新闻数据，从AKShare获取 {ticker} 的新闻数据...")
+    # 2. 从TickerTick获取新闻数据
+    logger.info(f"缓存中无今日新闻数据，从TickerTick获取 {ticker} 的新闻数据...")
     try:
-        news_data = await data_provider.fetch_stock_news_from_akshare(db, ticker)
+        news_data = await data_provider.fetch_stock_news_from_tickertick(ticker)
 
-        if news_data is None or news_data.empty:
-            logger.warning(f"无法从AKShare获取 {ticker} 的新闻数据")
+        if news_data is not None and not news_data.empty:
+            logger.info(f"成功从TickerTick获取 {len(news_data)} 条新闻数据")
+        else:
+            # TickerTick失败，说明近期没有新闻数据，直接返回空数据
+            logger.info(f"TickerTick获取 {ticker} 新闻数据失败，说明近期没有新闻数据，返回空数据")
             return None
-
-        logger.info(f"成功从AKShare获取 {len(news_data)} 条新闻数据")
 
         # 3. 保存到Redis缓存（设置较短的过期时间，因为新闻数据更新频繁）
         cache_manager.save_to_redis(ticker, "news", news_data, CacheType.GENERAL_CACHE)
