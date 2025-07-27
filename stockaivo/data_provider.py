@@ -549,8 +549,8 @@ class NewsDataProvider(BaseDataProvider):
         filter_days_ago = current_local_time - timedelta(days=self.config.NEWS_FILTER_DAYS)
         filter_days_ago_naive = filter_days_ago.replace(tzinfo=None)
 
-        self.logger.info(f"基于数据源时区筛选: 当前{source_timezone}时间 {current_local_time}")
-        self.logger.info(f"基于数据源时区筛选: {self.config.NEWS_FILTER_DAYS}天前{source_timezone}时间 {filter_days_ago}")
+        self.logger.info(f"基于数据源时区筛选: 当前{source_timezone}时间 {current_local_time.strftime('%Y-%m-%d %H:%M:%S %z')}")
+        self.logger.info(f"基于数据源时区筛选: {self.config.NEWS_FILTER_DAYS}天前{source_timezone}时间 {filter_days_ago.strftime('%Y-%m-%d %H:%M:%S %z')}")
 
         # 记录筛选前的数据
         self.logger.info(f"筛选前数据条数: {len(df)}")
@@ -828,7 +828,7 @@ class TickerTickNewsProvider(NewsDataProvider):
             # 处理keyword字段 - 从tags中提取或使用ticker
             if 'tags' in processed_df.columns:
                 processed_df['keyword'] = processed_df['tags'].apply(
-                    lambda tags: ', '.join(tags) if isinstance(tags, list) and tags else ticker
+                    lambda tags: ', '.join(map(str.upper, tags)) if isinstance(tags, list) and tags else ticker
                 )
             else:
                 processed_df['keyword'] = ticker
@@ -900,8 +900,8 @@ class TickerTickNewsProvider(NewsDataProvider):
         filter_days_ago_et = current_et_time - timedelta(days=self.config.NEWS_FILTER_DAYS)
         filter_days_ago_et_naive = filter_days_ago_et.replace(tzinfo=None)
 
-        self.logger.info(f"TickerTick数据筛选: 当前ET时间 {current_et_time}")
-        self.logger.info(f"TickerTick数据筛选: {self.config.NEWS_FILTER_DAYS}天前ET时间 {filter_days_ago_et}")
+        self.logger.info(f"TickerTick数据筛选: 当前ET时间 {current_et_time.strftime('%Y-%m-%d %H:%M:%S %z')}")
+        self.logger.info(f"TickerTick数据筛选: {self.config.NEWS_FILTER_DAYS}天前ET时间 {filter_days_ago_et.strftime('%Y-%m-%d %H:%M:%S %z')}")
 
         # 记录筛选前的数据
         self.logger.info(f"TickerTick筛选前数据条数: {len(df)}")

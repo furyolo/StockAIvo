@@ -393,7 +393,7 @@ def get_market_aware_current_date() -> date:
         now_et = datetime.now(et_tz)
         current_date_et = now_et.date()
 
-        logger.debug(f"市场感知日期检查: 美东当前时间 {now_et}, 日期 {current_date_et}")
+        logger.debug(f"市场感知日期检查: 美东当前时间 {now_et.strftime('%Y-%m-%d %H:%M:%S %z')}, 日期 {current_date_et}")
 
         # 生成今日的交易时间表，使用扩展范围以确保覆盖
         # 为了避免边界问题，我们生成一个包含前后几天的范围
