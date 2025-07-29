@@ -41,9 +41,15 @@ class StockPriceWeekly(StockPriceBase):
     model_config = {"json_encoders": {DateType: lambda d: d.strftime('%Y-%m-%d')}}
 
 
-class StockPriceHourly(StockPriceBase):
-    """小时线数据模型"""
-    timestamp: datetime = Field(..., description="时间戳")
+class StockPrice10Min(StockPriceBase):
+    """10分钟线数据模型"""
+    timestamp_10min: datetime = Field(..., description="10分钟时间戳")
+
+
+class StockPriceMinute(StockPriceBase):
+    """分钟线数据模型"""
+    minute_timestamp: datetime = Field(..., description="分钟时间戳")
+    latest_price: Optional[Decimal] = Field(None, description="最新价格", ge=0)
 
 
 class StockDataResponse(BaseModel):
@@ -51,9 +57,9 @@ class StockDataResponse(BaseModel):
     ticker: str = Field(..., description="股票代码")
     period: str = Field(..., description="时间周期")
     data_count: int = Field(..., description="数据条数", ge=0)
-    data: List[Union[StockPriceDaily, StockPriceWeekly, StockPriceHourly]] = Field(..., description="股票数据列表")
+    data: List[Union[StockPriceDaily, StockPriceWeekly, StockPrice10Min, StockPriceMinute]] = Field(..., description="股票数据列表")
     timestamp: datetime = Field(..., description="响应时间戳")
-    
+
     class Config:
         from_attributes = True
 

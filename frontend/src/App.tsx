@@ -8,7 +8,10 @@ import { Button } from './components/ui/button';
 import { TrendingUp, BarChart3, RefreshCw } from 'lucide-react';
 
 interface ChartData {
-  time: string;
+  time?: string;
+  date?: string;
+  minute_timestamp?: string;
+  timestamp_10min?: string;
   open: number;
   high: number;
   low: number;
@@ -22,7 +25,7 @@ function App() {
   const [selectedStock, setSelectedStock] = useState<string | null>(null);
   const [stockName, setStockName] = useState<string | null>(null);
   const [chartData, setChartData] = useState<ChartData[]>([]);
-  const [period, setPeriod] = useState<'daily' | 'weekly' | 'hourly'>('daily');
+  const [period, setPeriod] = useState<'daily' | 'weekly' | '10min' | 'minute'>('daily');
   const [isLoading, setIsLoading] = useState(false);
   const [currentOHLC, setCurrentOHLC] = useState<ChartData | null>(null);
 
@@ -55,7 +58,10 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         const formattedData: ChartData[] = data.data.map((item: any) => ({
-          time: item.date || item.hour_timestamp,
+          time: item.date || item.timestamp_10min || item.minute_timestamp,
+          date: item.date,
+          timestamp_10min: item.timestamp_10min,
+          minute_timestamp: item.minute_timestamp,
           open: parseFloat(item.open),
           high: parseFloat(item.high),
           low: parseFloat(item.low),
@@ -170,7 +176,8 @@ function App() {
                       <SelectContent>
                         <SelectItem value="daily">日线</SelectItem>
                         <SelectItem value="weekly">周线</SelectItem>
-                        <SelectItem value="hourly">小时线</SelectItem>
+                        <SelectItem value="10min">10分钟线</SelectItem>
+                        <SelectItem value="minute">分钟线</SelectItem>
                       </SelectContent>
                     </Select>
                     <Button
@@ -194,6 +201,7 @@ function App() {
                     <TradingViewChart
                       data={chartData}
                       height={500}
+                      period={period}
                       onOHLCChange={handleOHLCChange}
                     />
                   ) : (

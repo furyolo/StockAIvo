@@ -8,12 +8,13 @@ import logging
 import pandas as pd
 import redis
 from typing import Dict, List, Optional, Tuple, Union, Any
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import os
 import threading
 import hashlib
 from dotenv import load_dotenv
 from enum import Enum, auto
+import pandas_market_calendars as mcal
 
 
 class CacheType(Enum):
@@ -36,6 +37,60 @@ class RedisConnectionError(Exception):
 class RedisSerializationError(Exception):
     """Redis序列化异常"""
     pass
+
+
+def _is_market_open() -> bool:
+    """
+    判断当前时间是否在美股交易时间内
+
+    Returns:
+        bool: True表示在交易时间内，False表示不在交易时间内
+    """
+    try:
+        # 获取NYSE日历和美东时区
+        nyse = mcal.get_calendar('NYSE')
+        et_tz = nyse.tz  # 自动处理EST/EDT时区转换
+
+        # 获取当前美东时间
+        now_et = datetime.now(et_tz)
+        current_date_et = now_et.date()
+
+        # 生成今日的交易时间表
+        schedule = nyse.schedule(start_date=current_date_et, end_date=current_date_et)
+
+        if schedule.empty:
+            # 今天不是交易日
+            return False
+
+        # 获取今日的开盘和收盘时间
+        market_open = schedule.iloc[0]['market_open']
+        market_close = schedule.iloc[0]['market_close']
+
+        # 确保时间使用正确的美东时区
+        if hasattr(market_open, 'tz') and market_open.tz is not None:
+            market_open_et = market_open.tz_convert(et_tz)
+        else:
+            market_open_et = market_open
+
+        if hasattr(market_close, 'tz') and market_close.tz is not None:
+            market_close_et = market_close.tz_convert(et_tz)
+        else:
+            market_close_et = market_close
+
+        # 判断当前时间是否在交易时间内
+        is_open = market_open_et <= now_et <= market_close_et
+
+        logger.debug(f"Market status check: current={now_et.strftime('%H:%M:%S')}, "
+                    f"open={market_open_et.strftime('%H:%M:%S')}, "
+                    f"close={market_close_et.strftime('%H:%M:%S')}, "
+                    f"is_open={is_open}")
+
+        return is_open
+
+    except Exception as e:
+        logger.warning(f"Failed to check market status: {e}, assuming market is closed")
+        return False
+
 
 class CacheManager:
     """Redis缓存管理器"""
@@ -168,7 +223,7 @@ class CacheManager:
 
         Args:
             ticker: 股票代码 (例如: "AAPL")
-            period: 时间周期 ("daily", "weekly", "hourly")
+            period: 时间周期 ("daily", "weekly", "hourly", "minute")
             data: 股票数据DataFrame
             cache_type: 缓存类型 (CacheType.PENDING_SAVE 或 CacheType.GENERAL_CACHE)
 
@@ -193,6 +248,14 @@ class CacheManager:
                 # {{ AURA-X: Modify - 为新闻数据设置30分钟TTL. Approval: 寸止(ID:1737364800). }}
                 if period == "news":
                     ttl = 1800  # 30分钟，新闻数据更新频繁
+                elif period == "minute":
+                    # 分时数据动态TTL：交易时间内短缓存，交易时间外长缓存
+                    if _is_market_open():
+                        ttl = 300  # 5分钟，交易时间内数据更新频繁
+                        logger.debug(f"分时数据缓存：交易时间内，设置短TTL: {ttl}秒")
+                    else:
+                        ttl = 3600  # 1小时，交易时间外数据相对稳定
+                        logger.debug(f"分时数据缓存：交易时间外，设置长TTL: {ttl}秒")
                 else:
                     ttl = 3600  # 1小时，作为通用查询缓存
             elif cache_type == CacheType.SEARCH_CACHE:
@@ -212,7 +275,12 @@ class CacheManager:
                 value=serialized_data
             )
 
-            logger.info(f"成功保存数据到Redis: {cache_key}, 行数: {len(data)}, TTL: {ttl}s")
+            # 为分时数据添加更详细的日志信息
+            if period == "minute":
+                market_status = "交易时间内" if _is_market_open() else "交易时间外"
+                logger.info(f"成功保存分时数据到Redis: {cache_key}, 行数: {len(data)}, TTL: {ttl}s ({market_status})")
+            else:
+                logger.info(f"成功保存数据到Redis: {cache_key}, 行数: {len(data)}, TTL: {ttl}s")
             return cache_key
             
         except RedisSerializationError:

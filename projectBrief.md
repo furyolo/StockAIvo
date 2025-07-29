@@ -69,9 +69,8 @@ uv run dev
 * **1.1 数据库模式设计 (PostgreSQL & SQLAlchemy)**  
   * \[ \] 设计 stocks 表，用于存储股票基本信息（代码 ticker, 公司名称 company\_name, 上市交易所 exchange 等）。  
   * \[ \] 设计 stock\_prices\_daily 表，存储日 K 线数据（ticker, date, open, high, low, close, volume）。  
-  * \[ \] 设计 stock\_prices\_weekly 表，存储周 K 线数据。  
-  * \[ \] 设计 stock\_prices\_hourly 表，存储小时 K 线数据。  
-  * \[ \] 使用 SQLAlchemy 创建对应的 ORM 模型。  
+  * \[ \] 设计 stock\_prices\_weekly 表，存储周 K 线数据。
+  * \[ \] 使用 SQLAlchemy 创建对应的 ORM 模型。
 * **1.2 数据源封装 (AKShare)**  
   * \[ \] 创建一个 data\_provider.py 模块。  
   * \[ \] 参考 D:\\Coding\\stockai 项目，封装一个函数 fetch\_from\_akshare(ticker, period)，用于从 AKShare 获取指定股票、指定周期的数据。  
@@ -117,12 +116,8 @@ uv run dev
   * \[ \] **获取周线数据:**  
     * **路径:** GET /stocks/{ticker}/weekly  
     * **参数:** ticker (路径参数), start\_date (查询参数, 可选), end\_date (查询参数, 可选)。  
-    * **实现:** 调用 get\_stock\_data(ticker, 'weekly')。  
-  * \[ \] **获取小时线数据:**  
-    * **路径:** GET /stocks/{ticker}/hourly  
-    * **参数:** ticker (路径参数), start\_date (查询参数, 可选), end\_date (查询参数, 可选)。  
-    * **实现:** 调用 get\_stock\_data(ticker, 'hourly')。  
-* **2.3 数据序列化与响应**  
+    * **实现:** 调用 get\_stock\_data(ticker, 'weekly')。
+* **2.3 数据序列化与响应**
   * \[ \] 使用 Pydantic 模型定义清晰的请求体和响应体结构。  
   * \[ \] 确保所有端点在成功时返回 200 OK 和数据，在失败时（如股票代码不存在）返回合适的 HTTP 状态码（如 404 Not Found）和错误信息。
 

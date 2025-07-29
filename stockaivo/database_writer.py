@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from datetime import datetime, date, timezone, time
 
 from . import database
-from .models import StockPriceDaily, StockPriceWeekly, StockPriceHourly, StockNews
+from .models import StockPriceDaily, StockPriceWeekly, StockNews
 from .cache_manager import get_pending_data_from_redis, clear_saved_data, delete_from_redis
 
 # 配置日志
@@ -135,57 +135,59 @@ class DatabaseWriter:
         
         return weekly_data
     
-    def _prepare_hourly_price_data(self, ticker: str, df: pd.DataFrame) -> List[Dict[str, Any]]:
+
+    def _prepare_minute_price_data(self, ticker: str, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """
-        准备小时K线数据
-        
+        准备分时数据
+
         Args:
             ticker: 股票代码
             df: 股票价格数据DataFrame
-            
+
         Returns:
-            List[Dict]: 小时K线数据字典列表
+            List[Dict]: 分时数据字典列表
         """
-        hourly_data = []
-        
+        minute_data = []
+
         for _, row in df.iterrows():
             try:
-                # 处理时间戳字段
-                timestamp = row.get('date', row.get('日期'))
+                # 处理分时时间戳字段
+                timestamp = row.get('minute_timestamp', row.get('时间'))
                 if isinstance(timestamp, str):
-                    hour_timestamp = pd.to_datetime(timestamp)
+                    minute_timestamp = pd.to_datetime(timestamp)
                 elif isinstance(timestamp, pd.Timestamp):
-                    hour_timestamp = timestamp
-                elif isinstance(timestamp, date):
-                    # 如果只有日期，设置为当日9:30（美股开盘时间）
-                    hour_timestamp = datetime.combine(timestamp, time(hour=9, minute=30))
+                    minute_timestamp = timestamp
+                elif isinstance(timestamp, datetime):
+                    minute_timestamp = pd.Timestamp(timestamp)
                 else:
-                    logger.warning(f"无效的时间戳格式: {timestamp}")
+                    logger.warning(f"无效的分时时间戳格式: {timestamp}")
                     continue
-                
+
+                # 准备分时价格数据
                 price_data = {
                     'ticker': ticker,
-                    'hour_timestamp': hour_timestamp,
+                    'minute_timestamp': minute_timestamp,
                     'open': float(row.get('open', row.get('开盘', 0))),
                     'high': float(row.get('high', row.get('最高', 0))),
                     'low': float(row.get('low', row.get('最低', 0))),
                     'close': float(row.get('close', row.get('收盘', 0))),
                     'volume': int(row.get('volume', row.get('成交量', 0))),
+                    'turnover': int(row.get('turnover', row.get('成交额', 0))),
+                    'latest_price': float(row.get('latest_price', row.get('最新价', 0))),
                     'created_at': datetime.now(timezone.utc),
                     'updated_at': datetime.now(timezone.utc)
                 }
-                
-                hourly_data.append(price_data)
-                
-            except Exception as e:
-                logger.error(f"处理小时K线数据行时出错: {e}, 行数据: {row.to_dict()}")
-                continue
-        
-        return hourly_data
-    
 
-    
-    def _batch_upsert_prices(self, db: Session, table_class: Type[Union[StockPriceDaily, StockPriceWeekly, StockPriceHourly]], price_data: List[Dict[str, Any]],
+                minute_data.append(price_data)
+
+            except Exception as e:
+                logger.error(f"处理分时数据行时出错: {e}, 行数据: {row.to_dict()}")
+                continue
+
+        return minute_data
+
+
+    def _batch_upsert_prices(self, db: Session, table_class: Type[Union[StockPriceDaily, StockPriceWeekly]], price_data: List[Dict[str, Any]],
                            conflict_columns: List[str]) -> int:
         """
         批量插入或更新价格数据
@@ -205,19 +207,30 @@ class DatabaseWriter:
         try:
             # 使用PostgreSQL的批量UPSERT
             stmt = insert(table_class).values(price_data)
+
+            # 基础更新字段（所有表都有）
             update_dict = {
                 'open': stmt.excluded.open,
                 'high': stmt.excluded.high,
                 'low': stmt.excluded.low,
                 'close': stmt.excluded.close,
                 'volume': stmt.excluded.volume,
-                'turnover': stmt.excluded.turnover,
-                'amplitude': stmt.excluded.amplitude,
-                'price_change_percent': stmt.excluded.price_change_percent,
-                'price_change': stmt.excluded.price_change,
-                'turnover_rate': stmt.excluded.turnover_rate,
                 'updated_at': datetime.now(timezone.utc)
             }
+
+            # 根据表类型添加特定字段
+            if hasattr(table_class, 'turnover'):
+                update_dict['turnover'] = stmt.excluded.turnover
+            if hasattr(table_class, 'latest_price'):
+                update_dict['latest_price'] = stmt.excluded.latest_price
+            if hasattr(table_class, 'amplitude'):
+                update_dict['amplitude'] = stmt.excluded.amplitude
+            if hasattr(table_class, 'price_change_percent'):
+                update_dict['price_change_percent'] = stmt.excluded.price_change_percent
+            if hasattr(table_class, 'price_change'):
+                update_dict['price_change'] = stmt.excluded.price_change
+            if hasattr(table_class, 'turnover_rate'):
+                update_dict['turnover_rate'] = stmt.excluded.turnover_rate
             
             stmt = stmt.on_conflict_do_update(
                 index_elements=conflict_columns,
@@ -297,6 +310,11 @@ class DatabaseWriter:
                                 db, StockPriceHourly, hourly_data, ['ticker', 'hour_timestamp']
                             )
 
+                        elif period == 'minute':
+                            # 分钟线数据不持久化到PostgreSQL，只保存在Redis缓存中
+                            logger.info(f"跳过分钟线数据持久化: {ticker} (分钟线数据仅保存在Redis缓存中)")
+                            processed_rows = 0
+
                         else:
                             raise Exception(f"不支持的period类型: {period}")
 
@@ -359,7 +377,7 @@ class DatabaseWriter:
 
         Args:
             ticker: 股票代码
-            period: 时间周期
+            period: 时间周期 ('daily', 'weekly', 'hourly', 'minute', 'news')
             dataframe: 待保存的数据
             pending_cache_key (Optional[str]): 如果提供，操作成功后将从Redis中删除此键。
 
@@ -391,6 +409,10 @@ class DatabaseWriter:
                         processed_rows = self._batch_upsert_prices(
                             db, StockPriceHourly, hourly_data, ['ticker', 'hour_timestamp']
                         )
+                    elif period == 'minute':
+                        # 分钟线数据不持久化到PostgreSQL，只保存在Redis缓存中
+                        logger.info(f"跳过分钟线数据持久化: {ticker} (分钟线数据仅保存在Redis缓存中)")
+                        processed_rows = 0
                     else:
                         raise Exception(f"不支持的period类型: {period}")
 

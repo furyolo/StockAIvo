@@ -156,8 +156,8 @@ async def get_weekly_data(
         raise DataServiceException(f"获取周线数据失败: {str(e)}")
 
 
-@router.get("/{ticker}/hourly", response_model=StockDataResponse)
-async def get_hourly_data(
+@router.get("/{ticker}/10min", response_model=StockDataResponse)
+async def get_10min_data(
     ticker: str,
     background_tasks: BackgroundTasks,
     db: DatabaseDep,
@@ -165,52 +165,110 @@ async def get_hourly_data(
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)")
 ):
     """
-    获取股票小时线数据
-    
+    获取股票10分钟线数据
+
     Args:
         ticker: 股票代码 (例如: AAPL)
         start_date: 可选的开始日期，格式：YYYY-MM-DD
         end_date: 可选的结束日期，格式：YYYY-MM-DD
         db: 数据库会话依赖项
-        
+
     Returns:
-        StockDataResponse: 包含小时线数据的响应
+        StockDataResponse: 包含10分钟线数据的响应
     """
     try:
         # 验证股票代码
         ticker = validate_ticker(ticker)
-        
-        logger.info(f"获取小时线数据请求: {ticker}, 日期范围: {start_date} - {end_date}")
-        
-        # 调用数据服务获取小时线数据
-        data = await get_stock_data(db, ticker, "hourly", start_date, end_date, background_tasks)
-        
+
+        logger.info(f"获取10分钟线数据请求: {ticker}, 日期范围: {start_date} - {end_date}")
+
+        # 调用数据服务获取10分钟线数据
+        data = await get_stock_data(db, ticker, "10min", start_date, end_date, background_tasks)
+
         if data is None or data.empty:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"在指定日期范围内未找到股票 {ticker} 的数据"
             )
-        
+
         # 构建响应
         response = StockDataResponse(
             ticker=ticker,
-            period="hourly",
+            period="10min",
             data_count=len(data),
             data=data.to_dict('records'),  # type: ignore
             timestamp=datetime.now()
         )
-        
-        logger.info(f"成功返回小时线数据: {ticker}, 记录数: {len(data)}")
+
+        logger.info(f"成功返回10分钟线数据: {ticker}, 记录数: {len(data)}")
         return response
-        
+
     except HTTPException:
         raise
     except ValueError as e:
         logger.error(f"股票代码验证失败 {ticker}: {e}")
         raise ValidationException(f"股票代码验证失败: {str(e)}")
     except Exception as e:
-        logger.error(f"获取小时线数据失败 {ticker}: {e}")
-        raise DataServiceException(f"获取小时线数据失败: {str(e)}")
+        logger.error(f"获取10分钟线数据失败 {ticker}: {e}")
+        raise DataServiceException(f"获取10分钟线数据失败: {str(e)}")
+
+
+@router.get("/{ticker}/minute", response_model=StockDataResponse)
+async def get_minute_data(
+    ticker: str,
+    background_tasks: BackgroundTasks,
+    db: DatabaseDep,
+    start_date: Optional[str] = Query(None, description="开始日期 (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)")
+):
+    """
+    获取股票分钟线数据
+
+    Args:
+        ticker: 股票代码 (例如: AAPL)
+        start_date: 可选的开始日期，格式：YYYY-MM-DD
+        end_date: 可选的结束日期，格式：YYYY-MM-DD
+        db: 数据库会话依赖项
+        background_tasks: 后台任务管理器
+
+    Returns:
+        StockDataResponse: 包含分钟线数据的响应
+    """
+    try:
+        # 验证股票代码
+        ticker = validate_ticker(ticker)
+
+        logger.info(f"获取分钟线数据请求: {ticker}, 日期范围: {start_date} - {end_date}")
+
+        # 调用数据服务获取分钟线数据
+        data = await get_stock_data(db, ticker, "minute", start_date, end_date, background_tasks)
+
+        if data is None or data.empty:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"在指定日期范围内未找到股票 {ticker} 的数据"
+            )
+
+        # 构建响应
+        response = StockDataResponse(
+            ticker=ticker,
+            period="minute",
+            data_count=len(data),
+            data=data.to_dict('records'),  # type: ignore
+            timestamp=datetime.now()
+        )
+
+        logger.info(f"成功返回分钟线数据: {ticker}, 记录数: {len(data)}")
+        return response
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"股票代码验证失败 {ticker}: {e}")
+        raise ValidationException(f"股票代码验证失败: {str(e)}")
+    except Exception as e:
+        logger.error(f"获取分钟线数据失败 {ticker}: {e}")
+        raise DataServiceException(f"获取分钟线数据失败: {str(e)}")
 
 
 @router.get("/{ticker}/news")

@@ -16,7 +16,7 @@ from fastapi import BackgroundTasks
 from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 from . import database
-from .models import StockPriceDaily, StockPriceWeekly, StockPriceHourly
+from .models import StockPriceDaily, StockPriceWeekly
 
  # 导入数据提供者和缓存管理器
 from . import data_provider
@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 定义支持的时间周期类型
-PeriodType = Literal["daily", "weekly", "hourly"]
+PeriodType = Literal["daily", "weekly", "10min", "minute"]
 
 
 def _filter_dataframe_by_date(df: pd.DataFrame, period: PeriodType, start_date: Optional[str], end_date: Optional[str]) -> pd.DataFrame:
@@ -58,11 +58,23 @@ def _filter_dataframe_by_date(df: pd.DataFrame, period: PeriodType, start_date: 
         return df
 
     original_count = len(df)
-    if start_date:
-        df = df[df[date_col] >= pd.to_datetime(start_date)]
-    if end_date:
-        df = df[df[date_col] <= pd.to_datetime(end_date)]
-    
+
+    # 对于分钟数据和10分钟数据，需要特殊处理日期过滤
+    if period in ['minute', '10min']:
+        # 对于时间戳数据，使用日期比较而不是datetime比较
+        if start_date:
+            start_date_obj = pd.to_datetime(start_date).date()
+            df = df[df[date_col].dt.date >= start_date_obj]
+        if end_date:
+            end_date_obj = pd.to_datetime(end_date).date()
+            df = df[df[date_col].dt.date <= end_date_obj]
+    else:
+        # 对于日线和周线数据，使用原有的datetime比较
+        if start_date:
+            df = df[df[date_col] >= pd.to_datetime(start_date)]
+        if end_date:
+            df = df[df[date_col] <= pd.to_datetime(end_date)]
+
     logger.info(f"DataFrame过滤: 原始行数={original_count}, 过滤后行数={len(df)}")
     return df
 
@@ -81,14 +93,14 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
     Args:
         db (Session): SQLAlchemy 数据库会话。
         ticker (str): 股票代码。
-        period (PeriodType): 数据周期 ('daily', 'weekly', 'hourly')。
+        period (PeriodType): 数据周期 ('daily', 'weekly', '10min', 'minute')。
         start_date (Optional[str]): 开始日期 (YYYY-MM-DD)。
         end_date (Optional[str]): 结束日期 (YYYY-MM-DD)。
     
     Returns:
         Optional[pd.DataFrame]: 包含股票数据的 DataFrame，或在失败时返回 None。
     """
-    if not ticker or period not in ["daily", "weekly", "hourly"]:
+    if not ticker or period not in ["daily", "weekly", "10min", "minute"]:
         logger.error(f"无效的参数: ticker='{ticker}', period='{period}'")
         return None
 
@@ -97,7 +109,12 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
     # =================================================================
     # 获取市场感知的基准日期，在整个函数中复用以避免重复调用
     if market_aware_date is None:
-        market_aware_date = get_market_aware_current_date()
+        if period == "minute" or period == "10min":
+            # 分时数据和10分钟线数据使用专门的市场感知日期函数
+            # 10分钟线是从分钟线聚合生成的，应该使用相同的日期逻辑
+            market_aware_date = get_market_aware_minute_date()
+        else:
+            market_aware_date = get_market_aware_current_date()
 
     # 如果没有提供开始和结束日期，则应用默认值
     if start_date is None and end_date is None:
@@ -123,6 +140,20 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
             start_date = start_date_obj.strftime('%Y-%m-%d')
             end_date = end_date_obj.strftime('%Y-%m-%d')
             logger.info(f"周线数据默认范围设置为: {start_date} -> {end_date}")
+        elif period == "10min":
+            # 对于10分钟线数据，使用与分钟线相同的逻辑，因为10分钟线是从分钟线聚合生成的
+            # 只获取单个交易日的数据，然后聚合为10分钟线
+            target_date = market_aware_date
+            start_date = target_date.strftime('%Y-%m-%d')
+            end_date = target_date.strftime('%Y-%m-%d')
+            logger.info(f"10分钟线数据默认范围设置为单个交易日: {start_date} (从分钟线聚合生成)")
+        elif period == "minute":
+            # 对于分时数据，只获取单个交易日的数据
+            # market_aware_date已经通过get_market_aware_minute_date()获得了正确的日期
+            target_date = market_aware_date
+            start_date = target_date.strftime('%Y-%m-%d')
+            end_date = target_date.strftime('%Y-%m-%d')
+            logger.info(f"分时数据默认范围设置为单个交易日: {start_date} (基于市场状态判断)")
     # =================================================================
     # == 默认逻辑结束 ==
     # =================================================================
@@ -148,6 +179,31 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
         return pd.DataFrame()
     # =================================================================
     # == 检查结束 ==
+    # =================================================================
+
+    # =================================================================
+    # == 10分钟线特殊处理逻辑 ==
+    # =================================================================
+    if period == "10min":
+        # 10分钟线需要从分钟线数据聚合生成
+        logger.info(f"10分钟线请求，从分钟线数据聚合生成: {ticker}")
+
+        # 获取分钟线数据
+        minute_data = await get_stock_data(db, ticker, "minute", start_date, end_date, background_tasks, market_aware_date)
+        if minute_data is None or minute_data.empty:
+            logger.warning(f"无法获取分钟线数据来生成10分钟线: {ticker}")
+            return None
+
+        # 聚合为10分钟线数据
+        aggregated_data = _aggregate_minute_to_10min(minute_data)
+        if aggregated_data is None or aggregated_data.empty:
+            logger.warning(f"10分钟线聚合失败: {ticker}")
+            return None
+
+        logger.info(f"成功生成10分钟线数据: {ticker}, 记录数: {len(aggregated_data)}")
+        return _clean_dataframe(aggregated_data)
+    # =================================================================
+    # == 10分钟线处理结束 ==
     # =================================================================
 
     # --- 1. 查询 Redis 缓存并进行数据完整性检查 ---
@@ -246,8 +302,13 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
     # =================================================================
     # 步骤 2: 缓存未命中，查询 PostgreSQL 数据库 (核心修改区域)
     # =================================================================
-    logger.info("缓存未命中，开始查询数据库...")
-    db_data = _query_database(db, ticker, period, start_date, end_date)
+    # 分钟线数据不存储在数据库中，直接跳过数据库查询
+    if period == "minute":
+        logger.info("分钟线数据不存储在数据库中，直接从远程API获取...")
+        db_data = None
+    else:
+        logger.info("缓存未命中，开始查询数据库...")
+        db_data = _query_database(db, ticker, period, start_date, end_date)
 
     if db_data is not None and not db_data.empty:
         logger.info(f"在数据库中找到 {len(db_data)} 条数据，开始检查数据完整性。")
@@ -307,7 +368,9 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
 
                     # 4. (可选但推荐) 将新数据保存到数据库
                     _append_to_pending_save(ticker, period, new_data_df)
-                    logger.info(f"检测到新的远程数据 (ticker: {ticker}, period: {period})，已存入待持久化缓存。")
+                    # 只有非分钟线数据才记录持久化日志
+                    if period != "minute":
+                        logger.info(f"检测到新的远程数据 (ticker: {ticker}, period: {period})，已存入待持久化缓存。")
                     # The background scheduler will pick this up.
 
             # 将合并后的完整数据更新到 Redis 通用缓存
@@ -337,8 +400,9 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, start_dat
         _append_to_pending_save(ticker, period, remote_data)
         cache_manager.save_to_redis(ticker, period, remote_data, CacheType.GENERAL_CACHE)
 
-        # 异步保存到数据库后，需要清理 pending_key
-        logger.info(f"检测到新的远程数据 (ticker: {ticker}, period: {period})，已存入待持久化缓存。")
+        # 只有非分钟线数据才记录持久化日志
+        if period != "minute":
+            logger.info(f"检测到新的远程数据 (ticker: {ticker}, period: {period})，已存入待持久化缓存。")
         # The background scheduler will pick this up.
 
 
@@ -363,8 +427,10 @@ def _clean_dataframe(df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
 
 def _get_date_col(period: PeriodType) -> str:
     """获取日期列名"""
-    if period == 'hourly':
-        return 'hour_timestamp'
+    if period == '10min':
+        return 'timestamp_10min'
+    elif period == 'minute':
+        return 'minute_timestamp'
     # For daily and weekly
     return 'date'
 
@@ -516,6 +582,98 @@ def get_market_aware_current_date() -> date:
         return date.today()
 
 
+def get_market_aware_minute_date() -> date:
+    """
+    获取基于美股交易状态的分时数据日期
+    专门用于分时数据获取，与日线数据的市场感知逻辑略有不同
+
+    业务逻辑差异：
+    - 交易时间内：返回当日，获取实时分时数据
+    - 交易时间外（收盘后）：返回当日，获取完整分时数据
+    - 开盘前：返回上一交易日，获取完整分时数据
+
+    实现逻辑：
+    1. 获取NYSE日历和美东时区（自动处理EST/EDT转换）
+    2. 获取当前美东时间并生成交易时间表
+    3. 判断市场开放状态和时间段
+    4. 根据交易状态返回合适的日期
+    5. 提供异常回退机制
+
+    Returns:
+        date: 适合分时数据获取的日期
+    """
+    try:
+        # 获取NYSE日历和美东时区
+        nyse = mcal.get_calendar('NYSE')
+        et_tz = nyse.tz  # 自动处理EST/EDT时区转换
+
+        # 获取当前美东时间
+        now_et = datetime.now(et_tz)
+        current_date_et = now_et.date()
+
+        logger.debug(f"分时数据市场感知日期检查: 美东当前时间 {now_et.strftime('%Y-%m-%d %H:%M:%S %z')}, 日期 {current_date_et}")
+
+        # 生成今日的交易时间表，使用扩展范围以确保覆盖
+        range_start = current_date_et - timedelta(days=2)
+        range_end = current_date_et + timedelta(days=2)
+
+        extended_schedule = nyse.schedule(start_date=range_start, end_date=range_end)
+        logger.debug(f"扩展交易时间表生成: 范围 {range_start} 到 {range_end}, schedule.shape={extended_schedule.shape}")
+
+        # 检查今日是否有交易时间表
+        today_schedule = extended_schedule[extended_schedule.index.to_series().dt.date == current_date_et] if not extended_schedule.empty else pd.DataFrame()
+        logger.debug(f"今日交易时间表: schedule.empty={today_schedule.empty}, schedule.shape={today_schedule.shape if not today_schedule.empty else 'N/A'}")
+
+        # 如果今天不是交易日，返回最近的交易日
+        if today_schedule.empty:
+            logger.info(f"今日 {current_date_et} 不是交易日，返回最近的交易日")
+            return _get_latest_trading_day(current_date_et)
+
+        # 今天是交易日，检查当前时间状态
+        try:
+            # 获取今日的开盘和收盘时间
+            market_open = today_schedule.iloc[0]['market_open']
+            market_close = today_schedule.iloc[0]['market_close']
+
+            # 确保时间使用正确的美东时区
+            if hasattr(market_open, 'tz') and market_open.tz is not None:
+                market_open_et = market_open.tz_convert(et_tz)
+            else:
+                market_open_et = market_open
+
+            if hasattr(market_close, 'tz') and market_close.tz is not None:
+                market_close_et = market_close.tz_convert(et_tz)
+            else:
+                market_close_et = market_close
+
+            logger.debug(f"今日交易时间: 开盘 {market_open_et.strftime('%H:%M:%S')}, 收盘 {market_close_et.strftime('%H:%M:%S')}")
+            logger.debug(f"当前时间: {now_et.strftime('%H:%M:%S')}")
+
+            # 判断当前时间段
+            if now_et < market_open_et:
+                # 开盘前：返回上一交易日，获取完整分时数据
+                logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在开盘时间 {market_open_et.strftime('%H:%M:%S')} 之前，返回上一交易日")
+                yesterday_et = current_date_et - timedelta(days=1)
+                return _get_latest_trading_day(yesterday_et)
+            elif market_open_et <= now_et <= market_close_et:
+                # 交易时间内：返回当日，获取实时分时数据
+                logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在交易时间内，返回当日获取实时分时数据")
+                return current_date_et
+            else:
+                # 收盘后：返回当日，获取完整分时数据
+                logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在收盘时间 {market_close_et.strftime('%H:%M:%S')} 之后，返回当日获取完整分时数据")
+                return current_date_et
+
+        except Exception as time_check_error:
+            # 如果时间检查失败，记录错误并返回当日作为安全选择
+            logger.warning(f"交易时间检查失败: {time_check_error}, 返回当日作为安全选择")
+            return current_date_et
+
+    except Exception as e:
+        logger.warning(f"获取分时数据市场感知日期时出错: {e}，回退到本地日期")
+        return date.today()
+
+
 def _get_latest_trading_day(target_date: date) -> date:
     """
     获取指定日期或之前的最近交易日
@@ -569,7 +727,8 @@ def _get_latest_complete_weekly_end_date(target_date: date) -> date:
 
         # 获取当前美东时间
         now_et = datetime.now(et_tz)
-        current_weekday = target_date.weekday()  # 0=Monday, 6=Sunday
+        current_date_et = now_et.date()
+        current_weekday = current_date_et.weekday()  # 0=Monday, 6=Sunday，使用实际当前日期判断周几
 
         # 从目标日期往前查找30天，确保能找到交易日
         search_start = target_date - timedelta(days=30)
@@ -612,7 +771,7 @@ def _get_latest_complete_weekly_end_date(target_date: date) -> date:
             # 本周交易已结束，返回本周最后交易日
             # 从本周五开始往前找最近的交易日
             days_since_monday = current_weekday
-            week_start = target_date - timedelta(days=days_since_monday)
+            week_start = current_date_et - timedelta(days=days_since_monday)
 
             # 找本周的最后一个交易日
             for i in range(5):  # 周五到周一
@@ -624,7 +783,7 @@ def _get_latest_complete_weekly_end_date(target_date: date) -> date:
             # 本周交易未结束，返回上一个完整周的最后交易日
             # 先找到上周的周日，然后往前找最近的交易日
             days_to_last_sunday = current_weekday + 1  # 到上周日的天数
-            last_sunday = target_date - timedelta(days=days_to_last_sunday)
+            last_sunday = current_date_et - timedelta(days=days_to_last_sunday)
 
             # 从上周日开始往前找最近的交易日（这将是上一个完整周的最后一个交易日）
             search_date = last_sunday
@@ -718,6 +877,14 @@ def _get_required_dates(period: PeriodType, start_date_str: Optional[str], end_d
 
             return sorted(filtered_weekly_dates)
 
+        elif period == "10min":
+            # 10分钟线数据：只返回交易日列表，因为10分钟线是从分钟线聚合生成的
+            return sorted(list(trading_days_set))
+        elif period == "minute":
+            # 分时数据：只返回交易日列表，不进行更细粒度的时间点检查
+            # 分时数据的完整性检查在数据库层面进行
+            return sorted(list(trading_days_set))
+
         elif period == "monthly":
             # monthly 逻辑保持不变
             trading_days = pd.to_datetime([d.date() for d in schedule.index])
@@ -732,10 +899,14 @@ def _get_required_dates(period: PeriodType, start_date_str: Optional[str], end_d
             return pd.date_range(start=start_date, end=end_date, freq='B').date.tolist()
         elif period == "weekly":
             return pd.date_range(start=start_date, end=end_date, freq='W-FRI').date.tolist()
+        elif period == "10min":
+            return pd.date_range(start=start_date, end=end_date, freq='B').date.tolist()
+        elif period == "minute":
+            return pd.date_range(start=start_date, end=end_date, freq='B').date.tolist()
         elif period == "monthly":
             return pd.date_range(start=start_date, end=end_date, freq='M').date.tolist()
-            
-    # 'hourly' 周期不进行日期点检查，依赖于 start/end date 范围查询
+
+    # 其他周期不进行日期点检查，依赖于 start/end date 范围查询
     return []
 
 def _find_missing_date_ranges(required_dates: List[date], cached_dates: List[date], market_aware_date: date) -> List[Tuple[date, date]]:
@@ -802,7 +973,7 @@ def _query_database(db: Session, ticker: str, period: PeriodType, start_date: Op
     Args:
         db (Session): SQLAlchemy 数据库会话。
         ticker (str): 股票代码。
-        period (str): 数据周期 ('daily', 'weekly', 'hourly')。
+        period (str): 数据周期 ('daily', 'weekly', '10min', 'minute')。
         start_date (Optional[str]): 开始日期 (YYYY-MM-DD)。
         end_date (Optional[str]): 结束日期 (YYYY-MM-DD)。
 
@@ -811,12 +982,21 @@ def _query_database(db: Session, ticker: str, period: PeriodType, start_date: Op
     """
     logger.info(f"开始从数据库查询 {ticker} 的 {period} 数据 (从 {start_date} 到 {end_date})...")
     
+    # 10分钟线数据是从分钟线聚合生成的，不存储在数据库中
+    if period == "10min":
+        logger.info(f"10分钟线数据不存储在数据库中，跳过数据库查询")
+        return None
+
+    # 分钟线数据只保存在Redis缓存中，不存储在数据库中
+    if period == "minute":
+        logger.info(f"分钟线数据不存储在数据库中，跳过数据库查询")
+        return None
+
     model_map = {
         "daily": StockPriceDaily,
         "weekly": StockPriceWeekly,
-        "hourly": StockPriceHourly,
     }
-    
+
     model = model_map.get(period)
     if not model:
         logger.error(f"无效的数据周期: {period}")
@@ -831,8 +1011,8 @@ def _query_database(db: Session, ticker: str, period: PeriodType, start_date: Op
         ]
 
         # 构建查询
-        if period == 'hourly':
-            date_column = model.hour_timestamp
+        if period == 'minute':
+            date_column = model.minute_timestamp
         else:  # For daily and weekly
             date_column = model.date
         
@@ -917,8 +1097,15 @@ def _append_to_pending_save(ticker: str, period: PeriodType, new_data: pd.DataFr
     安全地将新数据追加到 PENDING_SAVE 缓存中。
 
     它会先读取现有数据，合并新数据，去重，然后写回。
+
+    注意：分钟线数据不持久化到PostgreSQL，因此跳过pending_save缓存。
     """
     if new_data is None or new_data.empty:
+        return
+
+    # 分钟线数据不持久化到PostgreSQL，跳过pending_save缓存
+    if period == "minute":
+        logger.info(f"跳过分钟线数据的pending_save缓存: {ticker} (分钟线数据不持久化)")
         return
 
     # 1. 从Redis读取现有的pending_save数据
@@ -1102,6 +1289,65 @@ async def test_data_service():
     print("\n=== 缓存统计 ===")
     stats = get_cached_data_summary()
     print(f"缓存统计: {stats}")
+
+
+def _aggregate_minute_to_10min(minute_data: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """
+    将分钟线数据聚合为10分钟线数据
+
+    Args:
+        minute_data: 分钟线数据DataFrame，包含minute_timestamp, open, high, low, close, volume列
+
+    Returns:
+        聚合后的10分钟线数据DataFrame，包含timestamp_10min, open, high, low, close, volume列
+    """
+    if minute_data is None or minute_data.empty:
+        return None
+
+    try:
+        # 确保数据按时间排序
+        minute_data = minute_data.sort_values('minute_timestamp').copy()
+
+        # 转换时间戳为datetime类型
+        minute_data['minute_timestamp'] = pd.to_datetime(minute_data['minute_timestamp'])
+
+        # 设置时间戳为索引
+        minute_data.set_index('minute_timestamp', inplace=True)
+
+        # 创建10分钟间隔的聚合规则
+        # 从开盘时刻开始，每10分钟取样
+        aggregation_rules = {
+            'open': 'first',    # 开盘价：取第一个值
+            'high': 'max',      # 最高价：取最大值
+            'low': 'min',       # 最低价：取最小值
+            'close': 'last',    # 收盘价：取最后一个值
+            'volume': 'sum'     # 成交量：求和
+        }
+
+        # 使用resample进行10分钟聚合
+        # '10min'表示10分钟间隔，label='left'表示使用区间左端点作为标签
+        # closed='left'表示区间左闭右开
+        aggregated = minute_data.resample('10min', label='left', closed='left').agg(aggregation_rules)
+
+        # 移除没有数据的时间段（全为NaN的行）
+        aggregated = aggregated.dropna(subset=['open', 'high', 'low', 'close'])
+
+        # 重置索引，将时间戳转为列
+        aggregated.reset_index(inplace=True)
+
+        # 重命名时间戳列
+        aggregated.rename(columns={'minute_timestamp': 'timestamp_10min'}, inplace=True)
+
+        # 确保成交量为整数类型
+        if 'volume' in aggregated.columns:
+            aggregated['volume'] = aggregated['volume'].fillna(0).astype(int)
+
+        logger.info(f"成功将 {len(minute_data)} 条分钟线数据聚合为 {len(aggregated)} 条10分钟线数据")
+        return aggregated
+
+    except Exception as e:
+        logger.error(f"分钟线数据聚合为10分钟线失败: {e}")
+        return None
 
 
 if __name__ == "__main__":

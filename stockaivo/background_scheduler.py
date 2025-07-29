@@ -1,14 +1,21 @@
 # file: stockaivo/background_scheduler.py
 
 import logging
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, cast
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+from sqlalchemy.engine import Result, CursorResult
 from stockaivo.database import get_db
 from stockaivo.database_writer import persist_pending_data
+
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
 
 scheduler = BackgroundScheduler(daemon=True)
 
@@ -48,11 +55,16 @@ def scheduled_persist_job():
             logger.info(f"关闭数据库会话 {db_session}。")
             db_session.close()
 
+
+
+
+
 def start_scheduler():
     """
     启动后台调度器。
     """
     if not scheduler.running:
+        # 添加数据持久化任务（每5分钟执行一次）
         scheduler.add_job(
             func=scheduled_persist_job,
             trigger="interval",
@@ -60,8 +72,12 @@ def start_scheduler():
             id="persist_pending_data_job",
             replace_existing=True
         )
+
+
+
         scheduler.start()
-        logger.info("后台数据持久化调度器已启动，每5分钟运行一次。")
+        logger.info("后台调度器已启动:")
+        logger.info("- 数据持久化任务: 每5分钟运行一次")
     else:
         logger.info("调度器已在运行。")
 
@@ -75,3 +91,5 @@ def stop_scheduler():
         logger.info("后台调度器已关闭。")
     else:
         logger.info("调度器未在运行。")
+
+

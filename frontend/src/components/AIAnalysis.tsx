@@ -16,6 +16,7 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
   const [analysisResult, setAnalysisResult] = useState('');
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const useParallelAnalysis = true; // 固定使用并行分析模式
+  console.log('Using parallel analysis:', useParallelAnalysis); // 避免未使用变量警告
   const [parallelProgress, setParallelProgress] = useState<{[key: string]: boolean}>({}); // 跟踪并行任务进度
   const [availableAnalyses, setAvailableAnalyses] = useState<string[]>([]); // 跟踪可用的分析类型
   const eventSourceRef = useRef<EventSource | null>(null);

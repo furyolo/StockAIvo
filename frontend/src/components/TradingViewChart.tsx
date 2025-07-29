@@ -2,7 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createChart, CandlestickSeries } from 'lightweight-charts';
 
 interface ChartData {
-  time: string;
+  time?: string;
+  date?: string;
+  minute_timestamp?: string;
+  timestamp_10min?: string;
   open: number;
   high: number;
   low: number;
@@ -15,16 +18,17 @@ interface ChartData {
 interface TradingViewChartProps {
   data: ChartData[];
   height?: number;
+  period?: 'daily' | 'weekly' | '10min' | 'minute';
   onOHLCChange?: (ohlc: ChartData | null) => void;
 }
 
-const TradingViewChart: React.FC<TradingViewChartProps> = ({ data, height = 400, onOHLCChange }) => {
+const TradingViewChart: React.FC<TradingViewChartProps> = ({ data, height = 400, period = 'daily', onOHLCChange }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const candlestickSeriesRef = useRef<any>(null);
 
   // 状态管理当前显示的 OHLC 数据
-  const [currentOHLC, setCurrentOHLC] = useState<ChartData | null>(
+  const [, setCurrentOHLC] = useState<ChartData | null>(
     data.length > 0 ? data[data.length - 1] : null
   );
 
@@ -51,8 +55,16 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({ data, height = 400,
       },
       timeScale: {
         borderColor: '#cccccc',
-        timeVisible: true,
+        timeVisible: period === 'minute' || period === '10min',
         secondsVisible: false,
+        rightOffset: period === 'daily' || period === 'weekly' ? 0 : 12,
+        barSpacing: period === 'minute' ? 6 : period === '10min' ? 8 : 12,
+        fixLeftEdge: false,
+        fixRightEdge: period === 'daily' || period === 'weekly',
+        lockVisibleTimeRangeOnResize: false,
+        rightBarStaysOnScroll: !(period === 'daily' || period === 'weekly'),
+        borderVisible: true,
+        visible: true,
       },
       localization: {
         timeFormatter: (time: any) => {
@@ -76,18 +88,27 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({ data, height = 400,
               return time.toString(); // 如果转换失败，返回原始值
             }
 
-            // 中文星期名称映射
-            const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-            const weekday = weekdays[date.getDay()];
-
-            // 格式化为 "周二 2025-07-08"
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-
-            return `${weekday} ${year}-${month}-${day}`;
+            // 根据period类型格式化时间显示
+            if (period === 'minute') {
+              // 分钟线：只显示时间 "HH:mm"，使用UTC时间避免时区转换
+              const hours = String(date.getUTCHours()).padStart(2, '0');
+              const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+              return `${hours}:${minutes}`;
+            } else if (period === '10min') {
+              // 10分钟线：显示时间 "HH:mm"，使用UTC时间
+              const hours = String(date.getUTCHours()).padStart(2, '0');
+              const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+              return `${hours}:${minutes}`;
+            } else {
+              // 日线和周线：显示 "周二 2025-07-08"
+              const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+              const weekday = weekdays[date.getDay()];
+              const year = date.getFullYear();
+              const month = String(date.getMonth() + 1).padStart(2, '0');
+              const day = String(date.getDate()).padStart(2, '0');
+              return `${weekday} ${year}-${month}-${day}`;
+            }
           } catch (error) {
-            console.error('Time formatting error:', error, 'time:', time);
             return time.toString(); // 出错时返回原始值
           }
         },
@@ -113,9 +134,28 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({ data, height = 400,
         if (ohlcData) {
           // 从原始数据中找到对应的数据项
           const timeStr = typeof param.time === 'string' ? param.time : param.time.toString();
-          const originalDataItem = data.find(item =>
-            item.time.split('T')[0] === timeStr
-          );
+
+          let originalDataItem;
+          if (period === 'minute') {
+            // 分钟线：匹配minute_timestamp字段
+            originalDataItem = data.find(item => {
+              const itemTime = item.minute_timestamp || item.time;
+              return itemTime === timeStr || itemTime?.split('T')[0] === timeStr.split('T')[0];
+            });
+          } else if (period === '10min') {
+            // 10分钟线：匹配timestamp_10min字段
+            originalDataItem = data.find(item => {
+              const itemTime = item.timestamp_10min || item.time;
+              return itemTime === timeStr || itemTime?.split('T')[0] === timeStr.split('T')[0];
+            });
+          } else {
+            // 日线和周线：匹配date或time字段的日期部分
+            originalDataItem = data.find(item => {
+              const itemTime = item.date || item.time || '';
+              const itemDatePart = itemTime.includes('T') ? itemTime.split('T')[0] : itemTime;
+              return itemDatePart === timeStr;
+            });
+          }
 
           const newOHLC = {
             time: param.time,
@@ -154,17 +194,68 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({ data, height = 400,
   useEffect(() => {
     if (!candlestickSeriesRef.current || !data.length) return;
 
-    // 转换数据格式
-    const chartData = data.map(item => ({
-      time: item.time.split('T')[0], // 将 "2025-05-22T00:00:00" 转换为 "2025-05-22"
-      open: item.open,
-      high: item.high,
-      low: item.low,
-      close: item.close,
-    }));
+    // 转换数据格式 - 根据TradingView要求使用正确格式
+    const chartData = data.map(item => {
+      let timeValue: string | number;
 
-    // 设置数据
-    candlestickSeriesRef.current.setData(chartData);
+      if (period === 'minute') {
+        // 分钟线：转换为Unix时间戳，避免时区转换
+        const timestamp = item.minute_timestamp || item.time || '';
+        if (timestamp) {
+          // 直接解析时间字符串，不进行时区转换
+          // 格式: "2025-07-25T15:00:00" -> 保持15:00不变
+          const date = new Date(timestamp + 'Z'); // 添加Z表示UTC时间，避免本地时区转换
+          timeValue = Math.floor(date.getTime() / 1000);
+        } else {
+          timeValue = '';
+        }
+      } else if (period === '10min') {
+        // 10分钟线：转换为Unix时间戳，避免时区转换
+        const timestamp = item.timestamp_10min || item.time || '';
+        if (timestamp) {
+          const date = new Date(timestamp + 'Z');
+          timeValue = Math.floor(date.getTime() / 1000);
+        } else {
+          timeValue = '';
+        }
+      } else {
+        // 日线和周线：使用日期字符串
+        const dateField = item.date || item.time || '';
+        timeValue = dateField.includes('T') ? dateField.split('T')[0] : dateField;
+      }
+
+      const result = {
+        time: timeValue,
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+      };
+
+      // 验证数据有效性
+      if (!timeValue || timeValue === '') {
+        return null;
+      }
+
+      return result;
+    }).filter(item => item !== null); // 过滤掉无效的数据项
+
+    // 设置数据 - 先清空避免格式冲突
+    try {
+      candlestickSeriesRef.current.setData([]);
+      setTimeout(() => {
+        if (candlestickSeriesRef.current) {
+          candlestickSeriesRef.current.setData(chartData);
+        }
+      }, 10);
+    } catch (error) {
+      // 如果出错，尝试重新创建图表
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+        candlestickSeriesRef.current = null;
+      }
+    }
 
     // 更新当前显示的 OHLC 为最新数据
     if (data.length > 0) {
@@ -173,18 +264,31 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({ data, height = 400,
       onOHLCChange?.(latestData);
     }
 
-    // 自动调整视图
-    if (chartRef.current) {
-      chartRef.current.timeScale().fitContent();
-    }
-  }, [data]);
+    // 自动调整视图 - 延迟执行确保数据设置完成
+    setTimeout(() => {
+      if (chartRef.current && chartData.length > 0) {
+        const timeScale = chartRef.current.timeScale();
 
-  // 计算涨跌颜色
-  const getPriceColor = (current: number, reference: number) => {
-    if (current > reference) return 'text-green-600'; // 涨绿
-    if (current < reference) return 'text-red-600'; // 跌红
-    return 'text-gray-600'; // 平盘
-  };
+        if (period === 'minute' || period === '10min') {
+          // 分钟线和10分钟线：显示全部数据点
+          if (chartData.length > 0) {
+            const from = chartData[0].time;
+            const to = chartData[chartData.length - 1].time;
+            timeScale.setVisibleRange({ from, to });
+          }
+        } else {
+          // 日线和周线：完全铺满，不留右侧空白
+          if (chartData.length > 0) {
+            const from = chartData[0].time;
+            const to = chartData[chartData.length - 1].time;
+            timeScale.setVisibleRange({ from, to });
+          }
+        }
+      }
+    }, 50);
+  }, [data, period]);
+
+
 
   return (
     <div className="w-full">

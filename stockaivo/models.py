@@ -5,7 +5,6 @@ StockAIvo - SQLAlchemy ORM Models
 包含以下核心模型：
 - StockPriceDaily: 日K线数据
 - StockPriceWeekly: 周K线数据
-- StockPriceHourly: 小时K线数据
 - StockSymbols: 股票代码映射表
 - UsStocksName: 美股名称表
 """
@@ -131,41 +130,6 @@ class StockPriceWeekly(Base):
         return f"<StockPriceWeekly(ticker='{self.ticker}', date='{self.date}', close={self.close})>"
 
 
-class StockPriceHourly(Base):
-    """
-    小时K线数据表
-    存储股票的小时频率价格和交易量数据
-    """
-    __tablename__ = 'stock_prices_hourly'
-    
-    # 复合主键：股票代码 + 小时时间戳
-    id = Column(Integer, primary_key=True, autoincrement=True, comment='自增主键ID')
-    ticker = Column(String(10), nullable=False, comment='股票代码')
-    hour_timestamp = Column(DateTime, nullable=False, comment='小时时间戳')
-    
-    # OHLCV数据
-    open = Column(Numeric(10, 4), nullable=False, comment='小时开盘价')
-    high = Column(Numeric(10, 4), nullable=False, comment='小时最高价')
-    low = Column(Numeric(10, 4), nullable=False, comment='小时最低价')
-    close = Column(Numeric(10, 4), nullable=False, comment='小时收盘价')
-    volume = Column(BigInteger, nullable=True, comment='小时交易量')
-    
-    # 时间戳字段
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
-    
-    # 表约束和索引
-    __table_args__ = (
-        UniqueConstraint('ticker', 'hour_timestamp', name='uk_hourly_ticker_hour'),
-        Index('idx_hourly_ticker', 'ticker'),
-        Index('idx_hourly_timestamp', 'hour_timestamp'),
-        Index('idx_hourly_ticker_timestamp', 'ticker', 'hour_timestamp'),
-        {'comment': '股票小时K线数据表'}
-    )
-    
-    def __repr__(self):
-        return f"<StockPriceHourly(ticker='{self.ticker}', hour_timestamp='{self.hour_timestamp}', close={self.close})>"
-
 
 class UsStocksName(Base):
     """
@@ -212,3 +176,5 @@ class StockNews(Base):
         Index('idx_stock_news_publish_time', 'publish_time'),
         Index('idx_stock_news_keyword', 'keyword'),
     )
+
+

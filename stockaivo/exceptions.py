@@ -120,14 +120,22 @@ def create_error_response(
 async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """
     自定义HTTP异常处理器
-    
+
     基于Context7最佳实践，重用FastAPI默认异常处理器而非完全覆盖。
     在调用默认处理器前添加自定义日志记录。
     """
     logger.error(f"HTTP异常: {exc.status_code} - {exc.detail} - 路径: {request.url}")
-    
-    # 重用FastAPI默认异常处理器
-    return await http_exception_handler(request, exc)
+
+    # 重用FastAPI默认异常处理器，并确保返回JSONResponse
+    response = await http_exception_handler(request, exc)
+    if isinstance(response, JSONResponse):
+        return response
+    else:
+        # 如果不是JSONResponse，创建一个新的JSONResponse
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail}
+        )
 
 
 async def custom_validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

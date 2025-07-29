@@ -8,14 +8,44 @@ Each function represents an agent and will be a node in the graph.
 import asyncio
 import pandas as pd
 import pandas_market_calendars as mcal
-from typing import Dict, Any, Optional, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, NamedTuple
 from datetime import date, timedelta, datetime
+from functools import lru_cache
 from stockaivo.data_service import get_stock_data, get_stock_news, PeriodType, get_market_aware_current_date
 from stockaivo.database import get_db
 from stockaivo.ai.state import GraphState
 from stockaivo.ai.llm_service import llm_service
 from stockaivo.ai.tools import llm_tool
 from stockaivo.ai.technical_indicator import TechnicalIndicator
+
+# ==================== 重构：统一市场分析接口 ====================
+
+class MarketAnalysisResult(NamedTuple):
+    """市场分析结果的数据结构"""
+    market_aware_date: date
+    target_friday: str              # 保持字符串格式（向后兼容）
+    target_friday_date: date        # 新增：date格式（避免转换）
+    trading_days_count: int
+    calendar_days: int              # 新增：日历天数
+
+# ==================== 缓存层 ====================
+
+@lru_cache(maxsize=32)
+def _get_nyse_calendar():
+    """缓存的NYSE日历获取"""
+    return mcal.get_calendar('NYSE')
+
+@lru_cache(maxsize=128)
+def _get_trading_schedule(start_date: date, end_date: date):
+    """缓存的交易时间表获取"""
+    calendar = _get_nyse_calendar()
+    return calendar.schedule(start_date=start_date, end_date=end_date)
+
+@lru_cache(maxsize=64)
+def _get_trading_days_set(start_date: date, end_date: date) -> set[date]:
+    """缓存的交易日集合"""
+    schedule = _get_trading_schedule(start_date, end_date)
+    return {d.date() for d in schedule.index} if not schedule.empty else set()
 
 def _calculate_date_range(period: PeriodType, date_range_option: Optional[str], custom_date_range: Optional[dict], market_aware_date: Optional[date] = None) -> tuple[Optional[str], Optional[str]]:
     """
@@ -167,11 +197,148 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
     }
 
 
+# ==================== 内部优化函数 ====================
+
+def _calculate_target_friday_internal(market_aware_date: date) -> date:
+    """内部函数：计算目标周五日期（返回date对象）"""
+    try:
+        today = datetime.combine(market_aware_date, datetime.min.time())
+        nyse_calendar = _get_nyse_calendar()
+        et_tz = nyse_calendar.tz
+
+        # 获取当前美东时间
+        now_et = datetime.now(et_tz)
+        current_weekday = today.weekday()
+
+        # 生成交易时间表（使用缓存）
+        range_start = today.date() - timedelta(days=7)
+        range_end = today.date() + timedelta(days=14)
+        trading_days_set = _get_trading_days_set(range_start, range_end)
+
+        if not trading_days_set:
+            # 回退到简单逻辑
+            return _get_fallback_target_friday_internal(today)
+
+        # 判断市场交易状态
+        is_market_open = False
+        try:
+            schedule = _get_trading_schedule(today.date(), today.date())
+            if not schedule.empty:
+                is_market_open = nyse_calendar.open_at_time(schedule, now_et)
+        except:
+            # 简单时间判断回退
+            market_hour = now_et.hour
+            market_minute = now_et.minute
+            is_market_open = (market_hour > 9 or (market_hour == 9 and market_minute >= 30)) and market_hour < 16
+
+        # 判断本周交易是否结束
+        week_trading_ended = False
+        if current_weekday < 5:  # 周一到周五
+            if current_weekday == 4:  # 周五
+                week_trading_ended = not is_market_open
+        else:  # 周末
+            week_trading_ended = True
+
+        # 计算目标周的开始日期
+        if week_trading_ended:
+            # 本周交易已结束，返回下周最后交易日
+            days_until_next_monday = (7 - current_weekday) % 7
+            if days_until_next_monday == 0:
+                days_until_next_monday = 7
+            target_week_start = today.date() + timedelta(days=days_until_next_monday)
+        else:
+            # 本周交易未结束，返回本周最后交易日
+            days_since_monday = current_weekday
+            target_week_start = today.date() - timedelta(days=days_since_monday)
+
+        # 找到目标周的最后一个交易日
+        return _find_last_trading_day_of_week_internal(target_week_start, trading_days_set)
+
+    except Exception:
+        # 异常回退
+        today = datetime.combine(market_aware_date, datetime.min.time())
+        return _get_fallback_target_friday_internal(today)
+
+def _find_last_trading_day_of_week_internal(week_start: date, trading_days_set: set[date]) -> date:
+    """内部函数：找到指定周的最后一个交易日"""
+    # 从周五开始往前找
+    for i in range(5):  # 周五到周一
+        check_date = week_start + timedelta(days=4-i)
+        if check_date in trading_days_set:
+            return check_date
+
+    # 如果本周没有交易日，返回周五
+    return week_start + timedelta(days=4)
+
+def _calculate_trading_days_internal(market_aware_date: date, target_date: date) -> int:
+    """内部函数：计算交易日数量"""
+    try:
+        # 边界处理
+        if target_date <= market_aware_date:
+            return 1
+
+        # 使用缓存的交易时间表
+        schedule = _get_trading_schedule(market_aware_date + timedelta(days=1), target_date)
+        return len(schedule)
+
+    except Exception:
+        # 异常回退：估算
+        days_diff = (target_date - market_aware_date).days
+        estimated_trading_days = int(days_diff * 5 / 7)
+        return max(1, estimated_trading_days)
+
+def _get_fallback_target_friday_internal(today: datetime) -> date:
+    """内部回退逻辑：简单的周五计算"""
+    current_weekday = today.weekday()
+
+    if current_weekday < 4:  # 周一到周四
+        days_until_friday = 4 - current_weekday
+        target_date = today + timedelta(days=days_until_friday)
+    else:  # 周五到周日
+        days_until_next_friday = (4 - current_weekday) % 7
+        if days_until_next_friday == 0:
+            days_until_next_friday = 7
+        target_date = today + timedelta(days=days_until_next_friday)
+
+    return target_date.date()
+
+# ==================== 统一市场分析接口 ====================
+
+def get_market_analysis(market_aware_date: Optional[date] = None) -> MarketAnalysisResult:
+    """
+    获取完整的市场分析结果
+
+    这是新的统一接口，一次性计算所有相关的市场分析数据，
+    避免重复计算，提升性能。
+
+    Args:
+        market_aware_date: 可选的市场感知日期，如果不提供则内部调用获取
+
+    Returns:
+        MarketAnalysisResult: 包含所有市场分析数据的结构化结果
+    """
+    if market_aware_date is None:
+        market_aware_date = get_market_aware_current_date()
+
+    # 一次性计算所有需要的值
+    target_friday_date = _calculate_target_friday_internal(market_aware_date)
+    target_friday_str = target_friday_date.strftime("%Y-%m-%d")
+    trading_days_count = _calculate_trading_days_internal(market_aware_date, target_friday_date)
+    calendar_days = (target_friday_date - market_aware_date).days
+
+    return MarketAnalysisResult(
+        market_aware_date=market_aware_date,
+        target_friday=target_friday_str,
+        target_friday_date=target_friday_date,
+        trading_days_count=trading_days_count,
+        calendar_days=calendar_days
+    )
+
 # ==================== 共享的Prompt和逻辑函数 ====================
 
 def _get_target_friday_date(market_aware_date: Optional[date] = None) -> str:
     """
-    计算周度最后一个交易日
+    计算周度最后一个交易日（向后兼容接口）
 
     规则：
     - 如果本周市场交易还未结束，返回本周最后一个交易日
@@ -184,132 +351,24 @@ def _get_target_friday_date(market_aware_date: Optional[date] = None) -> str:
 
     Returns:
         格式化的日期字符串 (YYYY-MM-DD)
+
+    Note:
+        这是向后兼容接口，内部调用优化后的实现。
+        推荐使用 get_market_analysis() 获取完整的市场分析结果。
     """
-    try:
-        if market_aware_date is None:
-            market_aware_date = get_market_aware_current_date()
-        today = datetime.combine(market_aware_date, datetime.min.time())
-
-        # 获取NYSE日历
-        nyse_calendar = mcal.get_calendar('NYSE')
-        et_tz = nyse_calendar.tz  # 美东时区
-
-        # 获取当前美东时间
-        now_et = datetime.now(et_tz)
-        current_weekday = today.weekday()  # 0=Monday, 6=Sunday
-
-        # 生成交易时间表（包含前后几天以确保覆盖）
-        range_start = today.date() - timedelta(days=7)
-        range_end = today.date() + timedelta(days=14)
-        schedule = nyse_calendar.schedule(start_date=range_start, end_date=range_end)
-
-        if schedule.empty:
-            # 如果无法获取交易日历，回退到简单逻辑
-            return _get_fallback_target_date(today)
-
-        # 获取所有交易日
-        trading_days_set = {d.date() for d in schedule.index}
-
-        # 判断市场交易状态
-        is_market_open = False
-        try:
-            is_market_open = nyse_calendar.open_at_time(schedule, now_et)
-        except Exception:
-            # 如果无法判断市场状态，基于时间简单判断
-            # 美东时间9:30-16:00为交易时间
-            market_hour = now_et.hour
-            market_minute = now_et.minute
-            is_market_open = (market_hour > 9 or (market_hour == 9 and market_minute >= 30)) and market_hour < 16
-
-        # 根据市场状态和星期几决定目标周
-        # 判断本周交易是否已经结束
-        week_trading_ended = False
-
-        if current_weekday < 5:  # 周一到周五
-            if current_weekday == 4:  # 周五
-                # 如果是周五且市场已收盘，本周交易结束
-                if not is_market_open:
-                    week_trading_ended = True
-            # 周一到周四，本周交易未结束
-        else:  # 周末（周六、周日）
-            # 周末，本周交易已结束
-            week_trading_ended = True
-
-        if week_trading_ended:
-            # 本周交易已结束，返回下周最后交易日
-            # 找到下周一
-            days_until_next_monday = (7 - current_weekday) % 7
-            if days_until_next_monday == 0:  # 如果今天是周日
-                days_until_next_monday = 7  # 下周一
-            target_week_start = today.date() + timedelta(days=days_until_next_monday)
-        else:
-            # 本周交易未结束，返回本周最后交易日
-            # 找到本周一
-            days_since_monday = current_weekday
-            target_week_start = today.date() - timedelta(days=days_since_monday)
-
-        # 找到目标周的最后一个交易日
-        target_date = _find_last_trading_day_of_week(target_week_start, trading_days_set)
-
-        return target_date.strftime("%Y-%m-%d")
-
-    except Exception:
-        # 如果出现任何错误，使用回退逻辑
-        if market_aware_date is None:
-            market_aware_date = get_market_aware_current_date()
-        today = datetime.combine(market_aware_date, datetime.min.time())
-        return _get_fallback_target_date(today)
+    # 使用新的统一接口，保持向后兼容
+    result = get_market_analysis(market_aware_date)
+    return result.target_friday
 
 
-def _get_fallback_target_date(today: datetime) -> str:
-    """
-    回退逻辑：当无法获取交易日历时使用的简单日期计算
-
-    Args:
-        today: 当前日期的datetime对象
-
-    Returns:
-        格式化的日期字符串 (YYYY-MM-DD)
-    """
-    current_weekday = today.weekday()  # 0=Monday, 6=Sunday
-
-    # 简单逻辑：周一到周四返回本周五，周五到周日返回下周五
-    if current_weekday < 4:  # 周一到周四
-        days_until_friday = 4 - current_weekday
-        target_date = today + timedelta(days=days_until_friday)
-    else:  # 周五到周日
-        days_until_next_friday = (4 - current_weekday) % 7
-        if days_until_next_friday == 0:
-            days_until_next_friday = 7
-        target_date = today + timedelta(days=days_until_next_friday)
-
-    return target_date.strftime("%Y-%m-%d")
-
-
-def _find_last_trading_day_of_week(week_start: date, trading_days_set: set[date]) -> date:
-    """
-    找到指定周的最后一个交易日
-
-    Args:
-        week_start: 周的开始日期（通常是周一）
-        trading_days_set: 交易日集合
-
-    Returns:
-        该周的最后一个交易日
-    """
-    # 从周五开始往前找，直到找到交易日
-    for i in range(5):  # 周五到周一
-        check_date = week_start + timedelta(days=4-i)  # 4=周五, 3=周四, ..., 0=周一
-        if check_date in trading_days_set:
-            return check_date
-
-    # 如果本周没有交易日，返回周五（虽然不太可能）
-    return week_start + timedelta(days=4)
+# 注意：旧的辅助函数已被内部优化函数替代
+# _get_fallback_target_date 和 _find_last_trading_day_of_week
+# 现在由 _get_fallback_target_friday_internal 和 _find_last_trading_day_of_week_internal 替代
 
 
 def _calculate_trading_days_to_target(target_date_str: str, market_aware_date: Optional[date] = None) -> int:
     """
-    计算从市场感知基准日期到目标日期的交易日总数（用于预测时间范围）
+    计算从市场感知基准日期到目标日期的交易日总数（向后兼容接口）
 
     Args:
         target_date_str: 目标日期字符串 (YYYY-MM-DD)
@@ -317,44 +376,35 @@ def _calculate_trading_days_to_target(target_date_str: str, market_aware_date: O
 
     Returns:
         int: 交易日数量
+
+    Note:
+        这是向后兼容接口，内部调用优化后的实现。
+        推荐使用 get_market_analysis() 获取完整的市场分析结果。
     """
+    # 优化：如果可能，直接使用统一接口避免重复计算
+    if market_aware_date is not None:
+        result = get_market_analysis(market_aware_date)
+        if result.target_friday == target_date_str:
+            return result.trading_days_count
+
+    # 回退到单独计算
     try:
         if market_aware_date is None:
             market_aware_date = get_market_aware_current_date()
         target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
-
-        # 如果目标日期在基准日期之前或相等，返回1（至少1个交易日）
-        if target_date <= market_aware_date:
-            return 1
-
-        # 使用NYSE日历获取交易日
-        nyse_calendar = mcal.get_calendar('NYSE')
-
-        # 获取从基准日期到目标日期的所有交易日（不包括start_date）
-        schedule = nyse_calendar.schedule(start_date=market_aware_date + timedelta(days=1), end_date=target_date)
-
-        # 返回交易日总数
-        return len(schedule)
-
+        return _calculate_trading_days_internal(market_aware_date, target_date)
     except Exception:
-        # 如果出错，返回一个估算值（假设每周5个交易日）
-        try:
-            if market_aware_date is None:
-                market_aware_date = get_market_aware_current_date()
-            target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
-            days_diff = (target_date - market_aware_date).days
-            # 粗略估算：每7天约5个交易日
-            estimated_trading_days = int(days_diff * 5 / 7)
-            return max(1, estimated_trading_days)  # 至少返回1
-        except:
-            return 1  # 默认返回1
+        # 最终回退
+        return 1
 
 def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_price_str: str,
                                    daily_indicators: list[str] | None = None, weekly_indicators: list[str] | None = None,
                                    market_aware_date: Optional[date] = None) -> str:
     """构建技术分析的提示词，根据实际计算的指标动态调整"""
-    target_date = _get_target_friday_date(market_aware_date)
-    trading_days_count = _calculate_trading_days_to_target(target_date, market_aware_date)
+    # 使用新的统一接口，一次性获取所有市场分析数据
+    market_analysis = get_market_analysis(market_aware_date)
+    target_date = market_analysis.target_friday
+    trading_days_count = market_analysis.trading_days_count
 
     # 构建技术指标说明
     def build_indicators_description(indicators: list[str]) -> str:
@@ -655,8 +705,10 @@ def _build_synthesis_prompt(ticker: str, data_collector_result: str, technical_r
                            fundamental_result: str, news_result: str, available_analyses: list[str],
                            market_aware_date: Optional[date] = None) -> str:
     """构建综合分析的提示词"""
-    target_date = _get_target_friday_date(market_aware_date)
-    trading_days_count = _calculate_trading_days_to_target(target_date, market_aware_date)
+    # 使用新的统一接口，一次性获取所有市场分析数据
+    market_analysis = get_market_analysis(market_aware_date)
+    target_date = market_analysis.target_friday
+    trading_days_count = market_analysis.trading_days_count
 
     # 构建分析部分
     analysis_sections = [f"**数据收集情况:**\n{data_collector_result}"]

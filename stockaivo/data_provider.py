@@ -16,27 +16,27 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections import deque
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Literal, Union, Any
+from datetime import datetime, timedelta, date
+from typing import Dict, List, Optional, Literal, Union, Any, Tuple, Deque
 from enum import Enum
 
 import akshare as ak
 import httpx
-import pandas as pd
-import pytz
-import requests
+import pandas as pd  # type: ignore
+import pytz  # type: ignore
+import requests  # type: ignore
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from .database import get_fullsymbol_from_db
-from .models import UsStocksName
+from .database import get_fullsymbol_from_db  # type: ignore
+from .models import UsStocksName  # type: ignore
 
 # 配置日志
 logger = logging.getLogger(__name__)
 
 # 类型定义
-PeriodType = Literal["daily", "weekly", "hourly"]
+PeriodType = Literal["daily", "weekly", "hourly", "minute"]
 DataSourceType = Literal["akshare", "tickertick"]
 
 
@@ -152,11 +152,11 @@ class BaseDataProvider(ABC):
         self.logger = logging.getLogger(self.__class__.__name__)
 
     @abstractmethod
-    async def fetch_data(self, **kwargs) -> Optional[pd.DataFrame]:
+    async def fetch_data(self, *args: Any, **kwargs: Any) -> Optional[pd.DataFrame]:
         """获取数据的抽象方法"""
         pass
 
-    def _log_before_retry(self, retry_state):
+    def _log_before_retry(self, retry_state: Any) -> None:
         """在每次重试前记录日志"""
         self.logger.warning(
             f"Retrying API call, attempt {retry_state.attempt_number} "
@@ -175,7 +175,7 @@ class DataValidator:
     @staticmethod
     def validate_period(period: str) -> bool:
         """验证时间周期"""
-        return period in ["daily", "weekly", "hourly"]
+        return period in ["daily", "weekly", "10min", "minute"]
 
     @staticmethod
     def validate_price_data(df: pd.DataFrame) -> bool:
@@ -249,10 +249,49 @@ class TimezoneConverter:
             logger.warning(f"时区转换失败: {dt} ({source_timezone} -> US/Eastern) -> {e}")
             return None
 
+    @staticmethod
+    def convert_to_utc8(dt: pd.Timestamp, source_timezone: Optional[str] = None) -> Optional[pd.Timestamp]:
+        """
+        将时间从指定源时区转换为UTC+8时区（Asia/Shanghai）
+
+        Args:
+            dt: pandas Timestamp对象，假设为源时区的naive datetime
+            source_timezone: 源时区名称，默认为美国东部时间
+
+        Returns:
+            转换后的UTC+8时间（naive datetime），如果转换失败返回None
+        """
+        if pd.isna(dt):
+            return None
+
+        if source_timezone is None:
+            source_timezone = DataProviderConfig.TARGET_TIMEZONE  # 默认从美东时间转换
+
+        try:
+            # 定义时区
+            source_tz = pytz.timezone(source_timezone)
+            utc8_tz = pytz.timezone('Asia/Shanghai')
+
+            # 如果输入的时间没有时区信息，假设为源时区
+            if dt.tz is None:
+                dt_with_tz = source_tz.localize(dt)
+            else:
+                dt_with_tz = dt.tz_convert(source_tz)
+
+            # 转换为UTC+8时间
+            utc8_time = dt_with_tz.astimezone(utc8_tz)
+
+            # 返回naive datetime（移除时区信息）
+            return pd.Timestamp(utc8_time.replace(tzinfo=None))
+
+        except Exception as e:
+            logger.warning(f"时区转换失败: {dt} ({source_timezone} -> Asia/Shanghai) -> {e}")
+            return None
+
 
 # ===== 全局重试配置和辅助函数 =====
 
-def _log_before_retry(retry_state):
+def _log_before_retry(retry_state: Any) -> None:
     """全局重试日志函数"""
     logger.warning(
         f"Retrying API call, attempt {retry_state.attempt_number} "
@@ -282,9 +321,39 @@ async def _fetch_data_with_retry(fullsymbol: str, period: str, ak_start_date: st
             return ak.stock_us_hist(symbol=fullsymbol, period="daily", start_date=ak_start_date, end_date=ak_end_date, adjust="qfq")
         elif period == "weekly":
             return ak.stock_us_hist(symbol=fullsymbol, period="weekly", start_date=ak_start_date, end_date=ak_end_date, adjust="qfq")
-        elif period == "hourly":
-            logger.warning(f"AKShare does not support hourly data for {fullsymbol}, using daily data instead.")
-            return ak.stock_us_hist(symbol=fullsymbol, period="daily", start_date=ak_start_date, end_date=ak_end_date, adjust="qfq")
+        elif period == "minute":
+            # 使用AKShare的分时数据接口，需要datetime格式的日期参数
+            logger.info(f"Fetching minute data for {fullsymbol} using stock_us_hist_min_em")
+
+            # 获取正确的交易时间（考虑夏令时/冬令时）
+            if ak_start_date and ak_start_date != '19700101':
+                # 解析日期并获取该日期的交易时间（美东时间）
+                target_date = datetime.strptime(ak_start_date, '%Y%m%d').date()
+                market_open_time, market_close_time = _get_market_hours_for_date(target_date)
+
+                # 构建美东时间的datetime对象
+                start_et = pd.Timestamp(f"{ak_start_date[:4]}-{ak_start_date[4:6]}-{ak_start_date[6:8]} {market_open_time}")
+                end_et = pd.Timestamp(f"{ak_end_date[:4]}-{ak_end_date[4:6]}-{ak_end_date[6:8]} {market_close_time}" if ak_end_date else f"{ak_start_date[:4]}-{ak_start_date[4:6]}-{ak_start_date[6:8]} {market_close_time}")
+
+                # 转换为UTC+8时区（AKShare API要求的时区）
+                start_utc8 = TimezoneConverter.convert_to_utc8(start_et, 'US/Eastern')
+                end_utc8 = TimezoneConverter.convert_to_utc8(end_et, 'US/Eastern')
+
+                if start_utc8 is None or end_utc8 is None:
+                    logger.warning("时区转换失败，使用默认时间范围")
+                    start_datetime = "1979-09-01 09:32:00"
+                    end_datetime = "2222-01-01 09:32:00"
+                else:
+                    start_datetime = start_utc8.strftime('%Y-%m-%d %H:%M:%S')
+                    end_datetime = end_utc8.strftime('%Y-%m-%d %H:%M:%S')
+                    logger.info(f"时区转换完成: ET {start_et} -> UTC+8 {start_datetime}, ET {end_et} -> UTC+8 {end_datetime}")
+            else:
+                # 使用默认的广泛范围（UTC+8时区）
+                start_datetime = "1979-09-01 09:32:00"
+                end_datetime = "2222-01-01 09:32:00"
+
+            logger.info(f"Using UTC+8 datetime range for AKShare API: {start_datetime} to {end_datetime}")
+            return ak.stock_us_hist_min_em(symbol=fullsymbol, start_date=start_datetime, end_date=end_datetime)
         return None
 
     df = await asyncio.to_thread(sync_akshare_call)
@@ -294,6 +363,59 @@ async def _fetch_data_with_retry(fullsymbol: str, period: str, ak_start_date: st
         raise IOError("API returned empty data.")
         
     return df
+
+
+def _get_market_hours_for_date(target_date: date) -> Tuple[str, str]:
+    """
+    获取指定日期的美股交易时间，自动处理夏令时/冬令时
+
+    Args:
+        target_date: 目标日期
+
+    Returns:
+        tuple: (开盘时间字符串, 收盘时间字符串) 格式为 "HH:MM:SS"
+    """
+    try:
+        import pandas_market_calendars as mcal
+
+        # 获取NYSE日历
+        nyse = mcal.get_calendar('NYSE')
+        et_tz = nyse.tz  # 自动处理EST/EDT时区转换
+
+        # 生成目标日期的交易时间表
+        schedule = nyse.schedule(start_date=target_date, end_date=target_date)
+
+        if not schedule.empty:
+            # 获取开盘和收盘时间
+            market_open = schedule.iloc[0]['market_open']
+            market_close = schedule.iloc[0]['market_close']
+
+            # 确保时间使用正确的美东时区
+            if hasattr(market_open, 'tz') and market_open.tz is not None:
+                market_open_et = market_open.tz_convert(et_tz)
+            else:
+                market_open_et = market_open
+
+            if hasattr(market_close, 'tz') and market_close.tz is not None:
+                market_close_et = market_close.tz_convert(et_tz)
+            else:
+                market_close_et = market_close
+
+            # 返回时间字符串
+            open_time = market_open_et.strftime('%H:%M:%S')
+            close_time = market_close_et.strftime('%H:%M:%S')
+
+            logger.debug(f"Market hours for {target_date}: {open_time} - {close_time}")
+            return open_time, close_time
+        else:
+            # 如果不是交易日，返回标准时间
+            logger.warning(f"{target_date} is not a trading day, using standard hours")
+            return "09:30:00", "16:00:00"
+
+    except Exception as e:
+        logger.warning(f"Failed to get market hours for {target_date}: {e}, using standard hours")
+        # 发生错误时返回标准交易时间
+        return "09:30:00", "16:00:00"
 
 
 # ===== 股票数据提供者类 =====
@@ -308,14 +430,14 @@ class StockDataProvider(BaseDataProvider):
 
     async def fetch_data(self, db: Session, ticker: str, period: str,
                         start_date: Optional[str] = None,
-                        end_date: Optional[str] = None) -> Optional[pd.DataFrame]:
+                        end_date: Optional[str] = None, **kwargs: Any) -> Optional[pd.DataFrame]:
         """
         从 AKShare 获取指定股票的指定周期数据
 
         Args:
             db: 数据库会话
             ticker: 股票代码，如 'AAPL', 'TSLA'
-            period: 数据周期，支持 'daily', 'weekly', 'hourly'
+            period: 数据周期，支持 'daily', 'weekly', '10min', 'minute'
             start_date: 开始日期 (YYYY-MM-DD)
             end_date: 结束日期 (YYYY-MM-DD)
 
@@ -328,7 +450,7 @@ class StockDataProvider(BaseDataProvider):
             return None
 
         if not DataValidator.validate_period(period):
-            self.logger.error(f"不支持的时间周期: {period}，支持的周期: daily, weekly, hourly")
+            self.logger.error(f"不支持的时间周期: {period}，支持的周期: daily, weekly, 10min, minute")
             return None
 
         try:
@@ -376,6 +498,8 @@ class StockDataProvider(BaseDataProvider):
                 '日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low',
                 '成交量': 'volume', '成交额': 'turnover', '振幅': 'amplitude',
                 '涨跌幅': 'price_change_percent', '涨跌额': 'price_change', '换手率': 'turnover_rate',
+                # 分时数据特有的列名映射
+                '时间': 'minute_timestamp', '最新价': 'latest_price',
                 # 英文列名映射（防御性编程）
                 'date': 'date', 'open': 'open', 'close': 'close', 'high': 'high',
                 'low': 'low', 'volume': 'volume', 'turnover': 'turnover',
@@ -408,10 +532,91 @@ class StockDataProvider(BaseDataProvider):
                     df.reset_index(inplace=True)
                     if 'index' in df.columns:
                         df.rename(columns={'index': 'date'}, inplace=True)
-        elif period == "hourly":
-            # 对于小时数据，使用 timestamp 列名
-            if 'date' in df.columns:
-                df.rename(columns={'date': 'timestamp'}, inplace=True)
+
+        elif period == "minute":
+            # 对于分时数据，处理时间戳和时区转换
+            self._process_minute_time_columns(df)
+
+    def _process_minute_time_columns(self, df: pd.DataFrame) -> None:
+        """处理分时数据的时间列和特殊情况"""
+        try:
+            # 确保有 minute_timestamp 列
+            if 'minute_timestamp' in df.columns:
+                # 转换时间字符串为 pandas datetime
+                df['minute_timestamp'] = pd.to_datetime(df['minute_timestamp'], errors='coerce')
+
+                # 时区转换：从UTC+8转换为美东时间
+                df['minute_timestamp'] = df['minute_timestamp'].apply(
+                    lambda dt: TimezoneConverter.convert_to_et(dt, 'Asia/Shanghai') if pd.notnull(dt) else None
+                )
+
+                # 移除时区转换失败的记录
+                df = df.dropna(subset=['minute_timestamp'])
+
+                self.logger.info(f"分时数据时区转换完成，剩余 {len(df)} 条记录")
+
+            # 处理开盘价为0.00的异常情况
+            if 'open' in df.columns:
+                # 确保数据按时间戳排序，以便正确使用shift方法
+                if 'minute_timestamp' in df.columns:
+                    df = df.sort_values('minute_timestamp').reset_index(drop=True)
+
+                # 识别开盘价为0或NaN的记录
+                zero_open_mask = (df['open'] == 0.0) | (df['open'].isna())
+                if zero_open_mask.any():
+                    original_count = zero_open_mask.sum()
+                    self.logger.warning(f"发现 {original_count} 条开盘价为0的记录，开始智能修复")
+
+                    # 实现分层修复逻辑
+                    repair_stats = {
+                        'previous_close': 0,
+                        'current_close': 0,
+                        'current_latest': 0,
+                        'failed': 0
+                    }
+
+                    # 第一优先级：使用上一个时刻的收盘价
+                    if 'close' in df.columns:
+                        previous_close = df['close'].shift(1)
+                        mask_prev_close = zero_open_mask & previous_close.notna() & (previous_close > 0)
+                        if mask_prev_close.any():
+                            df.loc[mask_prev_close, 'open'] = previous_close.loc[mask_prev_close]
+                            repair_stats['previous_close'] = mask_prev_close.sum()
+                            zero_open_mask = zero_open_mask & ~mask_prev_close
+
+                    # 第二优先级：使用同一时刻的收盘价
+                    if zero_open_mask.any() and 'close' in df.columns:
+                        mask_current_close = zero_open_mask & df['close'].notna() & (df['close'] > 0)
+                        if mask_current_close.any():
+                            df.loc[mask_current_close, 'open'] = df.loc[mask_current_close, 'close']
+                            repair_stats['current_close'] = mask_current_close.sum()
+                            zero_open_mask = zero_open_mask & ~mask_current_close
+
+                    # 第三优先级：使用同一时刻的最新价
+                    if zero_open_mask.any() and 'latest_price' in df.columns:
+                        mask_current_latest = zero_open_mask & df['latest_price'].notna() & (df['latest_price'] > 0)
+                        if mask_current_latest.any():
+                            df.loc[mask_current_latest, 'open'] = df.loc[mask_current_latest, 'latest_price']
+                            repair_stats['current_latest'] = mask_current_latest.sum()
+                            zero_open_mask = zero_open_mask & ~mask_current_latest
+
+                    # 统计未能修复的记录
+                    repair_stats['failed'] = zero_open_mask.sum()
+
+                    # 记录详细的修复统计信息
+                    total_repaired = repair_stats['previous_close'] + repair_stats['current_close'] + repair_stats['current_latest']
+                    self.logger.info(f"开盘价修复完成: 总计 {original_count} 条记录, 成功修复 {total_repaired} 条")
+                    self.logger.info(f"修复详情: 上一时刻收盘价 {repair_stats['previous_close']} 条, "
+                                   f"当前收盘价 {repair_stats['current_close']} 条, "
+                                   f"当前最新价 {repair_stats['current_latest']} 条, "
+                                   f"修复失败 {repair_stats['failed']} 条")
+
+                    # 确保修复后的数据类型正确
+                    if 'open' in df.columns:
+                        df['open'] = pd.to_numeric(df['open'], errors='coerce')
+
+        except Exception as e:
+            self.logger.error(f"处理分时数据时间列时发生错误: {str(e)}")
 
     def _clean_and_convert_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """清理和转换数据类型"""
@@ -419,7 +624,7 @@ class StockDataProvider(BaseDataProvider):
         df = df.replace({pd.NA: None, float('nan'): None})
 
         # 转换数值列
-        numeric_columns = ['open', 'close', 'high', 'low', 'amplitude', 'price_change_percent', 'price_change', 'turnover_rate']
+        numeric_columns = ['open', 'close', 'high', 'low', 'amplitude', 'price_change_percent', 'price_change', 'turnover_rate', 'latest_price']
         for col in numeric_columns:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -507,7 +712,7 @@ class NewsDataProvider(BaseDataProvider):
             config = DataProviderConfig()
         super().__init__(config)
 
-    async def fetch_data(self, **kwargs) -> Optional[pd.DataFrame]:
+    async def fetch_data(self, *args: Any, **kwargs: Any) -> Optional[pd.DataFrame]:
         """基础实现，子类应该重写此方法"""
         raise NotImplementedError("子类必须实现 fetch_data 方法")
 
@@ -571,7 +776,7 @@ class NewsDataProvider(BaseDataProvider):
 class AKShareNewsProvider(NewsDataProvider):
     """AKShare 新闻数据提供者"""
 
-    async def fetch_data(self, db: Session, ticker: str, convert_timezone: bool = True) -> Optional[pd.DataFrame]:
+    async def fetch_data(self, db: Session, ticker: str, convert_timezone: bool = True, **kwargs: Any) -> Optional[pd.DataFrame]:
         """
         从AKShare获取指定股票的新闻数据
 
@@ -691,9 +896,9 @@ class TickerTickNewsProvider(NewsDataProvider):
 
     def __init__(self, config: Optional[DataProviderConfig] = None):
         super().__init__(config)
-        self._request_times = deque()
+        self._request_times: Deque[float] = deque()
 
-    async def fetch_data(self, ticker: str, story_type: str = 'T:curated', num_stories: int = 30) -> Optional[pd.DataFrame]:
+    async def fetch_data(self, ticker: str, story_type: str = 'T:curated', num_stories: int = 30, **kwargs: Any) -> Optional[pd.DataFrame]:
         """
         从TickerTick API获取指定股票的新闻数据
 
@@ -767,7 +972,7 @@ class TickerTickNewsProvider(NewsDataProvider):
         self.logger.info(f"使用故事类型: {story_type} - {description}")
 
         # 构建查询参数
-        params = {
+        params: Dict[str, Union[str, int]] = {
             'q': f"(and {story_type} tt:{ticker.lower()})",
             'n': min(max(num_stories, 1), 1000)
         }
@@ -814,6 +1019,9 @@ class TickerTickNewsProvider(NewsDataProvider):
                         await asyncio.sleep(5)
                         continue
                     return None
+
+            # 如果所有重试都失败了，返回None
+            return None
 
         except Exception as e:
             self.logger.error(f"TickerTick API调用失败: {e}")

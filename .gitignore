@@ -88,3 +88,6 @@ tests/*$py.class
 
 # Kilo Code
 .kilocode/
+
+# Cunzhi Memory
+.cunzhi-memory/
