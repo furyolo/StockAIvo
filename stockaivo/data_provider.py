@@ -16,6 +16,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Literal, Union, Any, Tuple, Deque
 from enum import Enum
@@ -102,8 +103,67 @@ class DataProviderConfig:
     REQUIRED_PRICE_COLUMNS = ['open', 'high', 'low', 'close']
     REQUIRED_VOLUME_COLUMNS = ['volume']
 
+    # 数据验证增强配置
+    # 智能验证系统的核心参数，用于控制验证策略的严格程度和修复行为
+
+    MAX_ANOMALY_RATIO = 0.05  # 异常容忍度：最多5%的记录可以有异常
+                              # 当异常比例超过此值时，验证失败
+                              # 建议范围：0.01-0.10 (1%-10%)
+
+    BOUNDARY_MINUTES = 5      # 边界时段定义：首末5分钟使用宽松验证规则
+                              # 针对分钟线数据的首末时刻可能存在的价格异常
+                              # 建议范围：3-10分钟
+
+    ENABLE_PRICE_REPAIR = True # 价格修复开关：启用价格边界修复功能
+                               # 自动修复超出high-low范围的开盘价和收盘价
+                               # 生产环境建议保持True
+
+    ENABLE_BOUNDARY_REPAIR = True # 边界修复开关：启用边界时段的特殊修复
+                                  # 为首末时刻提供更宽松的修复策略
+                                  # 配合BOUNDARY_MINUTES使用
+
+    MAX_PRICE_JUMP_RATIO = 0.1 # 价格跳跃阈值：10%的价格跳跃视为异常
+                               # 用于检测相邻时刻的异常价格变动
+                               # 建议范围：0.05-0.20 (5%-20%)
+
     # 公司名称清理配置
     COMPANY_SUFFIXES_TO_REMOVE = ["公司", "集团", "股份有限公司", "有限公司", "股份公司", "控股", "投资"]
+
+
+@dataclass
+class ValidationResult:
+    """
+    数据验证结果类
+
+    封装验证和修复过程的完整信息，为智能验证系统提供结构化的结果返回。
+
+    字段说明：
+    - is_valid: 验证是否通过，考虑修复后的数据质量
+    - repaired_count: 成功修复的记录总数
+    - error_count: 无法修复的错误记录数量
+    - warnings: 验证过程中的警告信息列表
+    - repair_stats: 详细的修复统计，格式为 {'repair_type': count}
+    - anomaly_ratio: 异常记录比例 (error_count + repaired_count) / total_count
+    - quality_score: 数据质量分数 (0.0-1.0)，自动计算
+
+    使用示例：
+        result = ValidationResult(True, 2, 0, [], {'open_repaired': 1, 'close_repaired': 1}, 0.05)
+        print(f"质量分数: {result.quality_score}")  # 自动计算的质量分数
+    """
+    is_valid: bool                    # 验证是否通过
+    repaired_count: int              # 修复的记录数量
+    error_count: int                 # 错误记录数量
+    warnings: List[str]              # 警告信息列表
+    repair_stats: Dict[str, int]     # 详细修复统计
+    anomaly_ratio: float             # 异常记录比例
+    quality_score: float = 0.0       # 数据质量分数
+
+    def __post_init__(self):
+        """计算数据质量分数"""
+        if self.error_count + self.repaired_count == 0:
+            self.quality_score = 1.0
+        else:
+            self.quality_score = 1.0 - (self.error_count / (self.error_count + self.repaired_count))
 
 
 def get_supported_story_types() -> Dict[str, str]:
@@ -165,7 +225,22 @@ class BaseDataProvider(ABC):
 
 
 class DataValidator:
-    """数据验证器类"""
+    """
+    数据验证器类
+
+    提供股票数据的验证和修复功能，包括：
+    - 基础数据验证：检查必要列、价格逻辑关系
+    - 智能验证与修复：支持分层验证策略和价格边界修复
+    - 价格边界修复：自动修复超出范围的开盘价和收盘价
+    - 分层验证策略：对分钟线数据的首末时刻使用宽松验证规则
+
+    主要方法：
+    - validate_ticker(): 验证股票代码格式
+    - validate_price_data(): 传统的严格数据验证
+    - validate_price_data_with_repair(): 智能验证与修复（推荐使用）
+    - _repair_price_boundaries(): 价格边界修复算法
+    - _get_validation_strategy(): 获取分层验证策略
+    """
 
     @staticmethod
     def validate_ticker(ticker: str) -> bool:
@@ -205,6 +280,141 @@ class DataValidator:
                 return False
 
         return True
+
+    @staticmethod
+    def _repair_price_boundaries(df: pd.DataFrame) -> Dict[str, int]:
+        """
+        修复价格边界异常
+
+        修复开盘价或收盘价超出最高最低价范围的异常情况。
+        使用向量化操作确保性能，将超出范围的价格调整到合理区间内。
+
+        Args:
+            df: 包含价格数据的DataFrame
+
+        Returns:
+            Dict[str, int]: 修复统计信息
+        """
+        repair_stats = {'open_repaired': 0, 'close_repaired': 0}
+
+        # 修复开盘价超出范围的情况
+        open_out_of_bounds = (df['open'] > df['high']) | (df['open'] < df['low'])
+        if open_out_of_bounds.any():
+            # 使用向量化操作修复开盘价：确保在high和low之间
+            df.loc[open_out_of_bounds, 'open'] = df.loc[open_out_of_bounds].apply(
+                lambda row: max(row['low'], min(row['high'], row['open'])), axis=1
+            )
+            repair_stats['open_repaired'] = open_out_of_bounds.sum()
+
+        # 修复收盘价超出范围的情况
+        close_out_of_bounds = (df['close'] > df['high']) | (df['close'] < df['low'])
+        if close_out_of_bounds.any():
+            # 使用向量化操作修复收盘价：确保在high和low之间
+            df.loc[close_out_of_bounds, 'close'] = df.loc[close_out_of_bounds].apply(
+                lambda row: max(row['low'], min(row['high'], row['close'])), axis=1
+            )
+            repair_stats['close_repaired'] = close_out_of_bounds.sum()
+
+        return repair_stats
+
+    @staticmethod
+    def _get_validation_strategy(df: pd.DataFrame, period: str) -> pd.Series:
+        """
+        获取分层验证策略
+
+        根据数据类型和记录位置确定验证策略。对于分钟线数据，
+        首末时刻使用宽松验证规则，中间时段使用严格验证规则。
+
+        Args:
+            df: 包含数据的DataFrame
+            period: 数据周期类型
+
+        Returns:
+            pd.Series: 每条记录对应的验证策略（'strict' 或 'lenient'）
+        """
+        # 非分钟线数据或缺少时间戳列，使用严格验证
+        if period != 'minute' or 'minute_timestamp' not in df.columns:
+            return pd.Series(['strict'] * len(df), index=df.index)
+
+        # 确保数据按时间排序
+        df_sorted = df.sort_values('minute_timestamp')
+        total_records = len(df_sorted)
+        boundary_count = DataProviderConfig.BOUNDARY_MINUTES
+
+        # 创建验证策略Series，默认为严格验证
+        strategy = pd.Series(['strict'] * total_records, index=df_sorted.index)
+
+        # 首末边界使用宽松策略（只有当记录数足够多时）
+        if total_records > boundary_count * 2:
+            strategy.iloc[:boundary_count] = 'lenient'
+            strategy.iloc[-boundary_count:] = 'lenient'
+
+        # 重新索引以匹配原始DataFrame的顺序
+        return strategy.reindex(df.index)
+
+    @staticmethod
+    def validate_price_data_with_repair(df: pd.DataFrame, period: Optional[str] = None) -> Tuple[bool, pd.DataFrame, ValidationResult]:
+        """
+        智能数据验证与修复
+
+        整合所有验证和修复逻辑，提供智能的数据质量管理。
+        支持分层验证策略和价格边界修复，返回详细的验证结果。
+
+        Args:
+            df: 包含价格数据的DataFrame
+            period: 数据周期类型，用于确定验证策略
+
+        Returns:
+            Tuple[bool, pd.DataFrame, ValidationResult]:
+                - 验证是否通过
+                - 修复后的DataFrame
+                - 详细的验证结果
+        """
+        if df is None or df.empty:
+            return False, df, ValidationResult(False, 0, 1, ['数据为空'], {}, 0.0)
+
+        # 检查必要列
+        required_columns = DataProviderConfig.REQUIRED_PRICE_COLUMNS
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            return False, df, ValidationResult(False, 0, 1, [f'缺少必要列: {missing_columns}'], {}, 0.0)
+
+        df_copy = df.copy()
+        warnings = []
+        repair_stats = {}
+        total_errors = 0
+
+        # 获取验证策略
+        validation_strategy = DataValidator._get_validation_strategy(df_copy, period or '')
+
+        # 基础逻辑验证
+        high_low_errors = (df_copy['high'] < df_copy['low']).sum()
+        if high_low_errors > 0:
+            total_errors += high_low_errors
+            warnings.append(f'发现{high_low_errors}条最高价低于最低价的记录')
+
+        # 价格边界修复
+        if DataProviderConfig.ENABLE_PRICE_REPAIR:
+            boundary_repair_stats = DataValidator._repair_price_boundaries(df_copy)
+            repair_stats.update(boundary_repair_stats)
+
+        # 计算异常比例
+        total_repaired = sum(repair_stats.values())
+        anomaly_ratio = (total_errors + total_repaired) / len(df_copy) if len(df_copy) > 0 else 0
+
+        # 判断是否通过验证
+        is_valid = (total_errors == 0 and anomaly_ratio <= DataProviderConfig.MAX_ANOMALY_RATIO)
+
+        result = ValidationResult(
+            is_valid=is_valid,
+            repaired_count=total_repaired,
+            error_count=total_errors,
+            warnings=warnings,
+            repair_stats=repair_stats,
+            anomaly_ratio=anomaly_ratio
+        )
+
+        return is_valid, df_copy, result
 
 
 class TimezoneConverter:
@@ -476,12 +686,30 @@ class StockDataProvider(BaseDataProvider):
             # 标准化列名
             df = self._standardize_columns(df, period)
 
-            # 数据验证
-            if not DataValidator.validate_price_data(df):
+            # 智能数据验证与修复
+            is_valid, df, validation_result = DataValidator.validate_price_data_with_repair(df, period)
+
+            # 记录验证结果
+            self.logger.info(f'数据验证完成: {ticker} ({period}) - 状态: {"通过" if is_valid else "失败"}')
+
+            if not is_valid:
                 self.logger.error(f"数据验证失败，股票代码: {ticker}, 周期: {period}")
+                self.logger.error(f"验证详情: 错误数={validation_result.error_count}, 异常比例={validation_result.anomaly_ratio:.2%}")
                 return None
 
-            self.logger.info(f"成功获取并验证了 {ticker} 的 {period} 数据，共 {len(df)} 条记录")
+            # 记录修复信息
+            if validation_result.repaired_count > 0:
+                self.logger.info(f'修复统计: 总计{validation_result.repaired_count}条记录')
+                for repair_type, count in validation_result.repair_stats.items():
+                    if count > 0:
+                        self.logger.info(f'  - {repair_type}: {count}条')
+
+            # 记录数据质量警告
+            if validation_result.warnings:
+                for warning in validation_result.warnings:
+                    self.logger.warning(f'数据质量警告: {warning}')
+
+            self.logger.info(f"成功获取并验证了 {ticker} 的 {period} 数据，共 {len(df)} 条记录，质量分数: {validation_result.quality_score:.2f}")
 
             df['ticker'] = ticker
             return df

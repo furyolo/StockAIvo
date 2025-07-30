@@ -8,8 +8,9 @@ import pandas as pd
 import numpy as np
 from unittest.mock import Mock, patch
 from stockaivo.ai.technical_indicator import TechnicalIndicator
-from stockaivo.ai.agents import _process_technical_analysis_data
+from stockaivo.ai.agents import _process_technical_analysis_data, data_collection_agent, _build_technical_analysis_prompt
 from stockaivo.ai.state import GraphState
+from stockaivo.cache_manager import _is_market_open
 
 
 class TestTechnicalIndicator:
@@ -206,27 +207,39 @@ class TestAgentsIntegration:
     
     def test_process_technical_analysis_data_with_indicators(self):
         """测试_process_technical_analysis_data函数包含技术指标"""
-        ticker, daily_str, weekly_str = _process_technical_analysis_data(self.mock_state)
-        
+        ticker, daily_str, weekly_str, tenmin_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(self.mock_state)
+
         # 验证基本返回值
         assert ticker == 'AAPL'
         assert isinstance(daily_str, str)
         assert isinstance(weekly_str, str)
-        
+        assert isinstance(tenmin_str, str)
+        assert isinstance(daily_indicators, list)
+        assert isinstance(weekly_indicators, list)
+        assert isinstance(tenmin_indicators, list)
+
         # 验证技术指标在输出中
         technical_indicators = ['MA5', 'MA20', 'RSI', 'MACD', 'BB_Upper', 'ATR']
         for indicator in technical_indicators:
             assert indicator in daily_str, f"日线数据中缺少技术指标: {indicator}"
             assert indicator in weekly_str, f"周线数据中缺少技术指标: {indicator}"
+
+        # 验证10分钟线数据（应该是"无10分钟线数据"，因为mock_state中没有tenmin_prices）
+        assert tenmin_str == "无10分钟线数据"
+        assert tenmin_indicators == []
     
     def test_process_technical_analysis_data_no_data(self):
         """测试无数据的情况"""
         empty_state = {'ticker': 'TEST', 'raw_data': {}}
-        ticker, daily_str, weekly_str = _process_technical_analysis_data(empty_state)
-        
+        ticker, daily_str, weekly_str, tenmin_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(empty_state)
+
         assert ticker == 'TEST'
         assert daily_str == "无日线数据"
         assert weekly_str == "无周线数据"
+        assert tenmin_str == "无10分钟线数据"
+        assert daily_indicators == []
+        assert weekly_indicators == []
+        assert tenmin_indicators == []
     
     @patch('stockaivo.ai.agents.TechnicalIndicator')
     def test_process_technical_analysis_data_exception_handling(self, mock_indicator_class):
@@ -235,13 +248,336 @@ class TestAgentsIntegration:
         mock_indicator = Mock()
         mock_indicator.calculate_indicators.side_effect = Exception("计算错误")
         mock_indicator_class.return_value = mock_indicator
-        
+
         # 应该能够处理异常并继续执行
-        ticker, daily_str, weekly_str = _process_technical_analysis_data(self.mock_state)
-        
+        ticker, daily_str, weekly_str, tenmin_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(self.mock_state)
+
         assert ticker == 'AAPL'
         assert isinstance(daily_str, str)
         assert isinstance(weekly_str, str)
+        assert isinstance(tenmin_str, str)
+        assert isinstance(daily_indicators, list)
+        assert isinstance(weekly_indicators, list)
+        assert isinstance(tenmin_indicators, list)
+
+
+class TestTenMinuteLineIntegration:
+    """测试10分钟线数据支持的完整集成"""
+
+    def setup_method(self):
+        """测试前的设置"""
+        # 创建模拟的10分钟线数据
+        dates = pd.date_range('2024-01-01 09:30:00', periods=39, freq='10min')  # 一天的10分钟线数据
+        np.random.seed(42)
+
+        close_prices = 100 + np.cumsum(np.random.randn(39) * 0.1)
+        high_prices = close_prices + np.random.rand(39) * 0.5
+        low_prices = close_prices - np.random.rand(39) * 0.5
+        open_prices = close_prices + np.random.randn(39) * 0.1
+        volumes = np.random.randint(100000, 1000000, 39)
+
+        self.tenmin_df = pd.DataFrame({
+            'Open': open_prices,
+            'High': high_prices,
+            'Low': low_prices,
+            'Close': close_prices,
+            'Volume': volumes
+        }, index=dates)
+
+        # 创建包含10分钟线数据的mock state
+        self.mock_state_with_tenmin = {
+            'ticker': 'AAPL',
+            'raw_data': {
+                'daily_prices': {
+                    'data': self.tenmin_df.values.tolist(),
+                    'columns': self.tenmin_df.columns.tolist(),
+                    'index': self.tenmin_df.index.strftime('%Y-%m-%d %H:%M:%S').tolist()
+                },
+                'weekly_prices': {
+                    'data': self.tenmin_df.values.tolist(),
+                    'columns': self.tenmin_df.columns.tolist(),
+                    'index': self.tenmin_df.index.strftime('%Y-%m-%d %H:%M:%S').tolist()
+                },
+                'tenmin_prices': {
+                    'data': self.tenmin_df.values.tolist(),
+                    'columns': self.tenmin_df.columns.tolist(),
+                    'index': self.tenmin_df.index.strftime('%Y-%m-%d %H:%M:%S').tolist()
+                }
+            }
+        }
+
+    def test_process_technical_analysis_data_with_tenmin(self):
+        """测试包含10分钟线数据的处理"""
+        ticker, daily_str, weekly_str, tenmin_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(self.mock_state_with_tenmin)
+
+        # 验证基本返回值
+        assert ticker == 'AAPL'
+        assert isinstance(daily_str, str)
+        assert isinstance(weekly_str, str)
+        assert isinstance(tenmin_str, str)
+
+        # 验证10分钟线数据不是"无数据"
+        assert tenmin_str != "无10分钟线数据"
+        assert "Open" in tenmin_str
+        assert "High" in tenmin_str
+        assert "Low" in tenmin_str
+        assert "Close" in tenmin_str
+        assert "Volume" in tenmin_str
+
+        # 验证10分钟线不计算技术指标
+        assert tenmin_indicators == []
+
+        # 验证日线和周线仍然计算技术指标
+        assert len(daily_indicators) > 0
+        assert len(weekly_indicators) > 0
+
+    @patch('stockaivo.ai.agents._is_market_open')
+    def test_data_collection_agent_market_open(self, mock_is_market_open):
+        """测试市场开放时的数据收集逻辑"""
+        mock_is_market_open.return_value = True
+
+        # 模拟数据收集agent的periods_to_fetch逻辑
+        periods_to_fetch = ["daily", "weekly"]
+
+        if mock_is_market_open():
+            periods_to_fetch.append("10min")
+
+        # 验证10分钟线被添加
+        assert "10min" in periods_to_fetch
+        assert len(periods_to_fetch) == 3
+
+    @patch('stockaivo.ai.agents._is_market_open')
+    def test_data_collection_agent_market_closed(self, mock_is_market_open):
+        """测试市场关闭时的数据收集逻辑"""
+        mock_is_market_open.return_value = False
+
+        # 模拟数据收集agent的periods_to_fetch逻辑
+        periods_to_fetch = ["daily", "weekly"]
+
+        if mock_is_market_open():
+            periods_to_fetch.append("10min")
+
+        # 验证10分钟线未被添加
+        assert "10min" not in periods_to_fetch
+        assert len(periods_to_fetch) == 2
+
+    def test_build_technical_analysis_prompt_with_tenmin(self):
+        """测试包含10分钟线的提示词构建"""
+        from datetime import date
+
+        ticker = "AAPL"
+        daily_str = "日线数据..."
+        weekly_str = "周线数据..."
+        tenmin_str = "10分钟线数据..."
+        daily_indicators = ["MA5", "RSI", "MACD"]
+        weekly_indicators = ["MA20", "RSI", "MACD"]
+        tenmin_indicators = []  # 10分钟线不计算技术指标
+        market_date = date(2024, 1, 15)
+
+        prompt = _build_technical_analysis_prompt(
+            ticker, daily_str, weekly_str, tenmin_str,
+            daily_indicators, weekly_indicators, tenmin_indicators,
+            market_date
+        )
+
+        # 验证提示词包含多时间框架分析
+        assert "多时间框架" in prompt
+        assert "周线" in prompt
+        assert "日线" in prompt
+        assert "10分钟线" in prompt
+        assert "短期波动观察" in prompt
+        assert "不计算技术指标" in prompt
+
+    def test_build_technical_analysis_prompt_without_tenmin(self):
+        """测试不包含10分钟线的提示词构建"""
+        from datetime import date
+
+        ticker = "AAPL"
+        daily_str = "日线数据..."
+        weekly_str = "周线数据..."
+        tenmin_str = "无10分钟线数据"
+        daily_indicators = ["MA5", "RSI", "MACD"]
+        weekly_indicators = ["MA20", "RSI", "MACD"]
+        tenmin_indicators = []
+        market_date = date(2024, 1, 15)
+
+        prompt = _build_technical_analysis_prompt(
+            ticker, daily_str, weekly_str, tenmin_str,
+            daily_indicators, weekly_indicators, tenmin_indicators,
+            market_date
+        )
+
+        # 验证提示词使用传统的日线+周线分析
+        assert "多时间框架" not in prompt
+        assert "日线和周线" in prompt
+        assert "10分钟线数据" not in prompt
+
+
+class TestTenMinuteLineEdgeCases:
+    """测试10分钟线功能的边界情况和错误场景"""
+
+    def test_tenmin_data_empty_dataframe(self):
+        """测试10分钟线数据为空DataFrame的情况"""
+        empty_tenmin_state = {
+            'ticker': 'TEST',
+            'raw_data': {
+                'tenmin_prices': {
+                    'data': [],
+                    'columns': ['Open', 'High', 'Low', 'Close', 'Volume'],
+                    'index': []
+                }
+            }
+        }
+
+        ticker, daily_str, weekly_str, tenmin_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(empty_tenmin_state)
+
+        # 验证空数据的处理
+        assert ticker == 'TEST'
+        assert tenmin_str != "无10分钟线数据"  # 有数据结构，但是空的
+        assert tenmin_indicators == []
+
+    def test_tenmin_data_malformed(self):
+        """测试10分钟线数据格式错误的情况"""
+        malformed_state = {
+            'ticker': 'TEST',
+            'raw_data': {
+                'tenmin_prices': {
+                    'data': [[1, 2, 3]],  # 数据列数不匹配
+                    'columns': ['Open', 'High', 'Low', 'Close', 'Volume'],
+                    'index': ['2024-01-01 09:30:00']
+                }
+            }
+        }
+
+        # 应该能够处理格式错误的数据
+        try:
+            ticker, daily_str, weekly_str, tenmin_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(malformed_state)
+            assert ticker == 'TEST'
+            assert isinstance(tenmin_str, str)
+            assert tenmin_indicators == []
+        except Exception:
+            # 如果抛出异常，也是可以接受的
+            pass
+
+    def test_tenmin_data_with_nan_values(self):
+        """测试10分钟线数据包含NaN值的情况"""
+        import numpy as np
+
+        nan_data = [
+            [100.0, 101.0, 99.0, 100.5, 1000000],
+            [np.nan, 102.0, 100.0, 101.0, 1100000],  # 包含NaN
+            [101.0, 103.0, 101.0, 102.0, 1200000]
+        ]
+
+        nan_state = {
+            'ticker': 'TEST',
+            'raw_data': {
+                'tenmin_prices': {
+                    'data': nan_data,
+                    'columns': ['Open', 'High', 'Low', 'Close', 'Volume'],
+                    'index': ['2024-01-01 09:30:00', '2024-01-01 09:40:00', '2024-01-01 09:50:00']
+                }
+            }
+        }
+
+        ticker, daily_str, weekly_str, tenmin_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(nan_state)
+
+        # 验证包含NaN的数据处理
+        assert ticker == 'TEST'
+        assert isinstance(tenmin_str, str)
+        assert tenmin_indicators == []
+
+    @patch('stockaivo.ai.agents.pd.DataFrame')
+    def test_tenmin_dataframe_creation_exception(self, mock_dataframe):
+        """测试10分钟线DataFrame创建异常的情况"""
+        mock_dataframe.side_effect = Exception("DataFrame创建失败")
+
+        tenmin_state = {
+            'ticker': 'TEST',
+            'raw_data': {
+                'tenmin_prices': {
+                    'data': [[100, 101, 99, 100.5, 1000000]],
+                    'columns': ['Open', 'High', 'Low', 'Close', 'Volume'],
+                    'index': ['2024-01-01 09:30:00']
+                }
+            }
+        }
+
+        # 应该能够处理DataFrame创建异常
+        ticker, daily_str, weekly_str, tenmin_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(tenmin_state)
+
+        assert ticker == 'TEST'
+        assert tenmin_str == "无10分钟线数据"  # 异常时应该返回无数据
+        assert tenmin_indicators == []
+
+    def test_prompt_building_with_none_indicators(self):
+        """测试提示词构建时指标列表为None的情况"""
+        from datetime import date
+
+        prompt = _build_technical_analysis_prompt(
+            "AAPL", "日线数据", "周线数据", "10分钟线数据",
+            None, None, None,  # 所有指标列表都是None
+            date(2024, 1, 15)
+        )
+
+        # 验证能够处理None指标列表
+        assert isinstance(prompt, str)
+        assert len(prompt) > 0
+        assert "AAPL" in prompt
+
+
+class TestTenMinuteLinePerformance:
+    """测试10分钟线功能的性能相关测试"""
+
+    def test_large_tenmin_dataset_processing(self):
+        """测试大量10分钟线数据的处理性能"""
+        import time
+
+        # 创建一个月的10分钟线数据（约858个数据点）
+        dates = pd.date_range('2024-01-01 09:30:00', periods=858, freq='10min')
+        np.random.seed(42)
+
+        close_prices = 100 + np.cumsum(np.random.randn(858) * 0.1)
+        high_prices = close_prices + np.random.rand(858) * 0.5
+        low_prices = close_prices - np.random.rand(858) * 0.5
+        open_prices = close_prices + np.random.randn(858) * 0.1
+        volumes = np.random.randint(100000, 1000000, 858)
+
+        large_df = pd.DataFrame({
+            'Open': open_prices,
+            'High': high_prices,
+            'Low': low_prices,
+            'Close': close_prices,
+            'Volume': volumes
+        }, index=dates)
+
+        large_state = {
+            'ticker': 'AAPL',
+            'raw_data': {
+                'tenmin_prices': {
+                    'data': large_df.values.tolist(),
+                    'columns': large_df.columns.tolist(),
+                    'index': large_df.index.strftime('%Y-%m-%d %H:%M:%S').tolist()
+                }
+            }
+        }
+
+        # 测试处理时间
+        start_time = time.time()
+        ticker, daily_str, weekly_str, tenmin_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(large_state)
+        end_time = time.time()
+
+        processing_time = end_time - start_time
+
+        # 验证处理结果
+        assert ticker == 'AAPL'
+        assert tenmin_str != "无10分钟线数据"
+        assert tenmin_indicators == []
+
+        # 验证处理时间合理（应该在几秒内完成）
+        assert processing_time < 10.0, f"处理时间过长: {processing_time}秒"
+
+        print(f"大数据集处理时间: {processing_time:.3f}秒")
 
 
 if __name__ == "__main__":

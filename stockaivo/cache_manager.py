@@ -251,7 +251,7 @@ class CacheManager:
                 elif period == "minute":
                     # 分时数据动态TTL：交易时间内短缓存，交易时间外长缓存
                     if _is_market_open():
-                        ttl = 300  # 5分钟，交易时间内数据更新频繁
+                        ttl = 120  # 2分钟，交易时间内数据更新频繁
                         logger.debug(f"分时数据缓存：交易时间内，设置短TTL: {ttl}秒")
                     else:
                         ttl = 3600  # 1小时，交易时间外数据相对稳定

@@ -14,8 +14,7 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import Column, String, Integer, DateTime, Date, Numeric, BigInteger, Text, ForeignKey, UniqueConstraint, Index, MetaData
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import declarative_base, relationship
 
 # 定义元数据，并指定 schema
 metadata_obj = MetaData(schema="public")

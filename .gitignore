@@ -27,7 +27,6 @@ desktop.ini
 
 # Environment variables
 .env
-.env.*
 
 # Testing
 .pytest_cache/

@@ -1,152 +1,690 @@
-### **项目文档：StockAIvo \- 智能美股数据与分析平台后端**
+# StockAIvo 技术架构文档
 
-#### **1\. 项目概述**
+## 1. 项目概述与技术定位
 
-StockAIvo 是一个面向美国股票市场的智能数据与分析后端服务。项目旨在通过现代化的技术栈，为前端应用或研究人员提供稳定、高效的股票数据接口，并利用大型语言模型（LLM）和多 Agent 协同系统，提供深度的、多视角的投资决策辅助。
+### 1.1 项目定位
+StockAIvo 是一个现代化的**全栈美股数据与分析平台**，采用前后端分离架构，为投资者和研究人员提供专业级的股票数据服务和AI驱动的智能分析。
 
-* **项目名称:** StockAIvo  
-* **核心目标:**  
-  1. 提供按需、多时间粒度（日、周、小时）的美国股票数据。  
-  2. 实现智能数据缓存与持久化机制，优化数据获取效率与成本。  
-  3. 构建一个多 Agent 协同的 AI 系统，为投资决策提供智能化分析和建议。  
-* **技术栈:**  
-  * **Web 框架:** FastAPI  
-  * **数据库:** PostgreSQL  
-  * **缓存:** Redis  
-  * **ORM:** SQLAlchemy  
-  * **数据源:** AKShare  
-  * **核心语言:** Python
-  * **项目依赖与运行:** 使用 uv 进行高速的依赖管理和脚本运行，替代传统的 pip 和 venv
+### 1.2 核心技术创新
+- **智能数据管理**：三级缓存策略（Redis → PostgreSQL → AKShare）确保高效可靠的数据获取
+- **AI分析引擎**：基于LangGraph的多Agent并行分析架构，提供技术分析、基本面分析和新闻情感分析
+- **现代化界面**：集成TradingView Lightweight Charts的专业级用户体验
 
-#### **2\. 开发环境与执行规范**
+### 1.3 目标用户
+- **开发者**：需要集成股票数据API的应用开发者
+- **量化研究员**：需要历史数据和AI分析的研究人员
+- **投资者**：需要专业分析工具的个人和机构投资者
 
-* **依赖管理:** 项目的所有 Python 依赖均在 `pyproject.toml` 文件中进行声明。  
-  * **环境初始化:** 首次克隆或设置项目后，开发者应在项目根目录运行以下命令来创建虚拟环境并安装所有依赖：
-      ```shell
-    uv sync --default-index https://pypi.tuna.tsinghua.edu.cn/simple
-	``` 
-  * **核心执行命令:** **重要注意事项：** 根据项目规范，所有 Python 程序（包括Web服务、数据处理脚本等）都**必须**通过 `uv run` 命令启动。这确保了所有代码都在由 `uv` 管理的、包含正确依赖的虚拟环境中执行。  
-  * **启动 FastAPI 服务示例:**  
-      ```shell
-    # 在开发环境中启动，并开启热重载
+## 2. 系统架构设计
+
+### 2.1 整体架构模式
+采用**分层架构模式**结合**微服务化设计思想**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    表现层 (Presentation Layer)                │
+│  React 19 + TypeScript + TailwindCSS 4 + shadcn/ui        │
+│  TradingView Lightweight Charts                            │
+└─────────────────────────────────────────────────────────────┘
+                              │ HTTP/WebSocket
+┌─────────────────────────────────────────────────────────────┐
+│                      API层 (API Layer)                      │
+│  FastAPI + Pydantic + 依赖注入 + 异常处理                    │
+│  RESTful API + Server-Sent Events                         │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                   业务逻辑层 (Business Layer)                 │
+│  数据服务 │ 搜索服务 │ AI分析引擎 │ 缓存管理                   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                   数据访问层 (Data Access Layer)              │
+│  SQLAlchemy 2.0 ORM + Redis Client                        │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                   数据存储层 (Storage Layer)                  │
+│  PostgreSQL (主数据库) + Redis (缓存) + AKShare (外部API)     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 2.2 核心设计原则
+- **模块化设计**：清晰的模块边界和接口定义
+- **依赖注入**：基于 `Annotated` 类型的现代化依赖注入模式
+- **异常处理**：分层异常类设计和全局处理器
+- **类型安全**：完整的类型注解和MyPy类型检查
+- **缓存优先**：智能缓存策略减少外部API调用
+
+## 3. 核心技术栈
+
+### 3.1 后端技术栈
+| 组件         | 技术                    | 版本      | 用途               |
+| ------------ | ----------------------- | --------- | ------------------ |
+| **Web框架**  | FastAPI                 | 0.115.13+ | 高性能异步Web框架  |
+| **数据库**   | PostgreSQL              | 15+       | 主数据存储         |
+| **缓存**     | Redis                   | 7+        | 高速缓存和消息队列 |
+| **ORM**      | SQLAlchemy              | 2.0.41+   | 现代化ORM框架      |
+| **AI工作流** | LangGraph               | 0.4.8+    | AI Agent编排引擎   |
+| **LLM框架**  | LangChain               | 0.3.15+   | 大语言模型集成     |
+| **数据源**   | AKShare                 | 1.15.0+   | 美股数据API        |
+| **交易日历** | pandas-market-calendars | 5.1.1+    | 交易日历管理       |
+
+### 3.2 前端技术栈
+| 组件         | 技术                           | 版本   | 用途                 |
+| ------------ | ------------------------------ | ------ | -------------------- |
+| **框架**     | React                          | 19.1.0 | 现代化前端框架       |
+| **语言**     | TypeScript                     | 5.8.3  | 类型安全的JavaScript |
+| **构建工具** | Vite                           | 7.0.0  | 快速构建工具         |
+| **样式系统** | TailwindCSS                    | 4.1.11 | 原子化CSS框架        |
+| **UI组件**   | shadcn/ui                      | latest | 现代化组件库         |
+| **图表库**   | TradingView Lightweight Charts | 5.0.8  | 专业金融图表         |
+
+### 3.3 开发工具链
+| 工具               | 技术              | 用途                     |
+| ------------------ | ----------------- | ------------------------ |
+| **Python依赖管理** | uv                | 替代pip/venv的现代化工具 |
+| **Node.js包管理**  | pnpm              | 高效的包管理器           |
+| **Python类型检查** | MyPy              | 静态类型检查             |
+| **前端代码质量**   | ESLint + Prettier | 代码规范和格式化         |
+| **测试框架**       | pytest + Vitest   | 后端和前端测试           |
+
+## 4. 后端架构详解
+
+### 4.1 API路由设计
+采用模块化路由器设计，每个路由器负责特定的业务领域：
+
+#### 4.1.1 股票数据API (`routers/stocks.py`)
+```python
+# 核心端点设计
+GET  /api/stocks/{symbol}/daily     # 获取日线数据
+GET  /api/stocks/{symbol}/weekly    # 获取周线数据
+GET  /api/stocks/{symbol}/10min     # 获取10分钟线数据
+GET  /api/stocks/{symbol}/1min      # 获取分钟线数据
+GET  /api/stocks/{symbol}/news      # 获取股票新闻
+```
+
+**特性**：
+- 支持多时间粒度数据查询
+- 智能日期范围处理（交易日历感知）
+- 统一的响应格式和异常处理
+- 基于 `DatabaseDep` 的依赖注入
+
+#### 4.1.2 AI分析API (`routers/ai.py`)
+```python
+# AI分析端点
+POST /api/ai/analyze               # 启动AI分析
+GET  /api/ai/analyze/{task_id}     # 获取分析状态
+GET  /api/ai/stream/{task_id}      # 流式获取分析结果
+```
+
+**特性**：
+- 支持顺序和并行两种分析模式
+- Server-Sent Events流式响应
+- 实时进度反馈和错误处理
+- 可配置的AI模型选择
+
+#### 4.1.3 搜索API (`routers/search.py`)
+```python
+# 智能搜索端点
+GET /api/search/stocks             # 股票搜索建议
+GET /api/search/suggestions        # 实时搜索建议
+```
+
+**特性**：
+- 模糊匹配算法（symbol、name、cname）
+- 实时搜索建议
+- 缓存优化的搜索性能
+
+### 4.2 数据服务层架构
+
+#### 4.2.1 三级缓存策略 (`data_service.py`)
+```
+用户请求 → Redis缓存 → PostgreSQL数据库 → AKShare API
+    ↓         ↓            ↓              ↓
+  立即返回   缓存+返回    数据库+缓存+返回  获取+存储+缓存+返回
+```
+
+**核心特性**：
+- **智能缓存TTL**：交易时间内外采用不同的缓存策略
+- **数据完整性检查**：自动检测和补全缺失数据
+- **异步持久化**：使用PENDING_SAVE缓存机制
+- **交易日历感知**：自动跳过非交易日
+
+#### 4.2.2 多时间粒度支持
+| 时间粒度     | 存储策略         | 缓存策略  | 数据来源    |
+| ------------ | ---------------- | --------- | ----------- |
+| **日线**     | PostgreSQL持久化 | Redis缓存 | AKShare API |
+| **周线**     | PostgreSQL持久化 | Redis缓存 | AKShare API |
+| **10分钟线** | 仅缓存           | Redis缓存 | 分钟线聚合  |
+| **分钟线**   | 仅缓存           | Redis缓存 | AKShare API |
+| **新闻**     | 异步持久化       | Redis缓存 | AKShare API |
+
+### 4.3 AI分析引擎架构
+
+#### 4.3.1 LangGraph工作流设计
+```
+数据收集Agent
+    ↓
+┌─────────────────────────────────────────┐
+│  并行执行 (Parallel Execution)           │
+├─────────────┬─────────────┬─────────────┤
+│ 技术分析Agent │ 基本面分析Agent │ 新闻情感Agent │
+└─────────────┴─────────────┴─────────────┘
+    ↓
+综合分析Agent
+    ↓
+最终分析报告
+```
+
+#### 4.3.2 Agent详细设计
+| Agent               | 功能             | 输入               | 输出                       |
+| ------------------- | ---------------- | ------------------ | -------------------------- |
+| **数据收集Agent**   | 获取分析所需数据 | 股票代码、时间范围 | 股票数据、新闻数据         |
+| **技术分析Agent**   | 计算技术指标     | OHLCV数据          | MA、RSI、MACD、布林带、ATR |
+| **基本面分析Agent** | 基本面评估       | 公司信息、财务数据 | 估值分析、成长性评估       |
+| **新闻情感Agent**   | 情感分析         | 新闻文本           | 情感评分、关键事件         |
+| **综合分析Agent**   | 整合分析结果     | 所有Agent输出      | 最终投资建议               |
+
+#### 4.3.3 技术指标计算 (`technical_indicator.py`)
+```python
+class TechnicalIndicator:
+    def calculate_ma(self, data: pd.DataFrame, window: int) -> pd.Series
+    def calculate_rsi(self, data: pd.DataFrame, window: int = 14) -> pd.Series
+    def calculate_macd(self, data: pd.DataFrame) -> Dict[str, pd.Series]
+    def calculate_bollinger_bands(self, data: pd.DataFrame) -> Dict[str, pd.Series]
+    def calculate_atr(self, data: pd.DataFrame, window: int = 14) -> pd.Series
+```
+
+### 4.4 缓存管理架构 (`cache_manager.py`)
+
+#### 4.4.1 缓存策略设计
+```python
+# 缓存键命名规范
+stock_data:{symbol}:{period}:{date_range}    # 股票数据缓存
+search_results:{query_hash}                  # 搜索结果缓存
+pending_save:{symbol}:{period}               # 待持久化数据
+ai_analysis:{task_id}                        # AI分析结果缓存
+```
+
+#### 4.4.2 智能TTL策略
+- **交易时间内**：短TTL（5-15分钟），确保数据实时性
+- **交易时间外**：长TTL（1-4小时），减少不必要的API调用
+- **历史数据**：超长TTL（24小时+），历史数据变化频率低
+- **搜索结果**：中等TTL（30分钟），平衡性能和准确性
+
+## 5. 前端架构详解
+
+### 5.1 组件架构设计
+采用现代化的React组件架构，基于功能模块进行组织：
+
+#### 5.1.1 主应用组件 (`App.tsx`)
+```typescript
+// 主应用结构
+function App() {
+  return (
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="container mx-auto px-4 py-8">
+        <StockSearch />
+        <TradingViewChart />
+        <AIAnalysis />
+      </main>
+    </div>
+  )
+}
+```
+
+**职责**：
+- 全局状态管理和布局控制
+- 主题和样式系统初始化
+- 路由和导航管理
+- 错误边界和异常处理
+
+#### 5.1.2 智能搜索组件 (`StockSearch.tsx`)
+```typescript
+interface StockSearchProps {
+  onStockSelect: (symbol: string) => void
+  placeholder?: string
+}
+
+// 核心功能
+- 实时搜索建议 (debounced input)
+- 模糊匹配算法 (symbol, name, cname)
+- 键盘导航支持 (↑↓ 选择, Enter 确认)
+- 搜索历史记录
+```
+
+**特性**：
+- **实时建议**：300ms防抖，减少API调用
+- **智能匹配**：优先匹配symbol，其次name和cname
+- **缓存优化**：本地缓存搜索结果，提升用户体验
+- **无障碍支持**：完整的键盘导航和屏幕阅读器支持
+
+#### 5.1.3 图表组件 (`TradingViewChart.tsx`)
+```typescript
+interface ChartProps {
+  symbol: string
+  timeframe: '1D' | '1W' | '10m' | '1m'
+  data: CandlestickData[]
+}
+
+// TradingView Lightweight Charts 集成
+- 专业K线图表显示
+- 多时间粒度切换
+- 技术指标叠加
+- 交互式图表操作
+```
+
+**特性**：
+- **专业图表**：基于TradingView Lightweight Charts
+- **多时间粒度**：支持日线、周线、10分钟线、分钟线
+- **技术指标**：MA、RSI、MACD、布林带等
+- **响应式设计**：适配不同屏幕尺寸
+
+#### 5.1.4 AI分析组件 (`AIAnalysis.tsx`)
+```typescript
+interface AIAnalysisProps {
+  symbol: string
+  mode: 'sequential' | 'parallel'
+}
+
+// AI分析界面
+- 分析模式选择 (顺序/并行)
+- 实时进度显示
+- 流式结果展示
+- 分析历史记录
+```
+
+**特性**：
+- **流式显示**：Server-Sent Events实时更新
+- **并行模式**：多Agent分析结果并行展示
+- **进度反馈**：实时显示分析进度和状态
+- **结果缓存**：本地缓存分析结果，支持历史查看
+
+### 5.2 状态管理策略
+
+#### 5.2.1 React Hooks模式
+```typescript
+// 自定义Hooks设计
+const useStockData = (symbol: string, timeframe: string) => {
+  const [data, setData] = useState<StockData[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // 数据获取逻辑
+  // 缓存管理
+  // 错误处理
+}
+
+const useAIAnalysis = (symbol: string) => {
+  // AI分析状态管理
+  // 流式数据处理
+  // 任务状态跟踪
+}
+```
+
+#### 5.2.2 数据流设计
+```
+用户交互 → 组件状态更新 → API调用 → 数据处理 → UI更新
+    ↓           ↓            ↓        ↓         ↓
+  搜索输入    loading状态   HTTP请求  数据转换   图表渲染
+```
+
+### 5.3 UI系统设计
+
+#### 5.3.1 设计系统 (shadcn/ui + TailwindCSS)
+```typescript
+// 组件库使用
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Card } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+
+// 主题配置
+const theme = {
+  colors: {
+    primary: "hsl(var(--primary))",
+    secondary: "hsl(var(--secondary))",
+    background: "hsl(var(--background))",
+    foreground: "hsl(var(--foreground))",
+  }
+}
+```
+
+#### 5.3.2 响应式设计
+- **移动优先**：基于TailwindCSS的响应式断点
+- **自适应布局**：Flexbox和Grid布局系统
+- **触摸友好**：移动设备优化的交互设计
+- **性能优化**：组件懒加载和代码分割
+
+## 6. 数据库设计
+
+### 6.1 核心表结构
+
+#### 6.1.1 股票代码映射表 (`stock_symbols`)
+```sql
+CREATE TABLE stock_symbols (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(10) NOT NULL,           -- 简化代码 (如 AAPL)
+    fullsymbol VARCHAR(20) NOT NULL,       -- 完整代码 (如 AAPL.US)
+    name VARCHAR(255),                     -- 英文名称
+    cname VARCHAR(255),                    -- 中文名称
+    exchange VARCHAR(50),                  -- 交易所
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+
+    UNIQUE(symbol),
+    UNIQUE(fullsymbol)
+);
+
+-- 索引优化
+CREATE INDEX idx_stock_symbols_symbol ON stock_symbols(symbol);
+CREATE INDEX idx_stock_symbols_name ON stock_symbols(name);
+```
+
+#### 6.1.2 股票价格表 (`stock_prices_daily/weekly`)
+```sql
+CREATE TABLE stock_prices_daily (
+    ticker VARCHAR(20) NOT NULL,
+    date DATE NOT NULL,
+    open DECIMAL(10,4) NOT NULL,
+    high DECIMAL(10,4) NOT NULL,
+    low DECIMAL(10,4) NOT NULL,
+    close DECIMAL(10,4) NOT NULL,
+    volume BIGINT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+
+    PRIMARY KEY (ticker, date)
+);
+
+-- 性能优化索引
+CREATE INDEX idx_stock_prices_daily_ticker ON stock_prices_daily(ticker);
+CREATE INDEX idx_stock_prices_daily_date ON stock_prices_daily(date);
+```
+
+#### 6.1.3 新闻数据表 (`stock_news`)
+```sql
+CREATE TABLE stock_news (
+    id SERIAL PRIMARY KEY,
+    ticker VARCHAR(20) NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT,
+    url VARCHAR(500),
+    publish_time TIMESTAMP,
+    sentiment_score DECIMAL(3,2),          -- 情感评分 (-1 到 1)
+    created_at TIMESTAMP DEFAULT NOW(),
+
+    FOREIGN KEY (ticker) REFERENCES stock_symbols(symbol)
+);
+
+-- 查询优化索引
+CREATE INDEX idx_stock_news_ticker ON stock_news(ticker);
+CREATE INDEX idx_stock_news_publish_time ON stock_news(publish_time);
+```
+
+### 6.2 索引策略
+
+#### 6.2.1 查询优化索引
+- **复合索引**：`(ticker, date)` 优化时间范围查询
+- **覆盖索引**：包含常用查询字段，减少回表操作
+- **部分索引**：针对活跃股票的条件索引
+
+#### 6.2.2 搜索优化
+```sql
+-- 全文搜索索引 (PostgreSQL)
+CREATE INDEX idx_stock_symbols_search
+ON stock_symbols
+USING gin(to_tsvector('english', name || ' ' || cname));
+
+-- 模糊匹配优化
+CREATE INDEX idx_stock_symbols_symbol_pattern
+ON stock_symbols(symbol varchar_pattern_ops);
+```
+
+## 7. 现代化架构模式
+
+### 7.1 依赖注入设计 (`dependencies.py`)
+```python
+from typing import Annotated
+from fastapi import Depends
+from sqlalchemy.orm import Session
+
+# 现代化类型别名
+DatabaseDep = Annotated[Session, Depends(get_database)]
+CacheDep = Annotated[Redis, Depends(get_redis)]
+ConfigDep = Annotated[Settings, Depends(get_settings)]
+
+# 使用示例
+async def get_stock_data(
+    symbol: str,
+    db: DatabaseDep,
+    cache: CacheDep,
+    config: ConfigDep
+) -> StockData:
+    # 业务逻辑实现
+    pass
+```
+
+### 7.2 异常处理架构 (`exceptions.py`)
+```python
+# 分层异常类设计
+class StockAIvoException(Exception):
+    """基础异常类"""
+    pass
+
+class ValidationException(StockAIvoException):
+    """数据验证异常"""
+    pass
+
+class DataServiceException(StockAIvoException):
+    """数据服务异常"""
+    pass
+
+class AIServiceException(StockAIvoException):
+    """AI服务异常"""
+    pass
+
+# 全局异常处理器
+@app.exception_handler(StockAIvoException)
+async def handle_stockaivo_exception(request, exc):
+    return JSONResponse(
+        status_code=400,
+        content={"error": str(exc), "type": type(exc).__name__}
+    )
+```
+
+### 7.3 中间件系统 (`middleware.py`)
+```python
+# 请求日志中间件
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+
+    logger.info(f"{request.method} {request.url} - {response.status_code} - {process_time:.3f}s")
+    return response
+
+# 性能监控中间件
+@app.middleware("http")
+async def performance_monitoring(request: Request, call_next):
+    # 慢请求检测和性能指标收集
+    pass
+```
+
+## 8. 开发环境与工具链
+
+### 8.1 现代化依赖管理
+
+#### 8.1.1 Python环境 (uv)
+```bash
+# 环境初始化
+uv sync --default-index https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 开发服务器启动
 uv run uvicorn main:app --reload
-	``` 
-  * **推荐实践:** 为了方便开发，建议在 `pyproject.toml` 文件中配置快捷脚本。
-        ```Ini, TOML
-   [tool.uv.scripts]
+
+# 脚本配置 (pyproject.toml)
+[tool.uv.scripts]
 dev = "uvicorn main:app --reload"
 start = "uvicorn main:app --host 0.0.0.0 --port 3227"
-	``` 
-  配置后，即可使用简化的命令启动服务：
-        ```shell
-# 启动开发服务器
-uv run dev
-	``` 
+test = "pytest tests/"
+lint = "mypy stockaivo/"
+```
 
-#### **3\. 系统架构**
+#### 8.1.2 前端环境 (pnpm)
+```bash
+# 依赖安装
+pnpm install
 
-系统主要由以下几个部分组成：
+# 开发服务器
+pnpm dev
 
-1. **API 层 (FastAPI):** 作为系统的入口，负责处理来自客户端（前端应用、分析脚本等）的 HTTP 请求。它解析请求参数，调用下层服务，并以 JSON 格式返回结果。  
-2. **业务逻辑层:** 包含数据处理、AI 分析等核心功能。  
-   * **数据服务模块:** 负责股票数据的获取、缓存和存储。  
-   * **AI Agent 模块:** 负责协调多个 AI Agent 完成复杂的分析任务。  
-3. **数据存储层:**  
-   * **PostgreSQL:** 作为主数据库，用于永久存储结构化的股票数据（如公司信息、日/周/小时 K线数据等）。  
-   * **Redis:** 作为高速缓存，临时存储从远程 API（AKShare）获取的、尚未入库的数据，同时也可用于缓存热点数据，降低数据库压力。  
-4. **外部服务:**  
-   * **AKShare:** 主要的第三方美股数据源。  
-   * **大型语言模型 (LLM) API:** 为 AI Agent 提供自然语言处理和分析能力（例如 OpenAI GPT 系列, Google Gemini 等）。
+# 构建生产版本
+pnpm build
 
-#### **4\. 核心功能与任务拆解**
+# 类型检查
+pnpm type-check
+```
 
-##### **功能一：智能数据获取与持久化**
+### 8.2 代码质量保证
 
-**目标:** 建立一个高效、智能的数据管道，采用“缓存优先策略 (Cache-First Strategy)”来平衡实时性、成本和数据一致性。数据获取遵循 **1. Redis 缓存 -> 2. PostgreSQL 数据库 -> 3. 远程 API (AKShare)** 的读取顺序。
+#### 8.2.1 Python代码质量
+```python
+# MyPy配置 (pyproject.toml)
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
 
-**任务拆解:**
+# pytest配置
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+```
 
-* **1.1 数据库模式设计 (PostgreSQL & SQLAlchemy)**  
-  * \[ \] 设计 stocks 表，用于存储股票基本信息（代码 ticker, 公司名称 company\_name, 上市交易所 exchange 等）。  
-  * \[ \] 设计 stock\_prices\_daily 表，存储日 K 线数据（ticker, date, open, high, low, close, volume）。  
-  * \[ \] 设计 stock\_prices\_weekly 表，存储周 K 线数据。
-  * \[ \] 使用 SQLAlchemy 创建对应的 ORM 模型。
-* **1.2 数据源封装 (AKShare)**  
-  * \[ \] 创建一个 data\_provider.py 模块。  
-  * \[ \] 参考 D:\\Coding\\stockai 项目，封装一个函数 fetch\_from\_akshare(ticker, period)，用于从 AKShare 获取指定股票、指定周期的数据。  
-  * \[ \] 做好异常处理，例如网络错误、无数据返回等情况。  
-* **1.3 Redis 缓存逻辑实现**  
-  * \[ \] 配置 Redis 连接。  
-  * \[ \] 实现一个函数 save\_to\_redis(ticker, data)，将从 AKShare 获取的数据以特定键（例如 pending\_save:{ticker}）存入 Redis。数据结构建议使用 Hash 或 String (JSON序列化)。  
-  * \[ \] 实现一个函数 get\_from\_redis()，用于检查并获取所有待入库的数据。  
-* **1.4 数据查询主逻辑**  
-  * \[ \] 实现核心函数 get\_stock\_data(ticker, period)。  
-  * \[ \] **逻辑流程 (缓存优先策略):**
-    1. **查询 Redis 缓存:** 首先根据 `ticker` 和 `period` 查询 Redis 缓存。如果命中，则直接返回数据。
-    2. **查询 PostgreSQL 数据库:** 如果缓存未命中，则查询 PostgreSQL 数据库。如果命中，返回数据并回填至缓存。
-    3. **查询远程 API:** 如果数据库仍未命中，则从远程 API (AKShare) 获取数据。
-    4. **数据更新与返回:** 从 API 获取的新数据将返回给用户，并异步写入数据库和缓存以备将来使用。
-* **1.5 异步数据持久化**  
-  * \[ \] **后端部分:** 创建一个特殊的 API 端点，例如 GET /check-pending-data。前端可以在用户空闲时轮询这个接口。该接口会检查 Redis 中是否有待入库的数据，如果有，则返回 {"pending": true}。  
-  * \[ \] **前端交互逻辑 (需要与前端协同):**  
-    * 前端应用检测到用户空闲（如无鼠标键盘操作超过 N 秒）。  
-    * 调用 GET /check-pending-data 接口。  
-    * 如果返回 {"pending": true}，则弹窗提示：“检测到新的股票数据，系统将在10秒后自动保存。您可以\[立即保存\]或\[取消\]。”  
-  * \[ \] **后端处理用户选择:**  
-    * 创建 POST /persist-data 接口。当前端用户点击“立即保存”或倒计时结束时，调用此接口。该接口负责将 Redis 中的所有待处理数据取出，并批量写入 PostgreSQL，成功后从 Redis 删除。  
-    * 如果用户点击“取消”，前端停止本次操作，等待下一次空闲时机。后端无需做任何事。
+#### 8.2.2 前端代码质量
+```typescript
+// ESLint配置 (eslint.config.js)
+export default [
+  {
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': 'error',
+      '@typescript-eslint/explicit-function-return-type': 'warn',
+      'react-hooks/exhaustive-deps': 'warn'
+    }
+  }
+]
 
-##### ---
+// TypeScript配置 (tsconfig.json)
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  }
+}
+```
 
-**功能二：股票数据 API**
+### 8.3 部署配置
 
-**目标:** 基于 FastAPI，提供清晰、稳定、符合 RESTful 风格的数据查询接口。
+#### 8.3.1 Docker容器化
+```dockerfile
+# 后端Dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN pip install uv && uv sync --frozen
+COPY . .
+EXPOSE 3227
+CMD ["uv", "run", "start"]
 
-**任务拆解:**
+# 前端Dockerfile
+FROM node:20-alpine
+WORKDIR /app
+COPY package.json pnpm-lock.yaml ./
+RUN npm install -g pnpm && pnpm install --frozen-lockfile
+COPY . .
+RUN pnpm build
+EXPOSE 3000
+CMD ["pnpm", "preview"]
+```
 
-* **2.1 FastAPI 项目初始化**  
-  * \[ \] 创建 FastAPI 应用实例。  
-  * \[ \] 配置项目结构（例如 main.py, routers/, models/, services/）。  
-  * \[ \] 整合 SQLAlchemy 和数据库连接配置。  
-* **2.2 API 端点 (Endpoint) 设计与实现**  
-  * \[ \] **获取日线数据:**  
-    * **路径:** GET /stocks/{ticker}/daily  
-    * **参数:** ticker (路径参数), start\_date (查询参数, 可选), end\_date (查询参数, 可选)。  
-    * **实现:** 调用 get\_stock\_data(ticker, 'daily')，并根据日期参数筛选后返回。  
-  * \[ \] **获取周线数据:**  
-    * **路径:** GET /stocks/{ticker}/weekly  
-    * **参数:** ticker (路径参数), start\_date (查询参数, 可选), end\_date (查询参数, 可选)。  
-    * **实现:** 调用 get\_stock\_data(ticker, 'weekly')。
-* **2.3 数据序列化与响应**
-  * \[ \] 使用 Pydantic 模型定义清晰的请求体和响应体结构。  
-  * \[ \] 确保所有端点在成功时返回 200 OK 和数据，在失败时（如股票代码不存在）返回合适的 HTTP 状态码（如 404 Not Found）和错误信息。
+#### 8.3.2 环境配置
+```python
+# 环境变量配置 (.env)
+DATABASE_URL=postgresql://user:pass@localhost:5432/stockaivo
+REDIS_URL=redis://localhost:6379/0
+GEMINI_API_KEY=your_gemini_api_key
+AKSHARE_TOKEN=your_akshare_token
 
-##### ---
+# 配置管理 (config.py)
+from pydantic_settings import BaseSettings
 
-**功能三：AI 投资决策辅助系统**
+class Settings(BaseSettings):
+    database_url: str
+    redis_url: str
+    gemini_api_key: str
+    akshare_token: str
 
-**目标:** 构建一个基于多 Agent 协同工作的 AI 分析引擎，提供全面的市场解读和投资建议。此功能参考 D:\\Coding\\A_Share_investment_Agent 项目的设计思想。
+    class Config:
+        env_file = ".env"
+```
 
-**任务拆解:**
+## 9. 代码规范与最佳实践
 
-* **3.1 Agent 角色定义**  
-  * \[ \] **数据搜集 Agent (Data Collector Agent):** 负责根据分析请求，从数据库（功能一、二的产物）和网络（财经新闻、社交媒体情绪等）搜集必要信息。  
-  * \[ \] **技术分析 Agent (Technical Analyst Agent):** 专注于分析股票的量价数据。输入 K 线数据，输出技术指标分析（如 MA, MACD, RSI, Bollinger Bands）、形态识别和趋势判断。例如，它可以计算 RSI=100−frac1001+RS，其中 RS 是平均上涨日收益与平均下跌日收益的比值。  
-  * \[ \] **基本面分析 Agent (Fundamental Analyst Agent):** 负责分析公司的财务报表、行业地位、竞争优势等。输出公司的估值分析、盈利能力和成长性评估。  
-  * \[ \] **新闻舆情 Agent (News & Sentiment Agent):** 负责抓取与该股票相关的最新新闻、公告和社交媒体讨论，并利用 LLM 分析市场情绪（正面、负面、中性）。  
-  * \[ \] **决策合成 Agent (Master/Synthesizer Agent):** 作为总指挥，接收并整合以上所有 Agent 的分析报告，形成一份全面的、包含多角度观点和最终投资建议的综合报告。  
-* **3.2 Agent 协同工作流实现**  
-  * \[ \] 设计 Agent 之间的通信协议和数据格式。  
-  * \[ \] 实现一个任务编排器 (Orchestrator)。当收到一个分析请求（例如 POST /ai/analyze/{ticker}）时，编排器会：  
-    1. 启动 数据搜集 Agent。  
-    2. 将搜集到的数据分发给 技术分析 Agent、基本面分析 Agent 和 新闻舆情 Agent，让它们并行工作。  
-    3. 收集所有分析结果。  
-    4. 将结果汇总后交给 决策合成 Agent。  
-    5. 返回 决策合成 Agent 生成的最终报告。  
-* **3.3 LLM 集成**  
-  * \[ \] 创建一个 llm\_service.py 模块，用于封装对外部 LLM API 的调用。  
-  * \[ \] 为每个需要分析能力的 Agent 设计专门的 Prompt（提示词）。例如，为 技术分析 Agent 设计的 Prompt 可能是：“你是一位资深的美股技术分析师。请分析以下 {ticker} 的日 K 线数据，并从趋势、动量和波动性三个角度给出你的看法。”  
-* **3.4 API 接口**  
-  * \[ \] 创建 POST /ai/analyze 接口。  
-  * **请求体:** { "ticker": "AAPL", "analysis\_depth": "deep" }  
-  * **响应体:** 返回一个结构化的 JSON，包含各个 Agent 的分析结果和最终的综合建议。由于分析可能耗时较长，可以考虑使用 WebSocket 或异步任务（如 Celery）返回结果。
+### 9.1 API设计规范
+- **RESTful风格**：遵循REST API设计原则
+- **版本控制**：API路径包含版本号 `/api/v1/`
+- **统一响应格式**：成功和错误响应的一致性
+- **文档自动生成**：基于FastAPI的自动API文档
+
+### 9.2 数据处理规范
+- **类型安全**：完整的类型注解和验证
+- **异常处理**：分层异常处理和错误传播
+- **缓存策略**：智能缓存TTL和失效机制
+- **数据验证**：Pydantic模型验证和序列化
+
+### 9.3 前端开发规范
+- **组件设计**：单一职责原则和可复用性
+- **状态管理**：React Hooks模式和数据流控制
+- **性能优化**：懒加载、代码分割、缓存策略
+- **用户体验**：响应式设计和无障碍支持
+
+### 9.4 AI系统规范
+- **Agent设计**：清晰的角色定义和职责分离
+- **工作流管理**：LangGraph编排和状态跟踪
+- **模型配置**：按Agent类型的专用模型配置
+- **结果处理**：流式响应和实时进度反馈
+
+## 10. 系统特色与技术优势
+
+### 10.1 核心技术创新
+- **三级缓存架构**：Redis → PostgreSQL → AKShare的智能数据获取策略
+- **多Agent并行分析**：基于LangGraph的AI工作流编排，提升分析效率2-3倍
+- **实时流式响应**：Server-Sent Events技术实现AI分析的实时进度展示
+- **交易日历感知**：智能日期处理，自动跳过非交易日和节假日
+
+### 10.2 架构设计优势
+- **现代化技术栈**：采用最新版本的React 19、Python 3.12、FastAPI等
+- **类型安全保证**：前后端完整的类型系统，减少运行时错误
+- **模块化设计**：清晰的模块边界和接口定义，易于扩展和维护
+- **性能优化**：多层缓存、异步处理、并行计算等性能优化策略
+
+### 10.3 用户体验优势
+- **专业级图表**：集成TradingView Lightweight Charts，提供专业的金融图表体验
+- **智能搜索**：实时搜索建议和模糊匹配，提升用户操作效率
+- **响应式设计**：适配桌面和移动设备，确保跨平台一致性
+- **实时反馈**：AI分析过程的实时进度显示，提升用户体验
+
+---
+
+**文档版本**: v2.0
+**最后更新**: 2025年7月
+**维护者**: StockAIvo开发团队

@@ -8,7 +8,7 @@
 import logging
 import pandas as pd
 import pandas_market_calendars as mcal
-from typing import Optional, Literal, List, Tuple
+from typing import Optional, Literal, List, Tuple, Dict
 from datetime import datetime, date, timedelta
 from fastapi import BackgroundTasks
 
@@ -1316,7 +1316,7 @@ def _aggregate_minute_to_10min(minute_data: pd.DataFrame) -> Optional[pd.DataFra
 
         # 创建10分钟间隔的聚合规则
         # 从开盘时刻开始，每10分钟取样
-        aggregation_rules = {
+        aggregation_rules: Dict[str, str] = {
             'open': 'first',    # 开盘价：取第一个值
             'high': 'max',      # 最高价：取最大值
             'low': 'min',       # 最低价：取最小值
@@ -1327,7 +1327,7 @@ def _aggregate_minute_to_10min(minute_data: pd.DataFrame) -> Optional[pd.DataFra
         # 使用resample进行10分钟聚合
         # '10min'表示10分钟间隔，label='left'表示使用区间左端点作为标签
         # closed='left'表示区间左闭右开
-        aggregated = minute_data.resample('10min', label='left', closed='left').agg(aggregation_rules)
+        aggregated = minute_data.resample('10min', label='left', closed='left').agg(aggregation_rules)  # type: ignore
 
         # 移除没有数据的时间段（全为NaN的行）
         aggregated = aggregated.dropna(subset=['open', 'high', 'low', 'close'])

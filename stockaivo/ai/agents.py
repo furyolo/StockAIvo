@@ -11,7 +11,8 @@ import pandas_market_calendars as mcal
 from typing import Dict, Any, Optional, AsyncGenerator, NamedTuple
 from datetime import date, timedelta, datetime
 from functools import lru_cache
-from stockaivo.data_service import get_stock_data, get_stock_news, PeriodType, get_market_aware_current_date
+from stockaivo.data_service import get_stock_data, get_stock_news, PeriodType, get_market_aware_current_date, get_market_aware_minute_date
+from stockaivo.cache_manager import _is_market_open
 from stockaivo.database import get_db
 from stockaivo.ai.state import GraphState
 from stockaivo.ai.llm_service import llm_service
@@ -63,7 +64,13 @@ def _calculate_date_range(period: PeriodType, date_range_option: Optional[str], 
 
     # 2. 处理预设选项
     if market_aware_date is None:
-        market_aware_date = get_market_aware_current_date()
+        # 根据数据周期选择合适的市场感知日期函数
+        if period in ["10min", "minute"]:
+            # 分钟线和10分钟线数据使用专门的市场感知日期函数
+            market_aware_date = get_market_aware_minute_date()
+        else:
+            # 日线和周线数据使用通用的市场感知日期函数
+            market_aware_date = get_market_aware_current_date()
     today = market_aware_date
     start_date = None
 
@@ -113,8 +120,7 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
 
     print(f"Collecting data for {ticker} with option: {date_range_option}")
 
-    # 获取市场感知日期（优化：只调用一次）
-    market_aware_date = get_market_aware_current_date()
+    # 注意：不再在这里统一获取市场感知日期，而是让每个周期根据自己的需要选择合适的市场感知日期函数
 
     collected_data = {}
     db_session_gen = get_db()
@@ -124,11 +130,21 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
         # 为AI Agent添加新闻数据获取功能
         periods_to_fetch: list[PeriodType] = ["daily", "weekly"]
 
+        # 智能判断是否获取10分钟线数据
+        # 只有在交易时间内才获取10分钟线数据
+        is_trading_time = _is_market_open()
+
+        if is_trading_time:
+            periods_to_fetch.append("10min")
+            print(f"  - Market analysis: Including 10min data (market is open)")
+        else:
+            print(f"  - Market analysis: Skipping 10min data (market is closed)")
+
         # 1. 获取股票价格数据
         price_tasks = []
         for period in periods_to_fetch:
-            # 为每个周期单独计算日期范围，传递market_aware_date避免重复调用
-            start_date, end_date = _calculate_date_range(period, date_range_option, custom_date_range, market_aware_date)
+            # 为每个周期单独计算日期范围，让函数根据周期类型自动选择合适的市场感知日期
+            start_date, end_date = _calculate_date_range(period, date_range_option, custom_date_range, None)
             print(f"  - For {period} data, calculated range: {start_date or 'default start'} to {end_date or 'default end'}")
 
             task = get_stock_data(
@@ -138,7 +154,7 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
                 start_date=start_date,
                 end_date=end_date,
                 background_tasks=None, # No background tasks needed for agent context
-                market_aware_date=market_aware_date  # 传递市场感知日期，避免重复调用
+                market_aware_date=None  # 让get_stock_data函数根据周期自动选择合适的市场感知日期
             )
             price_tasks.append(task)
 
@@ -159,7 +175,11 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
             if isinstance(result, Exception):
                 print(f"Error collecting {period} data for {ticker}: {result}")
             elif isinstance(result, pd.DataFrame) and not result.empty:
-                collected_data[f'{period}_prices'] = result.to_dict(orient='split')
+                # 特殊处理10分钟线数据的键名
+                if period == "10min":
+                    collected_data['tenmin_prices'] = result.to_dict(orient='split')
+                else:
+                    collected_data[f'{period}_prices'] = result.to_dict(orient='split')
                 print(f"Successfully collected {period} data for {ticker}.")
             else:
                 print(f"Could not find {period} data for {ticker}.")
@@ -397,8 +417,8 @@ def _calculate_trading_days_to_target(target_date_str: str, market_aware_date: O
         # 最终回退
         return 1
 
-def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_price_str: str,
-                                   daily_indicators: list[str] | None = None, weekly_indicators: list[str] | None = None,
+def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_price_str: str, tenmin_price_str: str,
+                                   daily_indicators: list[str] | None = None, weekly_indicators: list[str] | None = None, tenmin_indicators: list[str] | None = None,
                                    market_aware_date: Optional[date] = None) -> str:
     """构建技术分析的提示词，根据实际计算的指标动态调整"""
     # 使用新的统一接口，一次性获取所有市场分析数据
@@ -448,15 +468,24 @@ def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_p
 
         return '\n    '.join(descriptions) if descriptions else "- 由于数据量不足，未计算技术指标"
 
-    # 获取日线和周线的指标描述
+    # 获取日线、周线和10分钟线的指标描述
     daily_indicators_desc = build_indicators_description(daily_indicators or [])
     weekly_indicators_desc = build_indicators_description(weekly_indicators or [])
+
+    # 10分钟线特殊处理：不计算技术指标，专注于价格波动分析
+    if tenmin_indicators and len(tenmin_indicators) > 0:
+        tenmin_indicators_desc = build_indicators_description(tenmin_indicators)
+    else:
+        tenmin_indicators_desc = "- 10分钟线数据专注于短期价格波动观察，不计算技术指标以避免噪音信号"
 
     # 构建分析要求，根据可用指标调整
     analysis_requirements = []
 
-    # 基础价格分析（总是可用）
-    analysis_requirements.append(f"1.  **价格趋势分析:** 结合日线和周线图，分析当前的短期趋势（上升、下降、横盘），并识别到 {target_date} 前{trading_days_count}个交易日可能的趋势变化。")
+    # 多时间框架价格分析（总是可用）
+    if "无10分钟线数据" not in tenmin_price_str:
+        analysis_requirements.append(f"1.  **多时间框架趋势分析:** 结合周线（大趋势确认）、日线（中期趋势判断）和10分钟线（短期波动观察），分析当前的趋势层次，并识别到 {target_date} 前{trading_days_count}个交易日可能的趋势变化。")
+    else:
+        analysis_requirements.append(f"1.  **价格趋势分析:** 结合日线和周线图，分析当前的短期趋势（上升、下降、横盘），并识别到 {target_date} 前{trading_days_count}个交易日可能的趋势变化。")
 
     # 移动平均线分析
     if any(ind.startswith('MA') for ind in (daily_indicators or [])):
@@ -489,10 +518,53 @@ def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_p
     if any(ind in available_indicators for ind in ['ATR', 'Volatility']):
         analysis_requirements.append("5.  **波动率和风险:** 分析ATR和波动率指标，评估当前市场的波动程度和风险水平。")
 
-    # 短期前景（总是包含）
-    analysis_requirements.append(f"6.  **短期前景:** 提供一个简洁的总结，重点关注到 {target_date} 前{trading_days_count}个交易日的短期交易机会和风险点，并给出具体的进出场建议。")
+    # 10分钟线特定分析（如果有数据）
+    if "无10分钟线数据" not in tenmin_price_str:
+        analysis_requirements.append("5.  **10分钟线短期波动分析:** 基于10分钟线数据，识别短期价格波动模式、关键支撑阻力位，以及精确的入场时机。注意：10分钟线主要用于观察短期波动，不依赖技术指标。")
 
-    return f"""
+    # 短期前景（总是包含）
+    final_req_num = len(analysis_requirements) + 1
+    analysis_requirements.append(f"{final_req_num}.  **短期前景:** 提供一个简洁的总结，重点关注到 {target_date} 前{trading_days_count}个交易日的短期交易机会和风险点，并给出具体的进出场建议。")
+
+    # 构建多时间框架的提示词
+    if "无10分钟线数据" not in tenmin_price_str:
+        # 包含10分钟线数据的完整分析
+        return f"""
+    你是一位专业的股票技术分析师。请根据以下为股票代码 {ticker} 提供的多时间框架价格、交易量数据以及已计算的技术指标，进行深入的短期技术分析。
+
+    **分析时间范围:** 重点关注到 {target_date} 之前{trading_days_count}个交易日的短期走势和交易机会。
+
+    **多时间框架分析框架:**
+    - **周线:** 大趋势确认和长期支撑阻力位
+    - **日线:** 中期趋势判断和主要技术指标分析
+    - **10分钟线:** 短期波动观察和精确入场时机
+
+    **日线数据技术指标:**
+    {daily_indicators_desc}
+
+    **周线数据技术指标:**
+    {weekly_indicators_desc}
+
+    **10分钟线数据说明:**
+    {tenmin_indicators_desc}
+
+    **分析要求:**
+    {chr(10).join(f'    {req}' for req in analysis_requirements)}
+
+    **日线数据（含技术指标）:**
+    {daily_price_str}
+
+    **周线数据（含技术指标）:**
+    {weekly_price_str}
+
+    **10分钟线数据（短期波动观察）:**
+    {tenmin_price_str}
+
+    请基于上述多时间框架数据提供你的专业技术分析报告，重点关注到 {target_date} 前{trading_days_count}个交易日的交易机会。
+    """
+    else:
+        # 仅包含日线和周线的传统分析
+        return f"""
     你是一位专业的股票技术分析师。请根据以下为股票代码 {ticker} 提供的日线和周线价格、交易量数据以及已计算的技术指标，进行深入的短期技术分析。
 
     **分析时间范围:** 重点关注到 {target_date} 之前{trading_days_count}个交易日的短期走势和交易机会。
@@ -515,7 +587,8 @@ def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_p
     请基于上述可用的技术指标数据提供你的专业短期技术分析报告，重点关注到 {target_date} 前{trading_days_count}个交易日的交易机会。
     """
 
-def _process_technical_analysis_data(state: GraphState) -> tuple[str, str, str, list[str], list[str]]:
+
+def _process_technical_analysis_data(state: GraphState) -> tuple[str, str, str, str, list[str], list[str], list[str]]:
     """处理技术分析所需的数据，返回ticker、处理后的价格数据字符串和实际计算的技术指标列表"""
     import logging
     logger = logging.getLogger(__name__)
@@ -523,15 +596,17 @@ def _process_technical_analysis_data(state: GraphState) -> tuple[str, str, str, 
     ticker = state.get("ticker", "UNKNOWN_TICKER")
     raw_data = state.get("raw_data", {})
 
-    # 从state中获取日线和周线数据
+    # 从state中获取日线、周线和10分钟线数据
     daily_prices_data = raw_data.get("daily_prices")
     weekly_prices_data = raw_data.get("weekly_prices")
+    tenmin_prices_data = raw_data.get("tenmin_prices")
 
     # 初始化技术指标计算器
     technical_indicator = TechnicalIndicator()
 
     daily_indicators = []
     weekly_indicators = []
+    tenmin_indicators = []
 
     # 处理日线数据 - 使用完整数据集
     if daily_prices_data:
@@ -567,7 +642,17 @@ def _process_technical_analysis_data(state: GraphState) -> tuple[str, str, str, 
     else:
         weekly_price_str = "无周线数据"
 
-    return ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators
+    # 处理10分钟线数据 - 仅提供价格数据，不计算技术指标
+    if tenmin_prices_data:
+        tenmin_price_df = pd.DataFrame(tenmin_prices_data['data'], columns=tenmin_prices_data['columns'], index=tenmin_prices_data['index'])
+        tenmin_price_str = tenmin_price_df.to_string()
+        tenmin_indicators = []  # 不计算技术指标，避免短期噪音信号
+        logger.info(f"10分钟线数据处理完成，提供价格数据用于短期波动观察")
+    else:
+        tenmin_price_str = "无10分钟线数据"
+        tenmin_indicators = []
+
+    return ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators
 
 
 def _check_fundamental_data_and_get_ticker(state: GraphState) -> tuple[bool, str]:
@@ -779,10 +864,10 @@ async def technical_analysis_agent(state: GraphState) -> Dict[str, Any]:
     market_aware_date = get_market_aware_current_date()
 
     # 使用共用函数处理数据
-    ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators = _process_technical_analysis_data(state)
+    ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(state)
 
     # 使用共享的prompt构建函数，传递market_aware_date
-    prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators, market_aware_date)
+    prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators, market_aware_date)
     analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": prompt, "agent_name": "technical_analysis_agent"}})
 
     return {"analysis_results": {"technical_analyst": analysis_result}}
@@ -867,10 +952,10 @@ async def technical_analysis_agent_stream(state: GraphState) -> AsyncGenerator[D
     market_aware_date = get_market_aware_current_date()
 
     # 使用共用函数处理数据
-    ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators = _process_technical_analysis_data(state)
+    ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(state)
 
     # 使用共享的prompt构建函数，传递market_aware_date
-    prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str, daily_indicators, weekly_indicators, market_aware_date)
+    prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators, market_aware_date)
 
     # 流式生成分析结果
     accumulated_result = ""
