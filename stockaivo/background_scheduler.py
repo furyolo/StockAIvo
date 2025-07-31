@@ -64,20 +64,18 @@ def start_scheduler():
     启动后台调度器。
     """
     if not scheduler.running:
-        # 添加数据持久化任务（每5分钟执行一次）
+        # 添加数据持久化任务（每8分钟执行一次）
         scheduler.add_job(
             func=scheduled_persist_job,
             trigger="interval",
-            minutes=5,
+            minutes=8,
             id="persist_pending_data_job",
             replace_existing=True
         )
 
-
-
         scheduler.start()
         logger.info("后台调度器已启动:")
-        logger.info("- 数据持久化任务: 每5分钟运行一次")
+        logger.info("- 数据持久化任务: 每8分钟运行一次")
     else:
         logger.info("调度器已在运行。")
 

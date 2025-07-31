@@ -94,8 +94,6 @@ AI_TECHNICAL_ANALYSIS_MODEL="gemini-2.5-pro"    # 技术分析专用
 AI_SYNTHESIS_MODEL="gemini-2.5-pro"             # 综合分析专用
 ```
 
-> 📖 详细配置说明请参考 [CONFIGURATION.md](CONFIGURATION.md)
-
 ## 📚 API 接口
 
 ### 🔥 核心端点

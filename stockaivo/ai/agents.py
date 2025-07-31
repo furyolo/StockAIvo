@@ -822,10 +822,11 @@ def _build_synthesis_prompt(ticker: str, data_collector_result: str, technical_r
         2. **短期风险评估**: 识别到 {target_date} 前{trading_days_count}个交易日的主要技术风险因素和机会
         3. **关键技术观察点**: 投资者在 {target_date} 前{trading_days_count}个交易日应该重点关注的技术指标和价格水平
         4. **短期执行策略**: 到 {target_date} 前{trading_days_count}个交易日的具体买卖点位建议
-        5. **已持股投资者专项建议**:
-           - **持仓管理建议**: 基于当前技术分析，对已持有该股票的投资者给出到 {target_date} 前{trading_days_count}个交易日的加仓、减仓或继续持有的具体建议
-           - **风险控制策略**: 针对已持股者在 {target_date} 前{trading_days_count}个交易日的止损位设置和风险管理建议
-           - **操作时机指导**: 为已持股投资者提供到 {target_date} 前{trading_days_count}个交易日的具体操作时机和执行策略
+        5. **已持股投资者专项建议（强制清仓要求）**:
+           - **强制清仓提醒**: 必须在 {target_date} 日期之前完成所有股票的卖出操作
+           - **最佳卖出时机**: 基于技术指标（支撑位、阻力位、RSI、MACD等）确定到 {target_date} 前{trading_days_count}个交易日内的最优卖出时点
+           - **清仓执行策略**: 结合成交量和市场流动性，制定平衡风险收益的分阶段清仓方案
+           - **风险控制设置**: 设定紧急止损位和保护性措施，防范清仓期间的重大损失风险
 
         请提供专业、客观且实用的短期投资建议。注意：由于缺乏基本面和新闻数据，本分析主要基于技术面。
         """
@@ -843,10 +844,11 @@ def _build_synthesis_prompt(ticker: str, data_collector_result: str, technical_r
         2. **短期风险评估**: 识别到 {target_date} 前{trading_days_count}个交易日的主要风险因素和机会
         3. **关键观察点**: 投资者在 {target_date} 前{trading_days_count}个交易日应该重点关注的指标和事件
         4. **短期执行策略**: 到 {target_date} 前{trading_days_count}个交易日的具体买卖点位建议
-        5. **已持股投资者专项建议**:
-           - **持仓管理建议**: 综合技术面、基本面和市场情绪分析，对已持有该股票的投资者给出到 {target_date} 前{trading_days_count}个交易日的加仓、减仓或继续持有的具体建议
-           - **风险控制策略**: 基于多维度分析为已持股者制定到 {target_date} 前{trading_days_count}个交易日的止损位、止盈位和风险管理策略
-           - **操作时机指导**: 结合各项分析结果，为已持股投资者提供到 {target_date} 前{trading_days_count}个交易日的精准操作时机和执行建议
+        5. **已持股投资者专项建议（强制清仓要求）**:
+           - **强制清仓提醒**: 必须在 {target_date} 日期之前完成所有股票的卖出操作
+           - **最佳卖出时机**: 综合技术面、基本面和市场情绪分析，确定到 {target_date} 前{trading_days_count}个交易日内的最优卖出时点
+           - **清仓执行策略**: 基于多维度分析，结合市场流动性和价格波动，制定平衡风险收益的分阶段清仓方案
+           - **风险控制设置**: 综合各项分析结果，设定紧急止损位和保护性措施，最大化保护投资者利益
 
         请提供专业、客观且实用的短期投资建议。
         """
