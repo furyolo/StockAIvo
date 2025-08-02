@@ -519,63 +519,69 @@ def get_market_aware_current_date() -> date:
             return _get_latest_trading_day(current_date_et)
 
         # 确保today_schedule不为空后再进行后续检查
-        try:
-            # 检查是否在交易时间内，使用扩展的schedule来避免时间戳覆盖问题
-            is_market_open = nyse.open_at_time(extended_schedule, now_et)
-            logger.debug(f"市场开放状态检查: is_market_open={is_market_open}")
+        if not today_schedule.empty:
+            try:
+                # 获取今日的开盘和收盘时间
+                market_open = today_schedule.iloc[0]['market_open']
+                market_close = today_schedule.iloc[0]['market_close']
 
-            if is_market_open:
-                # 市场仍在交易，返回前一个交易日
-                logger.info(f"美股市场仍在交易中（美东时间 {now_et.strftime('%H:%M:%S')}），返回前一交易日")
+                # 辅助函数：确保时区一致性
+                def _ensure_et_timezone(timestamp):
+                    if hasattr(timestamp, 'tz') and timestamp.tz is not None:
+                        return timestamp.tz_convert(et_tz)
+                    else:
+                        return timestamp
+
+                # 转换时区
+                market_open_et = _ensure_et_timezone(market_open)
+                market_close_et = _ensure_et_timezone(market_close)
+
+                logger.debug(f"今日交易时间: 开盘={market_open_et.strftime('%H:%M:%S')}, 收盘={market_close_et.strftime('%H:%M:%S')}, 当前={now_et.strftime('%H:%M:%S')}")
+
+                # 直接比较时间判断市场状态
+                is_market_open = market_open_et <= now_et <= market_close_et
+                logger.debug(f"市场开放状态检查: is_market_open={is_market_open}")
+
+                if is_market_open:
+                    # 市场仍在交易，返回前一个交易日
+                    logger.info(f"美股市场仍在交易中（美东时间 {now_et.strftime('%H:%M:%S')}），返回前一交易日")
+                    yesterday_et = current_date_et - timedelta(days=1)
+                    return _get_latest_trading_day(yesterday_et)
+
+                # 如果当前时间在今日收盘时间之前，说明市场还没收盘，应该返回前一交易日
+                if now_et < market_close_et:
+                    logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在今日收盘时间 {market_close_et.strftime('%H:%M:%S')} 之前，市场尚未收盘，返回前一交易日")
+                    yesterday_et = current_date_et - timedelta(days=1)
+                    return _get_latest_trading_day(yesterday_et)
+
+                # 计算缓冲期结束时间（收盘后1小时）
+                buffer_end_time = market_close_et + timedelta(hours=1)
+                logger.debug(f"缓冲期结束时间: {buffer_end_time}")
+
+                # 检查是否在收盘后的缓冲期内
+                if now_et < buffer_end_time:
+                    # 仍在缓冲期内，数据可能不完整，返回前一个交易日
+                    time_since_close = now_et - market_close_et
+                    hours_since_close = time_since_close.total_seconds() / 3600
+                    logger.info(f"美股收盘后缓冲期内（收盘时间 {market_close_et.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
+                    yesterday_et = current_date_et - timedelta(days=1)
+                    return _get_latest_trading_day(yesterday_et)
+
+                # 市场已完全收盘，当日数据应该完整
+                logger.info(f"美股已完全收盘超过1小时，数据稳定，返回市场基准日期: {current_date_et}")
+                return current_date_et
+
+            except Exception as trading_time_check_error:
+                # 如果交易时间检查失败，记录详细错误并返回前一交易日作为安全选择
+                logger.warning(f"交易时间检查失败: {trading_time_check_error}, 返回前一交易日作为安全选择")
                 yesterday_et = current_date_et - timedelta(days=1)
                 return _get_latest_trading_day(yesterday_et)
-
-        except Exception as open_check_error:
-            # 如果open_at_time检查失败，记录详细错误并继续处理
-            logger.warning(f"市场开放状态检查失败: {open_check_error}, 继续处理收盘后逻辑")
-
-        # 检查是否刚收盘（给一个缓冲时间，收盘后1小时内数据可能不完整）
-        try:
-            market_close = today_schedule.iloc[0]['market_close']
-
-            # 确保收盘时间使用正确的美东时区
-            if hasattr(market_close, 'tz') and market_close.tz is not None:
-                # 如果有时区信息，转换为美东时区
-                market_close_et = market_close.tz_convert(et_tz)
-            else:
-                # 如果没有时区信息，假设已经是美东时区
-                market_close_et = market_close
-
-            logger.debug(f"今日市场收盘时间: {market_close_et}")
-
-            # 如果当前时间在今日收盘时间之前，说明市场还没收盘，应该返回前一交易日
-            if now_et < market_close_et:
-                logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在今日收盘时间 {market_close_et.strftime('%H:%M:%S')} 之前，市场尚未收盘，返回前一交易日")
-                yesterday_et = current_date_et - timedelta(days=1)
-                return _get_latest_trading_day(yesterday_et)
-
-            # 计算缓冲期结束时间（收盘后1小时）
-            buffer_end_time = market_close_et + timedelta(hours=1)
-            logger.debug(f"缓冲期结束时间: {buffer_end_time}")
-
-            # 检查是否在收盘后的缓冲期内
-            if now_et < buffer_end_time:
-                # 仍在缓冲期内，数据可能不完整，返回前一个交易日
-                time_since_close = now_et - market_close_et
-                hours_since_close = time_since_close.total_seconds() / 3600
-                logger.info(f"美股收盘后缓冲期内（收盘时间 {market_close_et.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
-                yesterday_et = current_date_et - timedelta(days=1)
-                return _get_latest_trading_day(yesterday_et)
-
-        except Exception as close_check_error:
-            # 如果收盘时间检查失败，记录错误并返回前一交易日作为安全选择
-            logger.warning(f"收盘时间检查失败: {close_check_error}, 返回前一交易日作为安全选择")
-            yesterday_et = current_date_et - timedelta(days=1)
-            return _get_latest_trading_day(yesterday_et)
-
-        # 市场已完全收盘，当日数据应该完整
-        logger.info(f"美股已完全收盘超过1小时，数据稳定，返回市场基准日期: {current_date_et}")
-        return current_date_et
+        else:
+            # 今天不是交易日，直接跳过市场开放状态检查
+            logger.debug("今日不是交易日，跳过市场开放状态检查")
+            # 不在缓冲期内，返回最近的交易日
+            logger.info(f"不在交易日缓冲期内，返回最近交易日")
+            return _get_latest_trading_day(current_date_et)
 
     except Exception as e:
         logger.warning(f"获取市场感知日期时出错: {e}，回退到本地日期")

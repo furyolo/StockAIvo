@@ -85,6 +85,9 @@ tests/*.pyo
 tests/*.pyd
 tests/*$py.class
 
+# Claude
+.claude/
+
 # Kilo Code
 .kilocode/
 

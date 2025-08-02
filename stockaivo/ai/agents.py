@@ -823,7 +823,7 @@ def _build_synthesis_prompt(ticker: str, data_collector_result: str, technical_r
         3. **关键技术观察点**: 投资者在 {target_date} 前{trading_days_count}个交易日应该重点关注的技术指标和价格水平
         4. **短期执行策略**: 到 {target_date} 前{trading_days_count}个交易日的具体买卖点位建议
         5. **已持股投资者专项建议（强制清仓要求）**:
-           - **强制清仓提醒**: 必须在 {target_date} 日期之前完成所有股票的卖出操作
+           - **强制清仓提醒**: 必须在 {target_date} 收盘前完成所有股票的卖出操作
            - **最佳卖出时机**: 基于技术指标（支撑位、阻力位、RSI、MACD等）确定到 {target_date} 前{trading_days_count}个交易日内的最优卖出时点
            - **清仓执行策略**: 结合成交量和市场流动性，制定平衡风险收益的分阶段清仓方案
            - **风险控制设置**: 设定紧急止损位和保护性措施，防范清仓期间的重大损失风险
@@ -845,7 +845,7 @@ def _build_synthesis_prompt(ticker: str, data_collector_result: str, technical_r
         3. **关键观察点**: 投资者在 {target_date} 前{trading_days_count}个交易日应该重点关注的指标和事件
         4. **短期执行策略**: 到 {target_date} 前{trading_days_count}个交易日的具体买卖点位建议
         5. **已持股投资者专项建议（强制清仓要求）**:
-           - **强制清仓提醒**: 必须在 {target_date} 日期之前完成所有股票的卖出操作
+           - **强制清仓提醒**: 必须在 {target_date} 收盘之前完成所有股票的卖出操作
            - **最佳卖出时机**: 综合技术面、基本面和市场情绪分析，确定到 {target_date} 前{trading_days_count}个交易日内的最优卖出时点
            - **清仓执行策略**: 基于多维度分析，结合市场流动性和价格波动，制定平衡风险收益的分阶段清仓方案
            - **风险控制设置**: 综合各项分析结果，设定紧急止损位和保护性措施，最大化保护投资者利益
