@@ -5,7 +5,7 @@ This file defines the shared state object that is passed between nodes in the
 LangGraph workflow.
 """
 
-from typing import Dict, Any, TypedDict, Annotated
+from typing import Dict, Any, TypedDict, Annotated, Optional
 
 def merge_dicts(left: dict, right: dict) -> dict:
     """Merges two dictionaries, overwriting left with right."""
@@ -20,6 +20,7 @@ class GraphState(TypedDict):
         raw_data: Raw data collected by the data collection agent.
         analysis_results: A dictionary to store the results from each agent.
         final_report: The final, synthesized report.
+        market_analysis: Market analysis result containing unified market context.
     """
     ticker: str
     date_range_option: str | None
@@ -27,3 +28,4 @@ class GraphState(TypedDict):
     raw_data: Annotated[dict, merge_dicts]
     analysis_results: Annotated[dict, merge_dicts]
     final_report: str
+    market_analysis: Optional[Any]

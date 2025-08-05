@@ -19,10 +19,13 @@ from stockaivo.ai.agents import (
 )
 from typing import AsyncGenerator, Dict, Any, Optional
 import json
-import json
 import logging
+import os
+from stockaivo.data_service import get_market_date_performance_stats, reset_market_date_performance_stats
 
 logger = logging.getLogger(__name__)
+
+# 性能监控：使用debug级别日志，生产环境自动禁用
 
 class LangGraphOrchestrator:
     """
@@ -76,7 +79,11 @@ class LangGraphOrchestrator:
         and yields the output of each agent as a JSON string.
         """
         print(f"\n---Starting AI Analysis for {ticker}---")
-        
+
+        # 重置性能统计（debug级别）
+        reset_market_date_performance_stats()
+        logger.debug("Performance monitoring: Reset market date function call counters")
+
         initial_state = {
             "ticker": ticker,
             "date_range_option": date_range_option,
@@ -113,7 +120,11 @@ class LangGraphOrchestrator:
                             "output": agent_output
                         }
                         yield f"data: {json.dumps(result_data)}\n\n"
-            
+
+        # 输出性能统计（debug级别）
+        performance_stats = get_market_date_performance_stats()
+        logger.debug(f"Performance monitoring: Market date function calls - {performance_stats}")
+
         print("\n---AI Analysis Complete---")
 
 # Instantiate the orchestrator
@@ -144,6 +155,10 @@ class StreamingLangGraphOrchestrator:
         """
         print(f"\n=== Starting Streaming AI Analysis for {ticker} ===")
 
+        # 重置性能统计（debug级别）
+        reset_market_date_performance_stats()
+        logger.debug("Performance monitoring: Reset market date function call counters for streaming analysis")
+
         # 初始化状态
         initial_state: GraphState = {
             "ticker": ticker,
@@ -151,7 +166,8 @@ class StreamingLangGraphOrchestrator:
             "custom_date_range": custom_date_range,
             "raw_data": {},
             "analysis_results": {},
-            "final_report": ""
+            "final_report": "",
+            "market_analysis": None
         }
 
         # 1. 数据收集阶段（非流式）
@@ -313,6 +329,10 @@ class StreamingLangGraphOrchestrator:
                 }
                 yield f"data: {json.dumps(result_data)}\n\n"
 
+        # 输出性能统计（debug级别）
+        performance_stats = get_market_date_performance_stats()
+        logger.debug(f"Performance monitoring (streaming): Market date function calls - {performance_stats}")
+
         print("\n---Streaming AI Analysis Complete---")
 
 
@@ -337,6 +357,10 @@ class ParallelStreamingOrchestrator:
         """
         print(f"\n=== Starting Parallel Streaming AI Analysis for {ticker} ===")
 
+        # 重置性能统计（debug级别）
+        reset_market_date_performance_stats()
+        logger.debug("Performance monitoring: Reset market date function call counters for parallel streaming analysis")
+
         # 初始化状态
         initial_state: GraphState = {
             "ticker": ticker,
@@ -358,6 +382,8 @@ class ParallelStreamingOrchestrator:
                 state["raw_data"] = {**state.get("raw_data", {}), **data_collection_result["raw_data"]}
             if "analysis_results" in data_collection_result:
                 state["analysis_results"] = {**state.get("analysis_results", {}), **data_collection_result["analysis_results"]}
+            if "market_analysis" in data_collection_result:
+                state["market_analysis"] = data_collection_result["market_analysis"]
 
             # 发送数据收集结果
             data_collector_result = state.get("analysis_results", {}).get("data_collector")
@@ -459,6 +485,10 @@ class ParallelStreamingOrchestrator:
                     "phase": "synthesis"
                 }
                 yield f"data: {json.dumps(result_data)}\n\n"
+
+        # 输出性能统计（debug级别）
+        performance_stats = get_market_date_performance_stats()
+        logger.debug(f"Performance monitoring (parallel streaming): Market date function calls - {performance_stats}")
 
         print("\n---Parallel Streaming AI Analysis Complete---")
 

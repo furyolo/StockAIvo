@@ -120,7 +120,10 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
 
     print(f"Collecting data for {ticker} with option: {date_range_option}")
 
-    # 注意：不再在这里统一获取市场感知日期，而是让每个周期根据自己的需要选择合适的市场感知日期函数
+    # 统一获取市场分析结果（用于日线和周线数据）
+    market_analysis = get_market_analysis()
+    print(f"Using unified market analysis: {market_analysis.market_aware_date}")
+    print(f"Target Friday: {market_analysis.target_friday}, Trading days: {market_analysis.trading_days_count}")
 
     collected_data = {}
     db_session_gen = get_db()
@@ -143,9 +146,18 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
         # 1. 获取股票价格数据
         price_tasks = []
         for period in periods_to_fetch:
-            # 为每个周期单独计算日期范围，让函数根据周期类型自动选择合适的市场感知日期
-            start_date, end_date = _calculate_date_range(period, date_range_option, custom_date_range, None)
-            print(f"  - For {period} data, calculated range: {start_date or 'default start'} to {end_date or 'default end'}")
+            # 为不同周期选择合适的市场感知日期策略
+            if period in ["daily", "weekly"]:
+                # 日线和周线数据使用统一的市场分析结果
+                period_market_aware_date = market_analysis.market_aware_date
+                start_date, end_date = _calculate_date_range(period, date_range_option, custom_date_range, period_market_aware_date)
+                print(f"  - For {period} data, using unified market date: {period_market_aware_date}, range: {start_date or 'default start'} to {end_date or 'default end'}")
+            else:
+                # 分钟线和10分钟线数据保持原有逻辑，因为它们有不同的业务需求
+                # 分钟线需要在交易时间内获取当日实时数据，而日线在交易时间内使用前一交易日
+                period_market_aware_date = None
+                start_date, end_date = _calculate_date_range(period, date_range_option, custom_date_range, None)
+                print(f"  - For {period} data, using period-specific market date (preserving real-time logic), range: {start_date or 'default start'} to {end_date or 'default end'}")
 
             task = get_stock_data(
                 db=db,
@@ -154,7 +166,7 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
                 start_date=start_date,
                 end_date=end_date,
                 background_tasks=None, # No background tasks needed for agent context
-                market_aware_date=None  # 让get_stock_data函数根据周期自动选择合适的市场感知日期
+                market_aware_date=period_market_aware_date  # 传递适当的市场感知日期
             )
             price_tasks.append(task)
 
@@ -213,7 +225,8 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
 
     return {
         "raw_data": collected_data,
-        "analysis_results": {"data_collector": data_summary}
+        "analysis_results": {"data_collector": data_summary},
+        "market_analysis": market_analysis
     }
 
 
@@ -877,8 +890,15 @@ async def technical_analysis_agent(state: GraphState) -> Dict[str, Any]:
     """
     print("\n---Executing Technical Analysis Agent---")
 
-    # 获取市场感知日期（优化：只调用一次）
-    market_aware_date = get_market_aware_current_date()
+    # 优先使用state中的market_analysis，避免重复计算
+    market_analysis = state.get("market_analysis")
+    if market_analysis is None:
+        # 回退机制：如果state中没有market_analysis，则调用get_market_analysis()
+        market_analysis = get_market_analysis()
+        print("Warning: Using fallback market analysis in technical_analysis_agent")
+
+    market_aware_date = market_analysis.market_aware_date
+    print(f"Technical analysis using market date: {market_aware_date}")
 
     # 使用共用函数处理数据
     ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(state)
@@ -939,8 +959,15 @@ async def synthesis_agent(state: GraphState) -> Dict[str, Any]:
     """
     print("\n---Executing Synthesis Agent---")
 
-    # 获取市场感知日期（优化：只调用一次）
-    market_aware_date = get_market_aware_current_date()
+    # 优先使用state中的market_analysis，避免重复计算
+    market_analysis = state.get("market_analysis")
+    if market_analysis is None:
+        # 回退机制：如果state中没有market_analysis，则调用get_market_analysis()
+        market_analysis = get_market_analysis()
+        print("Warning: Using fallback market analysis in synthesis_agent")
+
+    market_aware_date = market_analysis.market_aware_date
+    print(f"Synthesis using market date: {market_aware_date}")
 
     ticker = state.get("ticker", "UNKNOWN_TICKER")
 
@@ -965,8 +992,15 @@ async def technical_analysis_agent_stream(state: GraphState) -> AsyncGenerator[D
     """
     print("\n---Executing Technical Analysis Agent (Stream)---")
 
-    # 获取市场感知日期（优化：只调用一次）
-    market_aware_date = get_market_aware_current_date()
+    # 优先使用state中的market_analysis，避免重复计算
+    market_analysis = state.get("market_analysis")
+    if market_analysis is None:
+        # 回退机制：如果state中没有market_analysis，则调用get_market_analysis()
+        market_analysis = get_market_analysis()
+        print("Warning: Using fallback market analysis in technical_analysis_agent_stream")
+
+    market_aware_date = market_analysis.market_aware_date
+    print(f"Technical analysis (stream) using market date: {market_aware_date}")
 
     # 使用共用函数处理数据
     ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(state)
@@ -988,8 +1022,15 @@ async def synthesis_agent_stream(state: GraphState) -> AsyncGenerator[Dict[str, 
     """
     print("\n---Executing Synthesis Agent (Stream)---")
 
-    # 获取市场感知日期（优化：只调用一次）
-    market_aware_date = get_market_aware_current_date()
+    # 优先使用state中的market_analysis，避免重复计算
+    market_analysis = state.get("market_analysis")
+    if market_analysis is None:
+        # 回退机制：如果state中没有market_analysis，则调用get_market_analysis()
+        market_analysis = get_market_analysis()
+        print("Warning: Using fallback market analysis in synthesis_agent_stream")
+
+    market_aware_date = market_analysis.market_aware_date
+    print(f"Synthesis (stream) using market date: {market_aware_date}")
 
     ticker = state.get("ticker", "UNKNOWN_TICKER")
 

@@ -6,11 +6,14 @@
 """
 
 import logging
+import os
 import pandas as pd
 import pandas_market_calendars as mcal
 from typing import Optional, Literal, List, Tuple, Dict
 from datetime import datetime, date, timedelta
 from fastapi import BackgroundTasks
+
+# 性能监控：使用debug级别日志，生产环境自动禁用
 
 # 导入数据库会话管理和模型
 from sqlalchemy import inspect, select
@@ -450,6 +453,15 @@ def get_market_aware_current_date() -> date:
     Returns:
         date: 数据完整性安全的当前日期
     """
+    # 性能监控：使用debug级别，生产环境自动禁用
+    import time
+    start_time = time.time()
+
+    # 记录调用次数
+    if not hasattr(get_market_aware_current_date, '_call_count'):
+        get_market_aware_current_date._call_count = 0
+    get_market_aware_current_date._call_count += 1
+
     try:
         # 获取NYSE日历和美东时区
         nyse = mcal.get_calendar('NYSE')
@@ -508,15 +520,15 @@ def get_market_aware_current_date() -> date:
                 if now_et < buffer_end_time:
                     # 仍在前一交易日的缓冲期内
                     logger.info(f"在前一交易日收盘后缓冲期内（收盘时间 {yesterday_close_et.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
-                    return _get_latest_trading_day(yesterday_et)
+                    result = _get_latest_trading_day(yesterday_et)
                 else:
                     # 已超过缓冲期，返回前一交易日
                     logger.info(f"已超过前一交易日收盘后缓冲期（收盘时间 {yesterday_close_et.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
-                    return _get_latest_trading_day(yesterday_et)
+                    result = _get_latest_trading_day(yesterday_et)
 
             # 不在缓冲期内，返回最近的交易日
             logger.info(f"不在交易日缓冲期内，返回最近交易日")
-            return _get_latest_trading_day(current_date_et)
+            result = _get_latest_trading_day(current_date_et)
 
         # 确保today_schedule不为空后再进行后续检查
         if not today_schedule.empty:
@@ -552,40 +564,41 @@ def get_market_aware_current_date() -> date:
                 if now_et < market_close_et:
                     logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在今日收盘时间 {market_close_et.strftime('%H:%M:%S')} 之前，市场尚未收盘，返回前一交易日")
                     yesterday_et = current_date_et - timedelta(days=1)
-                    return _get_latest_trading_day(yesterday_et)
-
-                # 计算缓冲期结束时间（收盘后1小时）
-                buffer_end_time = market_close_et + timedelta(hours=1)
-                logger.debug(f"缓冲期结束时间: {buffer_end_time}")
-
-                # 检查是否在收盘后的缓冲期内
-                if now_et < buffer_end_time:
-                    # 仍在缓冲期内，数据可能不完整，返回前一个交易日
+                    result = _get_latest_trading_day(yesterday_et)
+                elif now_et < market_close_et + timedelta(hours=1):
+                    # 在收盘后的缓冲期内，数据可能不完整，返回前一个交易日
                     time_since_close = now_et - market_close_et
                     hours_since_close = time_since_close.total_seconds() / 3600
                     logger.info(f"美股收盘后缓冲期内（收盘时间 {market_close_et.strftime('%H:%M:%S')}，当前 {now_et.strftime('%H:%M:%S')}，已过 {hours_since_close:.1f} 小时），返回前一交易日")
                     yesterday_et = current_date_et - timedelta(days=1)
-                    return _get_latest_trading_day(yesterday_et)
-
-                # 市场已完全收盘，当日数据应该完整
-                logger.info(f"美股已完全收盘超过1小时，数据稳定，返回市场基准日期: {current_date_et}")
-                return current_date_et
+                    result = _get_latest_trading_day(yesterday_et)
+                else:
+                    # 市场已完全收盘，当日数据应该完整
+                    logger.info(f"美股已完全收盘超过1小时，数据稳定，返回市场基准日期: {current_date_et}")
+                    result = current_date_et
 
             except Exception as trading_time_check_error:
                 # 如果交易时间检查失败，记录详细错误并返回前一交易日作为安全选择
                 logger.warning(f"交易时间检查失败: {trading_time_check_error}, 返回前一交易日作为安全选择")
                 yesterday_et = current_date_et - timedelta(days=1)
-                return _get_latest_trading_day(yesterday_et)
+                result = _get_latest_trading_day(yesterday_et)
         else:
             # 今天不是交易日，直接跳过市场开放状态检查
             logger.debug("今日不是交易日，跳过市场开放状态检查")
             # 不在缓冲期内，返回最近的交易日
             logger.info(f"不在交易日缓冲期内，返回最近交易日")
-            return _get_latest_trading_day(current_date_et)
+            result = _get_latest_trading_day(current_date_et)
 
     except Exception as e:
         logger.warning(f"获取市场感知日期时出错: {e}，回退到本地日期")
-        return date.today()
+        result = date.today()
+
+    finally:
+        # 性能监控：debug级别，生产环境自动禁用
+        execution_time = time.time() - start_time
+        logger.debug(f"get_market_aware_current_date() call #{get_market_aware_current_date._call_count}, execution time: {execution_time:.3f}s")
+
+    return result
 
 
 def get_market_aware_minute_date() -> date:
@@ -608,6 +621,15 @@ def get_market_aware_minute_date() -> date:
     Returns:
         date: 适合分时数据获取的日期
     """
+    # 性能监控：使用debug级别，生产环境自动禁用
+    import time
+    start_time = time.time()
+
+    # 记录调用次数
+    if not hasattr(get_market_aware_minute_date, '_call_count'):
+        get_market_aware_minute_date._call_count = 0
+    get_market_aware_minute_date._call_count += 1
+
     try:
         # 获取NYSE日历和美东时区
         nyse = mcal.get_calendar('NYSE')
@@ -660,24 +682,57 @@ def get_market_aware_minute_date() -> date:
                 # 开盘前：返回上一交易日，获取完整分时数据
                 logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在开盘时间 {market_open_et.strftime('%H:%M:%S')} 之前，返回上一交易日")
                 yesterday_et = current_date_et - timedelta(days=1)
-                return _get_latest_trading_day(yesterday_et)
+                result = _get_latest_trading_day(yesterday_et)
             elif market_open_et <= now_et <= market_close_et:
                 # 交易时间内：返回当日，获取实时分时数据
                 logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在交易时间内，返回当日获取实时分时数据")
-                return current_date_et
+                result = current_date_et
             else:
                 # 收盘后：返回当日，获取完整分时数据
                 logger.info(f"当前时间 {now_et.strftime('%H:%M:%S')} 在收盘时间 {market_close_et.strftime('%H:%M:%S')} 之后，返回当日获取完整分时数据")
-                return current_date_et
+                result = current_date_et
 
         except Exception as time_check_error:
             # 如果时间检查失败，记录错误并返回当日作为安全选择
             logger.warning(f"交易时间检查失败: {time_check_error}, 返回当日作为安全选择")
-            return current_date_et
+            result = current_date_et
 
     except Exception as e:
         logger.warning(f"获取分时数据市场感知日期时出错: {e}，回退到本地日期")
-        return date.today()
+        result = date.today()
+
+    finally:
+        # 性能监控：debug级别，生产环境自动禁用
+        execution_time = time.time() - start_time
+        logger.debug(f"get_market_aware_minute_date() call #{get_market_aware_minute_date._call_count}, execution time: {execution_time:.3f}s")
+
+    return result
+
+
+def get_market_date_performance_stats() -> dict:
+    """
+    获取市场感知日期函数的性能统计信息
+
+    Returns:
+        dict: 包含调用次数和性能指标的字典
+    """
+    current_calls = getattr(get_market_aware_current_date, '_call_count', 0)
+    minute_calls = getattr(get_market_aware_minute_date, '_call_count', 0)
+
+    return {
+        "get_market_aware_current_date_calls": current_calls,
+        "get_market_aware_minute_date_calls": minute_calls,
+        "total_calls": current_calls + minute_calls,
+        "optimization_note": "Optimized to use unified market_analysis in AI agents"
+    }
+
+
+def reset_market_date_performance_stats():
+    """重置市场感知日期函数的性能统计"""
+    if hasattr(get_market_aware_current_date, '_call_count'):
+        get_market_aware_current_date._call_count = 0
+    if hasattr(get_market_aware_minute_date, '_call_count'):
+        get_market_aware_minute_date._call_count = 0
 
 
 def _get_latest_trading_day(target_date: date) -> date:
