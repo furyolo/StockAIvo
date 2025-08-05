@@ -241,21 +241,36 @@ def _calculate_target_friday_internal(market_aware_date: date) -> date:
 
         # 判断市场交易状态
         is_market_open = False
-        try:
-            schedule = _get_trading_schedule(today.date(), today.date())
-            if not schedule.empty:
-                is_market_open = nyse_calendar.open_at_time(schedule, now_et)
-        except:
-            # 简单时间判断回退
-            market_hour = now_et.hour
-            market_minute = now_et.minute
-            is_market_open = (market_hour > 9 or (market_hour == 9 and market_minute >= 30)) and market_hour < 16
+
+        # 🔧 FIX: 检查是否是历史日期
+        current_date_et = now_et.date()
+        is_historical_date = today.date() < current_date_et
+
+        if is_historical_date:
+            # 对于历史日期，假设交易已经结束
+            is_market_open = False
+        else:
+            # 只有当日或未来日期才需要检查实时市场状态
+            try:
+                schedule = _get_trading_schedule(today.date(), today.date())
+                if not schedule.empty:
+                    is_market_open = nyse_calendar.open_at_time(schedule, now_et)
+            except:
+                # 简单时间判断回退
+                market_hour = now_et.hour
+                market_minute = now_et.minute
+                is_market_open = (market_hour > 9 or (market_hour == 9 and market_minute >= 30)) and market_hour < 16
 
         # 判断本周交易是否结束
         week_trading_ended = False
         if current_weekday < 5:  # 周一到周五
             if current_weekday == 4:  # 周五
-                week_trading_ended = not is_market_open
+                if is_historical_date:
+                    # 历史周五，交易肯定已结束
+                    week_trading_ended = True
+                else:
+                    # 当日周五，根据市场状态判断
+                    week_trading_ended = not is_market_open
         else:  # 周末
             week_trading_ended = True
 
