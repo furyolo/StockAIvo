@@ -23,10 +23,10 @@ def scheduled_persist_job():
     """
     一个预定的作业，用于持久化挂起的数据。
     为每个作业运行创建一个新的数据库会话。
-    支持股票价格数据和新闻数据的批量持久化。
+    支持股票价格数据的批量持久化。
     """
-    # 增强定时任务日志记录以监控新闻数据处理状态
-    logger.info("开始执行预定的数据持久化任务（包括股票价格和新闻数据）...")
+    # 增强定时任务日志记录以监控数据处理状态
+    logger.info("开始执行预定的数据持久化任务...")
     db_session: Session | None = None
     try:
         db_session = next(get_db())
@@ -39,12 +39,7 @@ def scheduled_persist_job():
             failed_count = result.get('failed_count', 0)
             details = result.get('details', [])
 
-            # 统计不同类型数据的处理情况
-            news_count = sum(1 for d in details if d.get('period') == 'news')
-            price_count = len(details) - news_count
-
             logger.info(f"预定任务完成 - 总处理: {processed_count} 条, 失败: {failed_count} 条")
-            logger.info(f"数据类型分布 - 新闻数据: {news_count} 批次, 价格数据: {price_count} 批次")
         else:
             logger.error(f"预定任务执行失败: {result.get('message', '未知错误')}")
 

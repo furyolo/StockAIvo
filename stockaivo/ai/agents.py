@@ -6,6 +6,7 @@ Each function represents an agent and will be a node in the graph.
 """
 
 import asyncio
+import logging
 import pandas as pd
 import pandas_market_calendars as mcal
 from typing import Dict, Any, Optional, AsyncGenerator, NamedTuple
@@ -13,11 +14,16 @@ from datetime import date, timedelta, datetime
 from functools import lru_cache
 from stockaivo.data_service import get_stock_data, get_stock_news, PeriodType, get_market_aware_current_date, get_market_aware_minute_date
 from stockaivo.cache_manager import _is_market_open
+from sqlalchemy import select
 from stockaivo.database import get_db
+from stockaivo.models import UsStocksName
 from stockaivo.ai.state import GraphState
 from stockaivo.ai.llm_service import llm_service
 from stockaivo.ai.tools import llm_tool
 from stockaivo.ai.technical_indicator import TechnicalIndicator
+
+# 配置日志
+logger = logging.getLogger(__name__)
 
 # ==================== 重构：统一市场分析接口 ====================
 
@@ -384,6 +390,35 @@ def get_market_analysis(market_aware_date: Optional[date] = None) -> MarketAnaly
 
 # ==================== 共享的Prompt和逻辑函数 ====================
 
+def _get_company_name(ticker: str) -> str:
+    """
+    获取ticker对应的公司英文名称
+
+    Args:
+        ticker: 股票代码
+
+    Returns:
+        公司英文名称，如果查询失败则返回ticker作为fallback
+    """
+    try:
+        db_session_gen = get_db()
+        db = next(db_session_gen)
+        try:
+            stmt = select(UsStocksName.name).where(UsStocksName.symbol == ticker)
+            result = db.execute(stmt).scalar_one_or_none()
+            if result:
+                company_name = str(result)
+                logger.info(f"成功为ticker '{ticker}'找到公司名称: '{company_name}'")
+                return company_name
+            else:
+                logger.warning(f"无法为ticker '{ticker}'找到匹配的公司名称，使用ticker作为fallback")
+                return ticker
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"获取{ticker}公司名称失败，使用ticker作为fallback: {e}")
+        return ticker
+
 def _get_target_friday_date(market_aware_date: Optional[date] = None) -> str:
     """
     计算周度最后一个交易日（向后兼容接口）
@@ -618,8 +653,6 @@ def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_p
 
 def _process_technical_analysis_data(state: GraphState) -> tuple[str, str, str, str, list[str], list[str], list[str]]:
     """处理技术分析所需的数据，返回ticker、处理后的价格数据字符串和实际计算的技术指标列表"""
-    import logging
-    logger = logging.getLogger(__name__)
 
     ticker = state.get("ticker", "UNKNOWN_TICKER")
     raw_data = state.get("raw_data", {})
@@ -722,9 +755,16 @@ def _check_news_data_and_get_ticker(state: GraphState) -> tuple[bool, str, Optio
 
 def _build_news_sentiment_analysis_prompt(ticker: str, news_data: Optional[list] = None) -> str:
     """构建新闻情感分析的提示词 - 基于时间序列情感演变分析"""
+    # 获取公司名称
+    company_name = _get_company_name(ticker)
+
     # 新闻情感分析prompt
     base_prompt = f"""
-    作为一名专业的市场情绪分析师，请为股票 {ticker} 提供基于时间演变的新闻情感分析。
+    作为一名专业的市场情绪分析师，请为股票 {ticker} ({company_name}) 提供基于时间演变的新闻情感分析。
+
+    **目标分析股票：{ticker} - {company_name}**
+    **重要提示：**新闻中提到的公司名称"{company_name}"与目标股票代码"{ticker}"是同一家公司。
+    请在分析时将新闻中出现的"{company_name}"识别为与股票{ticker}相关的信息。
 
     **核心分析方法 - 情感演变时间线:**
 
