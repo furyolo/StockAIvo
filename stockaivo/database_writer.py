@@ -9,10 +9,10 @@ from typing import List, Tuple, Dict, Any, Optional, Type, Union
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 
-from datetime import datetime, date, timezone, time
+from datetime import datetime, date, timezone
 
 from . import database
-from .models import StockPriceDaily, StockPriceWeekly, StockNews, StockSymbols, UsStocksName
+from .models import StockPriceDaily, StockPriceWeekly, StockSymbols, UsStocksName
 from .cache_manager import get_pending_data_from_redis, clear_saved_data, delete_from_redis
 
 # 配置日志
@@ -718,9 +718,9 @@ class DatabaseWriter:
 
                         # 根据period类型处理不同数据
                         if period == 'news':
-                            # 处理新闻数据
-                            news_data = self._prepare_news_data(ticker, dataframe)
-                            processed_rows = self._batch_upsert_news(db, news_data)
+                            # 新闻数据不再持久化到数据库，跳过处理
+                            logger.info(f"跳过新闻数据持久化: {ticker} (新闻数据仅使用Redis缓存)")
+                            processed_rows = 0
 
                         elif period == 'daily':
                             daily_data = self._prepare_daily_price_data(ticker, dataframe)
@@ -806,7 +806,7 @@ class DatabaseWriter:
 
         Args:
             ticker: 股票代码
-            period: 时间周期 ('daily', 'weekly', '10min', 'minute', 'news')
+            period: 时间周期 ('daily', 'weekly', '10min', 'minute')
             dataframe: 待保存的数据
             pending_cache_key (Optional[str]): 如果提供，操作成功后将从Redis中删除此键。
 
@@ -858,172 +858,11 @@ class DatabaseWriter:
             # db.rollback() is handled by the `with db.begin()` context manager on error
             return False
 
-    def _prepare_news_data(self, ticker: str, dataframe: pd.DataFrame) -> List[Dict[str, Any]]:
-        """
-        准备新闻数据用于数据库插入，包含数据验证和清理
-        注意：ticker 参数保留用于日志记录，但不再存储到数据库中
+    # _prepare_news_data方法已删除 - 新闻数据不再持久化到数据库
 
-        Args:
-            ticker: 股票代码（仅用于日志记录）
-            dataframe: 新闻数据DataFrame
+    # _batch_upsert_news方法已删除 - 新闻数据不再持久化到数据库
 
-        Returns:
-            List[Dict[str, Any]]: 准备好的新闻数据列表
-        """
-        # 增强新闻数据准备函数的数据验证和清理
-        if dataframe is None or dataframe.empty:
-            logger.warning(f"新闻数据DataFrame为空: {ticker}")
-            return []
-
-        news_data = []
-        current_time = datetime.now(timezone.utc)
-        skipped_count = 0
-
-        for _, row in dataframe.iterrows():
-            try:
-                # 数据验证：确保必需字段存在且有效
-                title = row.get('title')
-                publish_time = row.get('publish_time')
-                keyword = row.get('keyword', '')
-
-                if pd.isna(title) or not str(title).strip():
-                    skipped_count += 1
-                    logger.debug(f"跳过空标题的新闻记录")
-                    continue
-
-                if pd.isna(publish_time):
-                    skipped_count += 1
-                    logger.debug(f"跳过缺少发布时间的新闻记录")
-                    continue
-
-                # 数据清理和格式化（移除ticker字段，符合新的表结构）
-                news_record = {
-                    'keyword': str(keyword).strip(),
-                    'title': str(title).strip(),
-                    'content': str(row.get('content', '')).strip() if pd.notna(row.get('content')) and row.get('content') is not None else None,
-                    'publish_time': pd.to_datetime(publish_time),
-                    'created_at': current_time,
-                    'updated_at': current_time
-                }
-
-                # 额外验证：确保时间格式正确
-                if pd.isna(news_record['publish_time']):
-                    skipped_count += 1
-                    logger.warning(f"跳过无效发布时间的新闻记录: {publish_time}")
-                    continue
-
-                news_data.append(news_record)
-
-            except Exception as e:
-                skipped_count += 1
-                logger.error(f"处理新闻记录时发生错误: {e}")
-                continue
-
-        if skipped_count > 0:
-            logger.warning(f"跳过了 {skipped_count} 条无效的新闻记录")
-
-        logger.info(f"准备了 {len(news_data)} 条新闻数据用于数据库插入 (原始: {len(dataframe)}, 跳过: {skipped_count})")
-        return news_data
-
-    def _batch_upsert_news(self, db: Session, news_data: List[Dict[str, Any]]) -> int:
-        """
-        批量插入或更新新闻数据，包含错误处理和重试机制
-
-        Args:
-            db: 数据库会话
-            news_data: 新闻数据列表
-
-        Returns:
-            int: 处理的记录数
-        """
-        # 增强新闻数据批量处理的错误处理和重试机制
-        if not news_data:
-            return 0
-
-        # 数据去重：基于新的复合主键 (keyword, title, publish_time)
-        unique_news: Dict[Tuple[Any, Any, Any], Dict[str, Any]] = {}
-        for item in news_data:
-            key = (item.get('keyword'), item.get('title'), item.get('publish_time'))
-            if key not in unique_news:
-                unique_news[key] = item
-            else:
-                # 保留最新的记录（基于updated_at或created_at）
-                existing_time = unique_news[key].get('updated_at') or unique_news[key].get('created_at')
-                new_time = item.get('updated_at') or item.get('created_at')
-                if new_time and (not existing_time or new_time > existing_time):
-                    unique_news[key] = item
-
-        deduplicated_data = list(unique_news.values())
-        if len(deduplicated_data) != len(news_data):
-            logger.info(f"新闻数据去重: 原始 {len(news_data)} 条 -> 去重后 {len(deduplicated_data)} 条")
-
-        try:
-            # 使用PostgreSQL的批量UPSERT，基于复合主键
-            stmt = insert(StockNews).values(deduplicated_data)
-            update_dict = {
-                'keyword': stmt.excluded.keyword,
-                'content': stmt.excluded.content,
-                'updated_at': datetime.now(timezone.utc)
-            }
-
-            # 基于新的复合主键进行冲突处理（keyword, title, publish_time）
-            stmt = stmt.on_conflict_do_update(
-                index_elements=['keyword', 'title', 'publish_time'],
-                set_=update_dict
-            )
-
-            db.execute(stmt)
-
-            logger.info(f"成功批量处理 {len(deduplicated_data)} 条新闻数据")
-            return len(deduplicated_data)
-
-        except Exception as e:
-            logger.error(f"批量插入新闻数据时发生错误: {e}")
-            # 记录详细错误信息以便调试
-            logger.error(f"错误数据样本: {deduplicated_data[:3] if deduplicated_data else 'None'}")
-            raise
-
-    def save_news_dataframe_to_db(self, ticker: str, dataframe: pd.DataFrame, pending_cache_key: Optional[str] = None) -> bool:
-        """
-        将新闻DataFrame直接持久化到数据库
-
-        Args:
-            ticker: 股票代码
-            dataframe: 新闻数据DataFrame
-            pending_cache_key: 可选的缓存键，成功后删除
-
-        Returns:
-            bool: 保存成功返回True，失败返回False
-        """
-        try:
-            # 检查数据库会话是否已初始化
-            if database.SessionLocal is None:
-                logger.error("数据库会话未初始化，无法保存新闻数据")
-                return False
-
-            with database.SessionLocal() as db:
-                with db.begin():
-                    # 准备新闻数据
-                    news_data = self._prepare_news_data(ticker, dataframe)
-
-                    if not news_data:
-                        logger.warning(f"没有有效的新闻数据需要保存: {ticker}")
-                        return True
-
-                    # 批量插入新闻数据
-                    processed_rows = self._batch_upsert_news(db, news_data)
-
-                    logger.info(f"成功将新闻数据存入数据库: {ticker}, 处理行数: {processed_rows}")
-
-            # 如果提供了缓存键，并且数据库操作成功，则删除它
-            if pending_cache_key:
-                logger.info(f"新闻数据写入成功，现在删除 pending_save 缓存键: {pending_cache_key}")
-                delete_from_redis(pending_cache_key)
-
-            return True
-        except Exception as e:
-            logger.error(f"保存新闻数据到数据库失败 {ticker}: {e}")
-            return False
+    # save_news_dataframe_to_db方法已删除 - 新闻数据不再持久化到数据库
 
     def save_realtime_quotes_to_db(self, dataframe: pd.DataFrame, pending_cache_key: Optional[str] = None) -> bool:
         """

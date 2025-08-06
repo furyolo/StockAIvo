@@ -9,7 +9,7 @@
 - 🔄 **Redis → PostgreSQL → AKShare** 智能缓存链路
 - ⏰ **多时间粒度**：日线、周线、10分钟线、分钟线数据
 - 🧠 **交易日历感知**：基于NYSE交易日历的智能日期处理
-- 📰 **新闻数据集成**：TickerTick + AKShare双源新闻，时区智能处理
+- 📰 **新闻数据集成**：TickerTick API实时新闻，Redis缓存优化
 - 🛡️ **智能数据验证**：`ValidationResult`类 + 价格边界修复 + 分层验证策略
 - 🔧 **自动修复机制**：异常容忍度5%，智能修复超范围价格数据
 
@@ -44,7 +44,8 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  Redis (缓存)     │  PostgreSQL (数据库)  │  AKShare (数据源) │
 │  • 热点数据缓存   │  • 股票基础信息        │  • 美股实时数据    │
-│  • 待保存数据     │  • 历史价格数据        │  • 历史K线数据     │
+│  • 新闻数据缓存   │  • 历史价格数据        │  • 历史K线数据     │
+│  • 待保存数据     │                        │  • TickerTick新闻  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -106,6 +107,7 @@ AI_SYNTHESIS_MODEL="gemini-2.5-pro"             # 综合分析专用
 |              | `GET /stocks/{ticker}/weekly`          | 周线数据               |
 |              | `GET /stocks/{ticker}/10min`           | 10分钟线（聚合）       |
 |              | `GET /stocks/{ticker}/minute`          | 分钟线数据             |
+|              | `GET /stocks/{ticker}/news`            | 新闻数据（缓存）       |
 | **智能搜索** | `GET /search/stocks?q=apple`           | 股票搜索               |
 |              | `GET /search/stocks/suggestions?q=app` | 实时建议               |
 | **AI分析**   | `POST /ai/analyze-parallel`            | **并行AI分析（推荐）** |
@@ -209,7 +211,7 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 - 🤖 **LangGraph工作流**：模块化多Agent架构，并行分析提升2-3倍效率
 - 🚀 **三级缓存策略**：Redis → PostgreSQL → AKShare，智能数据获取
 - 🛡️ **智能数据验证**：`ValidationResult` + 价格修复 + 异常容忍机制
-- 📰 **双源新闻系统**：TickerTick主源 + AKShare备源，时区智能转换
+- 📰 **新闻缓存系统**：TickerTick API + Redis缓存，实时新闻获取
 
 ## 📋 版本历史
 
@@ -219,7 +221,7 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 - 🎯 **技术栈现代化**：TailwindCSS 4 + shadcn/ui + TradingView Lightweight Charts 5.0
 - 🔧 **工具链优化**：uv + pnpm + MyPy + ESLint 现代化开发工具链
 - 🛡️ **智能数据验证**：`ValidationResult`类 + 价格边界修复 + 分层验证策略
-- 📰 **新闻系统重构**：TickerTick API集成 + 复合主键 + 时区智能处理
+- 📰 **新闻系统重构**：TickerTick API集成 + Redis缓存优化 + 时区智能处理
 - ⚡ **现代化依赖注入**：`Annotated`类型系统 + 分层异常处理 + 中间件架构
 
 ### ⚡ v1.8.0 - 性能优化与逻辑统一
@@ -235,11 +237,11 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 - 🚀 **用户体验**：流式输出，动态进度反馈
 
 ### 📰 v1.5.0 - 新闻数据集成与重构
-- 📰 **双源新闻系统**：TickerTick API主源 + AKShare备源
+- 📰 **新闻缓存系统**：TickerTick API + Redis缓存，实时新闻获取
 - 🕐 **时区智能处理**：统一美东时间，1小时缓冲期优化
-- 🗃️ **数据库重构**：复合主键(`keyword`, `title`, `publish_time`)
+- 🗃️ **缓存优化**：新闻数据仅使用Redis缓存，提升响应速度
 - 🤖 **AI情感增强**：基于实际新闻的时间序列情感演化分析
-- 🔧 **智能去重**：新闻数据去重机制 + 异步持久化
+- 🔧 **智能去重**：新闻数据去重机制 + 内存缓存优化
 
 ### 🏗️ v1.2.0 - 架构现代化基础
 - ⚡ **现代化依赖注入**：`Annotated` 类型系统，`DatabaseDep`/`CacheDep`别名

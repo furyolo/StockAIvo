@@ -86,25 +86,25 @@ def check_db_connection() -> bool:
 
 def get_fullsymbol_from_db(db: Session, symbol: str) -> Optional[str]:
     """
-    根据 symbol 从 stock_symbols 表中查询并返回其对应的 full_symbol。
+    根据 symbol 从 stock_symbols 表中查询并返回其对应的 fullsymbol。
 
     Args:
         db (Session): 数据库会话。
         symbol (str): 股票代码, 例如 "AAPL"。
 
     Returns:
-        str | None: 如果找到，则返回 full_symbol；否则返回 None。
+        str | None: 如果找到，则返回 fullsymbol；否则返回 None。
     """
     try:
-        stmt = select(StockSymbols.full_symbol).where(StockSymbols.symbol == symbol)
-        full_symbol: Optional[str] = db.execute(stmt).scalar_one_or_none()
+        stmt = select(StockSymbols.fullsymbol).where(StockSymbols.symbol == symbol)
+        fullsymbol: Optional[str] = db.execute(stmt).scalar_one_or_none()
 
-        if full_symbol:
-            logger.info(f"成功为 symbol '{symbol}' 从数据库 stock_symbols 表中找到 full_symbol: '{full_symbol}'")
-            return str(full_symbol)  # 确保返回字符串类型
+        if fullsymbol:
+            logger.info(f"成功为 symbol '{symbol}' 从数据库 stock_symbols 表中找到 fullsymbol: '{fullsymbol}'")
+            return str(fullsymbol)  # 确保返回字符串类型
         else:
             logger.warning(f"无法在 stock_symbols 表中为 symbol '{symbol}' 找到匹配的记录。")
             return None
     except SQLAlchemyError as e:
-        logger.error(f"查询 symbol '{symbol}' 的 full_symbol 时发生数据库错误: {e}")
+        logger.error(f"查询 symbol '{symbol}' 的 fullsymbol 时发生数据库错误: {e}")
         return None

@@ -1577,9 +1577,9 @@ class TickerTickNewsProvider(NewsDataProvider):
             processed_df = df.copy()
             processed_df['ticker'] = ticker
 
-            # 处理keyword字段 - 从tags中提取或使用ticker
-            if 'tags' in processed_df.columns:
-                processed_df['keyword'] = processed_df['tags'].apply(
+            # 处理keyword字段 - 从tickers中提取或使用ticker
+            if 'tickers' in processed_df.columns:
+                processed_df['keyword'] = processed_df['tickers'].apply(
                     lambda tags: ', '.join(map(str.upper, tags)) if isinstance(tags, list) and tags else ticker
                 )
             else:
@@ -1597,7 +1597,7 @@ class TickerTickNewsProvider(NewsDataProvider):
                     processed_df = processed_df.rename(columns={old_col: new_col})
 
             # 删除不需要的字段
-            columns_to_drop = ['tags', 'id', 'url', 'site']
+            columns_to_drop = ['id', 'url', 'site', "favicon_url", 'tags', 'similar_stories', 'tickers']
             for col in columns_to_drop:
                 if col in processed_df.columns:
                     processed_df = processed_df.drop(columns=[col])

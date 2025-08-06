@@ -1101,56 +1101,7 @@ def _query_database(db: Session, ticker: str, period: PeriodType, start_date: Op
         logger.error(f"查询数据库时发生错误: {e}")
         return None
 
-def _append_news_to_pending_save(ticker: str, news_data: pd.DataFrame):
-    """
-    将新闻数据安全地追加到 PENDING_SAVE 缓存中。
-
-    Args:
-        ticker: 股票代码
-        news_data: 新闻数据DataFrame
-    """
-    # {{ AURA-X: Add - 新增新闻数据临时存储函数. Approval: 寸止(ID:1737364800). }}
-    if news_data is None or news_data.empty:
-        return
-
-    # 1. 从Redis读取现有的pending_save新闻数据
-    existing_data = cache_manager.get_from_redis(ticker, "news", CacheType.PENDING_SAVE)
-
-    # 2. 合并数据并去重
-    if existing_data is not None and not existing_data.empty:
-        # {{ AURA-X: Modify - 修复新闻数据去重逻辑. Approval: 寸止(ID:1737364800). }}
-        # 合并现有数据和新数据
-        combined_data = pd.concat([existing_data, news_data], ignore_index=True)
-
-        # 确保时间列格式一致
-        if 'publish_time' in combined_data.columns:
-            combined_data['publish_time'] = pd.to_datetime(combined_data['publish_time'])
-
-        # 基于复合主键去重：title + publish_time
-        # 使用更严格的去重条件
-        if 'title' in combined_data.columns and 'publish_time' in combined_data.columns:
-            original_count = len(combined_data)
-            combined_data = combined_data.drop_duplicates(
-                subset=['title', 'publish_time'],
-                keep='last'  # 保留最新的记录
-            ).reset_index(drop=True)
-
-            duplicates_removed = original_count - len(combined_data)
-            logger.info(f"合并新闻数据: 现有 {len(existing_data)} 条 + 新增 {len(news_data)} 条 = 原始合并 {original_count} 条")
-            if duplicates_removed > 0:
-                logger.info(f"去重处理: 移除 {duplicates_removed} 条重复记录，最终 {len(combined_data)} 条")
-            else:
-                logger.info(f"去重处理: 无重复记录，保持 {len(combined_data)} 条")
-        else:
-            logger.warning("缺少去重所需的字段 (title, publish_time)，跳过去重处理")
-
-    else:
-        combined_data = news_data.copy()
-        logger.info(f"首次存储新闻数据到待持久化缓存: {len(combined_data)} 条")
-
-    # 3. 将合并后的数据写回Redis
-    cache_manager.save_to_redis(ticker, "news", combined_data, CacheType.PENDING_SAVE)
-    logger.info(f"新闻数据已更新到待持久化缓存: {ticker}, 总记录数: {len(combined_data)}")
+# _append_news_to_pending_save函数已删除 - 新闻数据不再使用待持久化缓存
 
 
 def _append_to_pending_save(ticker: str, period: PeriodType, new_data: pd.DataFrame):
@@ -1164,9 +1115,13 @@ def _append_to_pending_save(ticker: str, period: PeriodType, new_data: pd.DataFr
     if new_data is None or new_data.empty:
         return
 
-    # 分钟线数据不持久化到PostgreSQL，跳过pending_save缓存
+    # 分钟线数据和新闻数据不持久化到PostgreSQL，跳过pending_save缓存
     if period == "minute":
         logger.info(f"跳过分钟线数据的pending_save缓存: {ticker} (分钟线数据不持久化)")
+        return
+
+    if period == "news":
+        logger.info(f"跳过新闻数据的pending_save缓存: {ticker} (新闻数据仅使用Redis缓存)")
         return
 
     # 1. 从Redis读取现有的pending_save数据
@@ -1291,12 +1246,8 @@ async def get_stock_news(ticker: str, background_tasks: Optional[BackgroundTasks
         # 3. 保存到Redis缓存（设置较短的过期时间，因为新闻数据更新频繁）
         cache_manager.save_to_redis(ticker, "news", news_data, CacheType.GENERAL_CACHE)
 
-        # 4. 将新闻数据存入待持久化缓存，等待定时任务批量处理
-        # 实现新闻数据异步持久化机制
-        # {{ Source: 用户需求 - 新闻数据不立即写入数据库，而是暂存等待批量处理 }}
-        _append_news_to_pending_save(ticker, news_data)
-        logger.info(f"新闻数据已存入待持久化缓存: {ticker}, 记录数: {len(news_data)}")
-        # 定时任务 scheduled_persist_job 将在后台处理数据入库
+        # 4. 新闻数据仅使用即时缓存，不再持久化到数据库
+        logger.info(f"新闻数据已保存到即时缓存: {ticker}, 记录数: {len(news_data)}")
 
         return news_data
 
