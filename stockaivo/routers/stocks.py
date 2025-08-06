@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..data_service import get_stock_data, get_stock_news
 from ..schemas import StockDataResponse, ErrorResponse, StockNewsResponse
+from ..data_provider import fetch_realtime_quotes, fetch_us_stock_names
+from ..database_writer import save_realtime_quotes_to_db, save_us_stock_names_to_db
 
 # 导入现代化依赖注入和异常处理模块
 from ..dependencies import DatabaseDep
@@ -326,3 +328,101 @@ async def get_stock_news_data(
     except Exception as e:
         logger.error(f"获取新闻数据失败 {ticker}: {e}")
         raise DataServiceException(f"获取新闻数据失败: {str(e)}")
+
+
+@router.post("/realtime-quotes/update")
+async def update_realtime_quotes():
+    """
+    手动触发实时行情数据更新
+
+    用于管理员或定时任务触发数据库更新，获取最新的美股实时行情数据
+    并直接保存到stock_symbols表中。
+
+    Returns:
+        Dict: 更新结果，包含成功状态、更新记录数和时间戳
+    """
+    try:
+        logger.info("手动触发实时行情数据更新")
+
+        # 获取实时行情数据
+        data = await fetch_realtime_quotes()
+
+        if data is None or data.empty:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="未能获取到实时行情数据"
+            )
+
+        # 直接更新数据库
+        success = save_realtime_quotes_to_db(data)
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="更新实时行情数据到数据库失败"
+            )
+
+        result = {
+            "success": True,
+            "message": "实时行情数据更新成功",
+            "updated_count": len(data),
+            "timestamp": datetime.now()
+        }
+
+        logger.info(f"手动更新实时行情数据成功，更新记录数: {len(data)}")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"手动更新实时行情数据失败: {e}")
+        raise DataServiceException(f"更新实时行情数据失败: {str(e)}")
+
+
+@router.post("/us-stock-names/update")
+async def update_us_stock_names():
+    """
+    手动触发美股名称数据更新
+
+    用于管理员或定时任务触发数据库更新，获取最新的美股名称数据
+    并直接保存到us_stocks_name表中。
+
+    Returns:
+        Dict: 更新结果，包含成功状态、更新记录数和时间戳
+    """
+    try:
+        logger.info("手动触发美股名称数据更新")
+
+        # 获取美股名称数据
+        data = await fetch_us_stock_names()
+
+        if data is None or data.empty:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="未能获取到美股名称数据"
+            )
+
+        # 直接更新数据库
+        success = save_us_stock_names_to_db(data)
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="更新美股名称数据到数据库失败"
+            )
+
+        result = {
+            "success": True,
+            "message": "美股名称数据更新成功",
+            "updated_count": len(data),
+            "timestamp": datetime.now()
+        }
+
+        logger.info(f"手动更新美股名称数据成功，更新记录数: {len(data)}")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"手动更新美股名称数据失败: {e}")
+        raise DataServiceException(f"更新美股名称数据失败: {str(e)}")

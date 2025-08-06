@@ -223,7 +223,7 @@ class CacheManager:
 
         Args:
             ticker: 股票代码 (例如: "AAPL")
-            period: 时间周期 ("daily", "weekly", "hourly", "minute")
+            period: 时间周期 ("daily", "weekly", "10min", "minute")
             data: 股票数据DataFrame
             cache_type: 缓存类型 (CacheType.PENDING_SAVE 或 CacheType.GENERAL_CACHE)
 
@@ -299,7 +299,7 @@ class CacheManager:
 
         Args:
             ticker: 股票代码 (例如: "AAPL")
-            period: 时间周期 ("daily", "weekly", "hourly")
+            period: 时间周期 ("daily", "weekly", "10min", "minute")
             cache_type: 缓存类型 (CacheType.PENDING_SAVE 或 CacheType.GENERAL_CACHE)
 
         Returns:

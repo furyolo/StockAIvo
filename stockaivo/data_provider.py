@@ -17,12 +17,13 @@ import time
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from typing import Dict, List, Optional, Literal, Union, Any, Tuple, Deque
 from enum import Enum
 
 import akshare as ak
 import httpx
+import numpy as np  # type: ignore
 import pandas as pd  # type: ignore
 import pytz  # type: ignore
 import requests  # type: ignore
@@ -37,7 +38,7 @@ from .models import UsStocksName  # type: ignore
 logger = logging.getLogger(__name__)
 
 # 类型定义
-PeriodType = Literal["daily", "weekly", "hourly", "minute"]
+PeriodType = Literal["daily", "weekly", "minute"]
 DataSourceType = Literal["akshare", "tickertick"]
 
 
@@ -220,7 +221,7 @@ class BaseDataProvider(ABC):
         """在每次重试前记录日志"""
         self.logger.warning(
             f"Retrying API call, attempt {retry_state.attempt_number} "
-            f"after error: {retry_state.outcome.exception()}"
+            f"after error: {retry_state.outcome.exception() if retry_state.outcome and retry_state.outcome.exception() else '未知错误'}"
         )
 
 
@@ -505,7 +506,7 @@ def _log_before_retry(retry_state: Any) -> None:
     """全局重试日志函数"""
     logger.warning(
         f"Retrying API call, attempt {retry_state.attempt_number} "
-        f"after error: {retry_state.outcome.exception()}"
+        f"after error: {retry_state.outcome.exception() if retry_state.outcome and retry_state.outcome.exception() else '未知错误'}"
     )
 
 
@@ -870,10 +871,305 @@ class StockDataProvider(BaseDataProvider):
         return df
 
 
+# ===== 实时行情数据提供者 =====
+
+class RealTimeQuoteProvider(BaseDataProvider):
+    """
+    美股实时行情数据提供者
+
+    使用AKShare的stock_us_spot_em()接口获取美股实时行情数据，
+    遵循项目现有的架构模式和代码风格。
+
+    主要功能：
+    - 获取美股实时行情数据
+    - 数据标准化和验证
+    - 智能重试机制
+    - 与现有系统的无缝集成
+    """
+
+    def __init__(self, config: Optional[DataProviderConfig] = None):
+        if config is None:
+            config = DataProviderConfig()
+        super().__init__(config)
+
+    async def fetch_data(self, **kwargs: Any) -> Optional[pd.DataFrame]:
+        """
+        获取美股实时行情数据
+
+        Returns:
+            包含实时行情数据的 DataFrame，失败时返回 None
+        """
+        try:
+            self.logger.info("开始获取美股实时行情数据")
+
+            # 调用带重试逻辑的辅助函数
+            df = await self._fetch_realtime_quotes_with_retry()
+
+            if df is None or df.empty:
+                self.logger.warning("获取到的实时行情数据为空")
+                return None
+
+            # 标准化列名
+            df = self._standardize_columns(df)
+
+            # 数据清洗和验证
+            df = self._clean_and_validate_data(df)
+
+            if df is None or df.empty:
+                self.logger.warning("数据清洗后为空")
+                return None
+
+            self.logger.info(f"成功获取实时行情数据，共 {len(df)} 条记录")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"获取实时行情数据失败: {e}")
+            return None
+
+    @retry(
+        stop=stop_after_attempt(DataProviderConfig.AKSHARE_RETRY_ATTEMPTS),
+        wait=wait_exponential(
+            multiplier=1,
+            min=DataProviderConfig.AKSHARE_RETRY_MIN_WAIT,
+            max=DataProviderConfig.AKSHARE_RETRY_MAX_WAIT
+        ),
+        retry=retry_if_exception_type((requests.exceptions.RequestException, IOError)),
+        before_sleep=lambda retry_state: logger.warning(
+            f"重试获取实时行情数据，第 {retry_state.attempt_number} 次尝试，"
+            f"错误: {retry_state.outcome.exception() if retry_state.outcome and retry_state.outcome.exception() else '未知错误'}"
+        )
+    )
+    async def _fetch_realtime_quotes_with_retry(self) -> Optional[pd.DataFrame]:
+        """
+        使用 tenacity 重试逻辑调用 AKShare 实时行情 API
+        """
+        self.logger.info("调用 AKShare stock_us_spot_em() 获取实时行情")
+
+        def sync_akshare_call():
+            return ak.stock_us_spot_em()
+
+        df = await asyncio.to_thread(sync_akshare_call)
+
+        # 如果 API 返回 None 或空的 DataFrame，主动抛出 IOError 触发重试
+        if df is None or df.empty:
+            raise IOError("API returned empty realtime quote data.")
+
+        return df
+
+    def _standardize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        标准化 DataFrame 的列名，遵循项目约定
+
+        Args:
+            df: 原始数据 DataFrame
+
+        Returns:
+            标准化后的 DataFrame
+        """
+        # 列名映射字典，基于项目要求
+        column_mapping = {
+            "名称": "name",
+            "最新价": "price",
+            "涨跌额": "price_change",
+            "涨跌幅": "price_change_percent",
+            "开盘价": "open",
+            "最高价": "high",
+            "最低价": "low",
+            "昨收价": "pre_close",
+            "总市值": "market_value",
+            "市盈率": "pe_ratio",
+            "成交量": "volume",
+            "成交额": "turnover",
+            "振幅": "amplitude",
+            "换手率": "turnover_rate",
+            "代码": "fullsymbol"
+        }
+
+        # 重命名列
+        df = df.rename(columns=column_mapping)
+
+        self.logger.debug(f"列名标准化完成，当前列: {list(df.columns)}")
+        return df
+
+    def _clean_and_validate_data(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """
+        数据清洗和验证，遵循项目数据处理标准
+
+        Args:
+            df: 待清洗的 DataFrame
+
+        Returns:
+            清洗后的 DataFrame，失败时返回 None
+        """
+        try:
+            # 过滤无效记录（fullsymbol为空的记录）
+            initial_count = len(df)
+            df = df.dropna(subset=['fullsymbol'])
+            df = df[df['fullsymbol'].str.strip() != '']
+
+            if len(df) < initial_count:
+                self.logger.info(f"过滤无效记录: {initial_count} -> {len(df)}")
+
+            if df.empty:
+                self.logger.warning("过滤后数据为空")
+                return None
+
+            # 从fullsymbol提取symbol字段
+            df = self._extract_symbol_from_fullsymbol(df)
+
+            # 数据类型转换和异常值处理
+            df = self._convert_data_types(df)
+
+            # 添加时间戳字段
+            current_time = datetime.now(timezone.utc)
+            df['created_at'] = current_time
+            df['updated_at'] = current_time
+
+            self.logger.info(f"数据清洗完成，有效记录数: {len(df)}")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"数据清洗失败: {e}")
+            return None
+
+    def _extract_symbol_from_fullsymbol(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        从fullsymbol字段提取symbol字段
+
+        格式：106.AAPL -> AAPL
+
+        Args:
+            df: 包含fullsymbol字段的 DataFrame
+
+        Returns:
+            添加symbol字段的 DataFrame
+        """
+        def extract_symbol(fullsymbol):
+            if pd.isna(fullsymbol) or not isinstance(fullsymbol, str):
+                return None
+
+            fullsymbol = str(fullsymbol).strip()
+            if "." in fullsymbol:
+                return fullsymbol.split(".", 1)[1]
+            else:
+                # 如果没有点分隔符，直接返回原值
+                return fullsymbol
+
+        df['symbol'] = df['fullsymbol'].apply(extract_symbol)
+
+        # 过滤symbol为空的记录
+        df = df.dropna(subset=['symbol'])
+        df = df[df['symbol'].str.strip() != '']
+
+        self.logger.debug(f"symbol字段提取完成，有效记录数: {len(df)}")
+        return df
+
+    def _convert_data_types(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        数据类型转换和异常值处理，遵循项目标准
+
+        Args:
+            df: 待转换的 DataFrame
+
+        Returns:
+            转换后的 DataFrame
+        """
+        # 定义数值列和大整数列
+        numeric_cols = [
+            "price", "price_change", "price_change_percent",
+            "open", "high", "low", "pre_close",
+            "pe_ratio", "amplitude", "turnover_rate"
+        ]
+        bigint_cols = ["market_value", "volume", "turnover"]
+
+        # 处理数值列
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = self._safe_numeric_conversion(df[col], col)
+
+        # 处理大整数列
+        for col in bigint_cols:
+            if col in df.columns:
+                df[col] = self._safe_bigint_conversion(df[col], col)
+
+        # 处理字符串列
+        string_cols = ["name", "symbol", "fullsymbol"]
+        for col in string_cols:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.strip()
+
+        return df
+
+    def _safe_numeric_conversion(self, series: pd.Series, col_name: str) -> pd.Series:
+        """
+        安全的数值转换，处理NaN、Infinity等异常值
+
+        Args:
+            series: 待转换的 Series
+            col_name: 列名（用于日志）
+
+        Returns:
+            转换后的 Series
+        """
+        try:
+            # 转换为数值类型
+            numeric_series = pd.to_numeric(series, errors='coerce')
+
+            # 处理无穷大值
+            inf_count = np.isinf(numeric_series).sum()
+            if inf_count > 0:
+                self.logger.warning(f"列 {col_name} 包含 {inf_count} 个无穷大值，已转换为NaN")
+                numeric_series = numeric_series.replace([np.inf, -np.inf], np.nan)
+
+            # 记录NaN值数量
+            nan_count = numeric_series.isna().sum()
+            if nan_count > 0:
+                self.logger.debug(f"列 {col_name} 包含 {nan_count} 个NaN值")
+
+            return numeric_series
+
+        except Exception as e:
+            self.logger.error(f"数值转换失败 {col_name}: {e}")
+            return series
+
+    def _safe_bigint_conversion(self, series: pd.Series, col_name: str) -> pd.Series:
+        """
+        安全的大整数转换
+
+        Args:
+            series: 待转换的 Series
+            col_name: 列名（用于日志）
+
+        Returns:
+            转换后的 Series
+        """
+        try:
+            # 先转换为数值类型
+            numeric_series = pd.to_numeric(series, errors='coerce')
+
+            # 处理无穷大值
+            numeric_series = numeric_series.replace([np.inf, -np.inf], np.nan)
+
+            # 转换为整数，保留NaN
+            int_series = numeric_series.astype('Int64')  # 使用nullable integer type
+
+            # 记录转换统计
+            nan_count = int_series.isna().sum()
+            if nan_count > 0:
+                self.logger.debug(f"列 {col_name} 包含 {nan_count} 个NaN值")
+
+            return int_series
+
+        except Exception as e:
+            self.logger.error(f"大整数转换失败 {col_name}: {e}")
+            return series
+
+
 # ===== 全局实例和向后兼容性函数 =====
 
 # 创建全局实例
 _stock_data_provider = StockDataProvider()
+_realtime_quote_provider = RealTimeQuoteProvider()
 
 
 # 保持向后兼容性的函数
@@ -882,6 +1178,26 @@ async def fetch_from_akshare(db: Session, ticker: str, period: str, start_date: 
     向后兼容性函数：从 AKShare 获取指定股票的指定周期数据
     """
     return await _stock_data_provider.fetch_data(db, ticker, period, start_date, end_date)
+
+
+async def fetch_realtime_quotes() -> Optional[pd.DataFrame]:
+    """
+    向后兼容性函数：获取美股实时行情数据
+
+    Returns:
+        包含实时行情数据的 DataFrame，失败时返回 None
+    """
+    return await _realtime_quote_provider.fetch_data()
+
+
+async def fetch_us_stock_names() -> Optional[pd.DataFrame]:
+    """
+    获取美股名称数据
+
+    Returns:
+        包含美股名称数据的 DataFrame，失败时返回 None
+    """
+    return await _us_stock_name_provider.fetch_data()
 
 
 # 向后兼容性函数
@@ -1355,11 +1671,153 @@ class TickerTickNewsProvider(NewsDataProvider):
         return df_filtered
 
 
-# ===== 全局新闻数据提供者实例 =====
+# ===== 美股名称数据提供者 =====
+
+class UsStockNameProvider(BaseDataProvider):
+    """
+    美股名称数据提供者
+
+    使用AKShare的get_us_stock_name()接口获取美股名称数据，
+    遵循项目现有的架构模式和代码风格。
+
+    主要功能：
+    - 获取美股名称数据
+    - 数据标准化和验证
+    - 智能重试机制
+    - 与现有系统的无缝集成
+    """
+
+    def __init__(self, config: Optional[DataProviderConfig] = None):
+        if config is None:
+            config = DataProviderConfig()
+        super().__init__(config)
+
+    async def fetch_data(self) -> Optional[pd.DataFrame]:
+        """
+        获取美股名称数据
+
+        Returns:
+            清洗后的美股名称数据 DataFrame，失败时返回 None
+        """
+        try:
+            self.logger.info("开始获取美股名称数据")
+
+            # 调用带重试逻辑的辅助函数
+            df = await self._fetch_us_stock_names_with_retry()
+
+            if df is None or df.empty:
+                self.logger.warning("获取到的美股名称数据为空")
+                return None
+
+            self.logger.info(f"获取到 {len(df)} 条美股名称数据")
+
+            # 数据清洗和验证
+            df = self._clean_and_validate_data(df)
+
+            if df is None or df.empty:
+                self.logger.warning("数据清洗后为空")
+                return None
+
+            self.logger.info(f"数据清洗完成，有效记录数: {len(df)}")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"获取美股名称数据失败: {e}")
+            return None
+
+    @retry(
+        stop=stop_after_attempt(DataProviderConfig.AKSHARE_RETRY_ATTEMPTS),
+        wait=wait_exponential(
+            multiplier=1,
+            min=DataProviderConfig.AKSHARE_RETRY_MIN_WAIT,
+            max=DataProviderConfig.AKSHARE_RETRY_MAX_WAIT
+        ),
+        retry=retry_if_exception_type((IOError, requests.exceptions.RequestException))
+    )
+    async def _fetch_us_stock_names_with_retry(self) -> Optional[pd.DataFrame]:
+        """
+        使用 tenacity 重试逻辑调用 AKShare 美股名称 API
+        """
+        self.logger.info("调用 AKShare get_us_stock_name() 获取美股名称")
+
+        def sync_akshare_call():
+            return ak.get_us_stock_name()
+
+        df = await asyncio.to_thread(sync_akshare_call)
+
+        # 如果 API 返回 None 或空的 DataFrame，主动抛出 IOError 触发重试
+        if df is None or df.empty:
+            raise IOError("API returned empty us stock name data.")
+
+        return df
+
+    def _clean_and_validate_data(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """
+        数据清洗和验证，遵循项目数据处理标准
+
+        Args:
+            df: 待清洗的 DataFrame
+
+        Returns:
+            清洗后的 DataFrame，失败时返回 None
+        """
+        try:
+            # 过滤无效记录（symbol为空的记录）
+            initial_count = len(df)
+            df = df.dropna(subset=['symbol'])
+            df = df[df['symbol'].str.strip() != '']
+
+            if len(df) < initial_count:
+                self.logger.info(f"过滤无效记录: {initial_count} -> {len(df)}")
+
+            if df.empty:
+                self.logger.warning("过滤后数据为空")
+                return None
+
+            # 数据类型转换和清理
+            df = self._convert_data_types(df)
+
+            # 添加时间戳字段
+            current_time = datetime.now(timezone.utc)
+            df['created_at'] = current_time
+            df['updated_at'] = current_time
+
+            self.logger.info(f"数据清洗完成，有效记录数: {len(df)}")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"数据清洗失败: {e}")
+            return None
+
+    def _convert_data_types(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        数据类型转换和异常值处理，遵循项目标准
+
+        Args:
+            df: 待转换的 DataFrame
+
+        Returns:
+            转换后的 DataFrame
+        """
+        # 处理字符串列
+        string_cols = ["symbol", "name", "cname"]
+        for col in string_cols:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.strip()
+                # 将空字符串转换为None（对于可空字段）
+                if col == "cname":
+                    df[col] = df[col].replace('', None)
+
+        self.logger.debug(f"数据类型转换完成，列: {list(df.columns)}")
+        return df
+
+
+# ===== 全局数据提供者实例 =====
 
 # 创建全局实例
 _akshare_news_provider = AKShareNewsProvider()
 _tickertick_news_provider = TickerTickNewsProvider()
+_us_stock_name_provider = UsStockNameProvider()
 
 
 def _get_company_chinese_name(db: Session, ticker: str) -> Optional[str]:
@@ -1434,6 +1892,7 @@ __all__ = [
     # 核心类
     'BaseDataProvider',
     'StockDataProvider',
+    'RealTimeQuoteProvider',
     'NewsDataProvider',
     'AKShareNewsProvider',
     'TickerTickNewsProvider',
@@ -1441,9 +1900,12 @@ __all__ = [
     # 工具类
     'DataValidator',
     'TimezoneConverter',
+    'ValidationResult',
 
     # 向后兼容性函数
     'fetch_from_akshare',
+    'fetch_realtime_quotes',
+    'fetch_us_stock_names',
     'fetch_stock_news_from_akshare',
     'fetch_stock_news_from_tickertick',
     'get_supported_story_types',

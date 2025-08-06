@@ -13,7 +13,7 @@ from datetime import datetime, date, timezone
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Column, String, Integer, DateTime, Date, Numeric, BigInteger, Text, ForeignKey, UniqueConstraint, Index, MetaData
+from sqlalchemy import Column, String, DateTime, Date, Numeric, BigInteger, Text, ForeignKey, UniqueConstraint, Index, MetaData
 from sqlalchemy.orm import declarative_base, relationship
 
 # 定义元数据，并指定 schema
@@ -28,22 +28,48 @@ Base = declarative_base(metadata=metadata_obj)
 class StockSymbols(Base):
     """
     股票代码与完整代码映射表
-    存储用于数据源查询的完整代码
+    存储用于数据源查询的完整代码和实时行情数据
+
+    注意：此模型匹配实际数据库表结构，包含完整的行情数据字段
     """
     __tablename__ = 'stock_symbols'
 
-    # 根据实际数据库结构：fullsymbol是主键，symbol是NOT NULL
-    full_symbol = Column("fullsymbol", String(255), primary_key=True, comment='数据源使用的完整代码，如105.AAPL')
-    symbol = Column(String(10), nullable=False, comment='股票代码，如AAPL')
+    # 主键和基础字段
+    fullsymbol = Column(String, primary_key=True, nullable=False, comment='数据源使用的完整代码，如106.AAPL')
+    symbol = Column(String, nullable=False, comment='股票代码，如AAPL')
+
+    # 基础信息字段
+    name = Column(String, nullable=False, comment='公司名称')
+
+    # 价格相关字段
+    price = Column(Numeric(10, 4), nullable=True, comment='最新价')
+    price_change = Column(Numeric(10, 4), nullable=True, comment='涨跌额')
+    price_change_percent = Column(Numeric(10, 4), nullable=True, comment='涨跌幅')
+    open = Column(Numeric(10, 4), nullable=True, comment='开盘价')
+    high = Column(Numeric(10, 4), nullable=True, comment='最高价')
+    low = Column(Numeric(10, 4), nullable=True, comment='最低价')
+    pre_close = Column(Numeric(10, 4), nullable=True, comment='昨收价')
+
+    # 市场数据字段
+    market_value = Column(BigInteger, nullable=True, comment='总市值')
+    pe_ratio = Column(Numeric(10, 4), nullable=True, comment='市盈率')
+    volume = Column(BigInteger, nullable=True, comment='成交量')
+    turnover = Column(BigInteger, nullable=True, comment='成交额')
+    amplitude = Column(Numeric(10, 4), nullable=True, comment='振幅')
+    turnover_rate = Column(Numeric(10, 4), nullable=True, comment='换手率')
+
+    # 时间戳字段
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
 
     # 创建索引以优化基于symbol的查询
     __table_args__ = (
         Index('idx_stock_symbols_symbol', 'symbol'),
-        {'comment': '股票代码与完整代码映射表'}
+        {'comment': '股票代码与完整代码映射表（包含实时行情数据）'}
     )
 
     def __repr__(self):
-        return f"<StockSymbols(symbol='{self.symbol}', full_symbol='{self.full_symbol}')>"
+        return f"<StockSymbols(symbol='{self.symbol}', fullsymbol='{self.fullsymbol}', price={self.price})>"
 
 class StockPriceDaily(Base):
     """
@@ -135,19 +161,51 @@ class UsStocksName(Base):
     美股名称表
     存储美国股票的英文名称、中文名称和股票代码的映射关系
     用于股票搜索和名称查询功能
+
+    主要用途：
+    - 股票代码与公司名称的映射
+    - 支持中英文名称的模糊搜索
+    - 为前端搜索功能提供数据支持
     """
     __tablename__ = 'us_stocks_name'
 
     # 主键：股票代码
-    symbol = Column(String, primary_key=True, nullable=False, comment='股票代码，如AAPL, MSFT')
+    symbol = Column(String, primary_key=True, nullable=False, comment='股票代码，如AAPL、MSFT等，作为主键唯一标识')
 
     # 名称字段
-    name = Column(String, nullable=False, comment='英文公司名称')
-    cname = Column(String, nullable=True, comment='中文公司名称')
+    name = Column(String, nullable=False, comment='英文公司名称，如Apple Inc、Microsoft Corporation')
+    cname = Column(String, nullable=True, comment='中文公司名称，如苹果公司、微软公司，可为空')
 
     # 时间戳字段
-    fetched_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), comment='数据获取时间')
-    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), comment='记录创建时间，UTC时区')
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间，UTC时区')
+
+    # 表约束和索引配置
+    __table_args__ = (
+        # B-tree索引：优化单字段查询
+        Index('idx_us_stocks_name_name', 'name'),
+        Index('idx_us_stocks_name_cname', 'cname'),
+
+        # 复合索引：优化多字段查询和排序操作
+        Index('idx_us_stocks_name_composite', 'symbol', 'name', 'cname'),
+
+        # GIN索引：支持全文搜索和模糊匹配（使用trigram）
+        # 注意：这些索引需要在数据库中手动创建，因为SQLAlchemy不直接支持GIN索引语法
+        # 实际创建语句在 database_migrations/add_search_indexes.sql 中
+
+        # 表注释
+        {'comment': '美股名称表，存储股票代码与中英文名称的映射关系，支持搜索和查询功能'}
+    )
+
+    def __repr__(self):
+        """
+        字符串表示方法，用于调试和日志记录
+
+        Returns:
+            str: 包含关键字段信息的字符串表示
+        """
+        cname_display = f", cname='{self.cname}'" if self.cname is not None and self.cname.strip() else ""
+        return f"<UsStocksName(symbol='{self.symbol}', name='{self.name}'{cname_display})>"
 
 
 class StockNews(Base):

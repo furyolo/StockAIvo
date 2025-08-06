@@ -11,6 +11,8 @@
 ### stock_symbols表优化
 - `create_stock_symbols_index.sql` - 为stock_symbols表创建索引的SQL脚本
 - `create_stock_symbols_index.py` - Python执行脚本，自动化stock_symbols索引创建
+- `remove_index_column.sql` - 删除stock_symbols表index字段的SQL脚本
+- `remove_index_column.py` - Python执行脚本，自动化删除index字段
 
 - `README.md` - 本说明文件
 
@@ -70,6 +72,16 @@ uv run create_stock_symbols_index.py
 
 # 可选：创建索引后测试查询性能
 uv run create_stock_symbols_index.py --test
+```
+
+#### 删除stock_symbols表的index字段
+```bash
+# 在项目根目录执行
+cd database_migrations
+uv run remove_index_column.py
+
+# 可选：仅验证不执行删除操作
+uv run remove_index_column.py --verify
 ```
 
 **优势**:

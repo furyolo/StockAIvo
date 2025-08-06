@@ -110,6 +110,8 @@ AI_SYNTHESIS_MODEL="gemini-2.5-pro"             # 综合分析专用
 |              | `GET /search/stocks/suggestions?q=app` | 实时建议               |
 | **AI分析**   | `POST /ai/analyze-parallel`            | **并行AI分析（推荐）** |
 |              | `POST /ai/analyze-stream`              | 流式AI分析             |
+| **数据管理** | `POST /stocks/realtime-quotes/update`  | 更新实时行情数据       |
+|              | `POST /stocks/us-stock-names/update`   | 更新美股名称数据       |
 | **系统监控** | `GET /health`                          | 健康检查               |
 |              | `GET /cache-stats`                     | 缓存统计               |
 
@@ -125,6 +127,32 @@ curl -X POST "http://127.0.0.1:8000/ai/analyze-parallel" \
 past_30_days | past_60_days | past_90_days | past_180_days | past_1_year
 past_8_weeks | past_16_weeks | past_24_weeks | past_52_weeks
 ```
+
+### 🔄 数据管理示例
+
+```bash
+# 更新美股名称数据
+curl -X POST "http://127.0.0.1:8000/stocks/us-stock-names/update" \
+  -H "Content-Type: application/json"
+
+# 响应示例
+{
+  "success": true,
+  "message": "美股名称数据更新成功",
+  "updated_count": 11841,
+  "timestamp": "2025-08-06T12:00:00"
+}
+
+# 更新实时行情数据
+curl -X POST "http://127.0.0.1:8000/stocks/realtime-quotes/update" \
+  -H "Content-Type: application/json"
+```
+
+**功能说明**：
+- `POST /stocks/us-stock-names/update`：从AKShare获取最新美股名称数据并更新`us_stocks_name`表
+- `POST /stocks/realtime-quotes/update`：从AKShare获取实时行情数据并更新`stock_symbols`表
+- 支持手动触发或定时任务调用
+- 包含完整的数据验证、清洗和去重机制
 
 > 🔗 **完整API文档**: http://127.0.0.1:8000/docs
 

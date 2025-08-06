@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from datetime import datetime, date, timezone, time
 
 from . import database
-from .models import StockPriceDaily, StockPriceWeekly, StockNews
+from .models import StockPriceDaily, StockPriceWeekly, StockNews, StockSymbols, UsStocksName
 from .cache_manager import get_pending_data_from_redis, clear_saved_data, delete_from_redis
 
 # 配置日志
@@ -186,6 +186,168 @@ class DatabaseWriter:
 
         return minute_data
 
+    def _prepare_realtime_quote_data(self, dataframe: pd.DataFrame) -> List[Dict[str, Any]]:
+        """
+        准备实时行情数据用于stock_symbols表更新
+
+        Args:
+            dataframe: 实时行情数据DataFrame
+
+        Returns:
+            List[Dict]: 实时行情数据字典列表
+        """
+        quote_data = []
+        current_time = datetime.now(timezone.utc)
+
+        # 定义期望的字段列表，确保字段顺序和名称的一致性
+        expected_fields = [
+            'fullsymbol', 'symbol', 'name', 'price', 'price_change',
+            'price_change_percent', 'open', 'high', 'low', 'pre_close',
+            'market_value', 'pe_ratio', 'volume', 'turnover', 'amplitude',
+            'turnover_rate', 'created_at', 'updated_at'
+        ]
+
+        logger.info(f"开始处理实时行情数据，原始记录数: {len(dataframe)}")
+        logger.debug(f"DataFrame列名: {list(dataframe.columns)}")
+
+        for idx, row in dataframe.iterrows():
+            try:
+                # 验证必需字段
+                fullsymbol = row.get('fullsymbol')
+                symbol = row.get('symbol')
+                name = row.get('name')
+
+                if pd.isna(fullsymbol) or pd.isna(symbol) or pd.isna(name):
+                    logger.warning(f"跳过第{idx}行，缺少必需字段: fullsymbol={fullsymbol}, symbol={symbol}, name={name}")
+                    continue
+
+                if not str(fullsymbol).strip() or not str(symbol).strip() or not str(name).strip():
+                    logger.warning(f"跳过第{idx}行，必需字段为空: fullsymbol='{fullsymbol}', symbol='{symbol}', name='{name}'")
+                    continue
+
+                # 构建记录字典，严格按照期望字段顺序
+                quote_record = {}
+
+                # 基础字段
+                quote_record['fullsymbol'] = str(fullsymbol).strip()
+                quote_record['symbol'] = str(symbol).strip()
+                quote_record['name'] = str(name).strip()
+
+                # 价格字段
+                quote_record['price'] = self._safe_convert_to_decimal(row.get('price'))
+                quote_record['price_change'] = self._safe_convert_to_decimal(row.get('price_change'))
+                quote_record['price_change_percent'] = self._safe_convert_to_decimal(row.get('price_change_percent'))
+                quote_record['open'] = self._safe_convert_to_decimal(row.get('open'))
+                quote_record['high'] = self._safe_convert_to_decimal(row.get('high'))
+                quote_record['low'] = self._safe_convert_to_decimal(row.get('low'))
+                quote_record['pre_close'] = self._safe_convert_to_decimal(row.get('pre_close'))
+
+                # 市场数据字段
+                quote_record['market_value'] = self._safe_convert_to_bigint(row.get('market_value'))
+                quote_record['pe_ratio'] = self._safe_convert_to_decimal(row.get('pe_ratio'))
+                quote_record['volume'] = self._safe_convert_to_bigint(row.get('volume'))
+                quote_record['turnover'] = self._safe_convert_to_bigint(row.get('turnover'))
+                quote_record['amplitude'] = self._safe_convert_to_decimal(row.get('amplitude'))
+                quote_record['turnover_rate'] = self._safe_convert_to_decimal(row.get('turnover_rate'))
+
+                # 时间戳字段
+                quote_record['created_at'] = current_time
+                quote_record['updated_at'] = current_time
+
+                # 验证记录字段完整性
+                if len(quote_record) != len(expected_fields):
+                    logger.error(f"记录字段数量不匹配: 期望{len(expected_fields)}个，实际{len(quote_record)}个")
+                    continue
+
+                # 验证字段名是否匹配
+                if set(quote_record.keys()) != set(expected_fields):
+                    logger.error(f"记录字段名不匹配: 期望{expected_fields}, 实际{list(quote_record.keys())}")
+                    continue
+
+                quote_data.append(quote_record)
+
+            except Exception as e:
+                logger.warning(f"处理第{idx}行实时行情记录时出错: {e}, 跳过该记录")
+                continue
+
+        logger.info(f"准备实时行情数据完成，有效记录数: {len(quote_data)}")
+        return quote_data
+
+    def _prepare_us_stock_name_data(self, dataframe: pd.DataFrame) -> List[Dict[str, Any]]:
+        """
+        准备美股名称数据用于us_stocks_name表更新
+
+        Args:
+            dataframe: 美股名称数据DataFrame
+
+        Returns:
+            List[Dict]: 美股名称数据字典列表
+        """
+        name_data = []
+        current_time = datetime.now(timezone.utc)
+
+        # 定义期望的字段列表
+        expected_fields = [
+            'symbol', 'name', 'cname', 'created_at', 'updated_at'
+        ]
+
+        logger.info(f"开始处理美股名称数据，原始记录数: {len(dataframe)}")
+        logger.debug(f"DataFrame列名: {list(dataframe.columns)}")
+
+        for idx, row in dataframe.iterrows():
+            try:
+                # 验证必需字段
+                symbol = row.get('symbol')
+                name = row.get('name')
+
+                if pd.isna(symbol) or pd.isna(name):
+                    logger.warning(f"跳过第{idx}行，缺少必需字段: symbol={symbol}, name={name}")
+                    continue
+
+                if not str(symbol).strip() or not str(name).strip():
+                    logger.warning(f"跳过第{idx}行，必需字段为空: symbol='{symbol}', name='{name}'")
+                    continue
+
+                # 构建记录字典
+                name_record = {
+                    'symbol': str(symbol).strip(),
+                    'name': str(name).strip(),
+                    'cname': str(row.get('cname', '')).strip() if pd.notna(row.get('cname')) else None,
+                    'created_at': current_time,
+                    'updated_at': current_time
+                }
+
+                # 验证记录字段完整性
+                if len(name_record) != len(expected_fields):
+                    logger.error(f"记录字段数量不匹配: 期望{len(expected_fields)}个，实际{len(name_record)}个")
+                    continue
+
+                name_data.append(name_record)
+
+            except Exception as e:
+                logger.warning(f"处理第{idx}行美股名称记录时出错: {e}, 跳过该记录")
+                continue
+
+        logger.info(f"准备美股名称数据完成，有效记录数: {len(name_data)}")
+        return name_data
+
+    def _safe_convert_to_decimal(self, value) -> Optional[float]:
+        """安全转换为decimal类型"""
+        if pd.isna(value) or value is None:
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
+    def _safe_convert_to_bigint(self, value) -> Optional[int]:
+        """安全转换为bigint类型"""
+        if pd.isna(value) or value is None:
+            return None
+        try:
+            return int(float(value))
+        except (ValueError, TypeError):
+            return None
 
     def _batch_upsert_prices(self, db: Session, table_class: Type[Union[StockPriceDaily, StockPriceWeekly]], price_data: List[Dict[str, Any]],
                            conflict_columns: List[str]) -> int:
@@ -245,7 +407,275 @@ class DatabaseWriter:
         except Exception as e:
             logger.error(f"批量处理 {table_class.__tablename__} 数据失败: {e}")
             return 0
-    
+
+    def _batch_upsert_realtime_quotes(self, db: Session, quote_data: List[Dict[str, Any]]) -> int:
+        """
+        批量插入或更新实时行情数据到stock_symbols表
+
+        Args:
+            db: 数据库会话
+            quote_data: 实时行情数据列表
+
+        Returns:
+            int: 成功处理的记录数
+        """
+        if not quote_data:
+            logger.warning("没有实时行情数据需要处理")
+            return 0
+
+        try:
+            logger.info(f"开始批量处理实时行情数据，原始记录数: {len(quote_data)}")
+
+            # 数据验证和清理
+            valid_data = []
+            for idx, item in enumerate(quote_data):
+                try:
+                    # 验证必需字段
+                    fullsymbol = item.get('fullsymbol')
+                    if not fullsymbol or not str(fullsymbol).strip():
+                        logger.warning(f"跳过第{idx}条记录：fullsymbol为空")
+                        continue
+
+                    # 验证数据结构
+                    expected_keys = {
+                        'fullsymbol', 'symbol', 'name', 'price', 'price_change',
+                        'price_change_percent', 'open', 'high', 'low', 'pre_close',
+                        'market_value', 'pe_ratio', 'volume', 'turnover', 'amplitude',
+                        'turnover_rate', 'created_at', 'updated_at'
+                    }
+
+                    item_keys = set(item.keys())
+                    if item_keys != expected_keys:
+                        missing_keys = expected_keys - item_keys
+                        extra_keys = item_keys - expected_keys
+                        logger.warning(f"跳过第{idx}条记录：字段不匹配。缺少: {missing_keys}, 多余: {extra_keys}")
+                        continue
+
+                    valid_data.append(item)
+
+                except Exception as e:
+                    logger.warning(f"验证第{idx}条记录时出错: {e}")
+                    continue
+
+            if not valid_data:
+                logger.warning("没有有效的实时行情数据需要处理")
+                return 0
+
+            logger.info(f"数据验证完成，有效记录数: {len(valid_data)}")
+
+            # 数据去重：基于fullsymbol主键
+            unique_quotes: Dict[str, Dict[str, Any]] = {}
+            for item in valid_data:
+                fullsymbol = item['fullsymbol']
+                # 保留最新的记录（基于updated_at）
+                if fullsymbol not in unique_quotes:
+                    unique_quotes[fullsymbol] = item
+                else:
+                    existing_time = unique_quotes[fullsymbol]['updated_at']
+                    new_time = item['updated_at']
+                    if new_time > existing_time:
+                        unique_quotes[fullsymbol] = item
+
+            deduplicated_data = list(unique_quotes.values())
+            if len(deduplicated_data) != len(valid_data):
+                logger.info(f"数据去重完成: {len(valid_data)} 条 -> {len(deduplicated_data)} 条")
+
+            # 分批处理，避免单次插入过多数据
+            # 使用更保守的批次大小来避免PostgreSQL InternalError
+            batch_size = 500  # 从1000减少到500
+            total_processed = 0
+
+            for i in range(0, len(deduplicated_data), batch_size):
+                batch_data = deduplicated_data[i:i + batch_size]
+                logger.info(f"处理批次 {i//batch_size + 1}: {len(batch_data)} 条记录")
+
+                try:
+                    # 使用PostgreSQL的批量UPSERT
+                    stmt = insert(StockSymbols).values(batch_data)
+
+                    # 定义更新字段（除主键和created_at外的所有字段）
+                    update_dict = {
+                        'symbol': stmt.excluded.symbol,
+                        'name': stmt.excluded.name,
+                        'price': stmt.excluded.price,
+                        'price_change': stmt.excluded.price_change,
+                        'price_change_percent': stmt.excluded.price_change_percent,
+                        'open': stmt.excluded.open,
+                        'high': stmt.excluded.high,
+                        'low': stmt.excluded.low,
+                        'pre_close': stmt.excluded.pre_close,
+                        'market_value': stmt.excluded.market_value,
+                        'pe_ratio': stmt.excluded.pe_ratio,
+                        'volume': stmt.excluded.volume,
+                        'turnover': stmt.excluded.turnover,
+                        'amplitude': stmt.excluded.amplitude,
+                        'turnover_rate': stmt.excluded.turnover_rate,
+                        'updated_at': stmt.excluded.updated_at
+                    }
+
+                    # 基于主键fullsymbol进行冲突处理
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=['fullsymbol'],
+                        set_=update_dict
+                    )
+
+                    db.execute(stmt)
+                    total_processed += len(batch_data)
+                    logger.info(f"批次 {i//batch_size + 1} 处理完成")
+
+                except Exception as e:
+                    error_type = type(e).__name__
+                    logger.error(f"批次 {i//batch_size + 1} 处理失败: {e}")
+                    logger.error(f"失败批次包含 {len(batch_data)} 条记录，从索引 {i} 到 {i + len(batch_data) - 1}")
+                    logger.error(f"错误类型: {error_type}")
+
+                    # 对于InternalError，尝试使用更小的子批次
+                    if error_type == "InternalError" and len(batch_data) > 50:
+                        logger.info(f"检测到InternalError，尝试将批次分解为更小的子批次...")
+
+                        sub_batch_size = min(50, len(batch_data) // 4)  # 使用更小的子批次
+                        sub_batch_success = 0
+
+                        for j in range(0, len(batch_data), sub_batch_size):
+                            sub_batch = batch_data[j:j + sub_batch_size]
+                            try:
+                                stmt = insert(StockSymbols).values(sub_batch)
+                                update_dict = {
+                                    'symbol': stmt.excluded.symbol,
+                                    'name': stmt.excluded.name,
+                                    'price': stmt.excluded.price,
+                                    'price_change': stmt.excluded.price_change,
+                                    'price_change_percent': stmt.excluded.price_change_percent,
+                                    'open': stmt.excluded.open,
+                                    'high': stmt.excluded.high,
+                                    'low': stmt.excluded.low,
+                                    'pre_close': stmt.excluded.pre_close,
+                                    'market_value': stmt.excluded.market_value,
+                                    'pe_ratio': stmt.excluded.pe_ratio,
+                                    'volume': stmt.excluded.volume,
+                                    'turnover': stmt.excluded.turnover,
+                                    'amplitude': stmt.excluded.amplitude,
+                                    'turnover_rate': stmt.excluded.turnover_rate,
+                                    'updated_at': stmt.excluded.updated_at
+                                }
+                                stmt = stmt.on_conflict_do_update(
+                                    index_elements=['fullsymbol'],
+                                    set_=update_dict
+                                )
+                                db.execute(stmt)
+                                sub_batch_success += len(sub_batch)
+
+                            except Exception as sub_e:
+                                logger.error(f"子批次也失败: {sub_e}")
+                                continue
+
+                        if sub_batch_success > 0:
+                            total_processed += sub_batch_success
+                            logger.info(f"通过子批次成功处理了 {sub_batch_success}/{len(batch_data)} 条记录")
+                        else:
+                            logger.error("所有子批次都失败了")
+                    else:
+                        # 其他类型的错误，记录详细信息
+                        if "more expressions than target columns" in str(e):
+                            logger.error("检测到字段数量不匹配错误")
+                        elif "duplicate key" in str(e).lower():
+                            logger.error("检测到主键冲突，这通常是正常的UPSERT行为")
+
+                    # 继续处理下一批次
+                    continue
+
+            logger.info(f"批量处理完成，总计处理 {total_processed} 条实时行情数据")
+            return total_processed
+
+        except Exception as e:
+            logger.error(f"批量处理实时行情数据失败: {e}")
+
+            # 只在特定错误类型时记录详细traceback
+            error_str = str(e)
+            if ("more expressions than target columns" in error_str or
+                "column" in error_str.lower() or
+                "field" in error_str.lower()):
+                import traceback
+                logger.error("由于可能的Schema问题，记录详细错误信息:")
+                logger.error(f"错误详情: {traceback.format_exc()}")
+            else:
+                logger.error(f"错误类型: {type(e).__name__}")
+
+            return 0
+
+    def _batch_upsert_us_stock_names(self, db: Session, name_data: List[Dict[str, Any]]) -> int:
+        """
+        批量插入或更新美股名称数据到us_stocks_name表
+
+        Args:
+            db: 数据库会话
+            name_data: 美股名称数据列表
+
+        Returns:
+            int: 成功处理的记录数
+        """
+        if not name_data:
+            logger.warning("没有美股名称数据需要处理")
+            return 0
+
+        try:
+            logger.info(f"开始批量处理美股名称数据，原始记录数: {len(name_data)}")
+
+            # 数据去重：基于symbol主键
+            unique_names: Dict[str, Dict[str, Any]] = {}
+            for item in name_data:
+                symbol = item['symbol']
+                if symbol not in unique_names:
+                    unique_names[symbol] = item
+                else:
+                    existing_time = unique_names[symbol]['updated_at']
+                    new_time = item['updated_at']
+                    if new_time > existing_time:
+                        unique_names[symbol] = item
+
+            deduplicated_data = list(unique_names.values())
+            if len(deduplicated_data) != len(name_data):
+                logger.info(f"数据去重完成: {len(name_data)} 条 -> {len(deduplicated_data)} 条")
+
+            # 分批处理
+            batch_size = 500
+            total_processed = 0
+
+            for i in range(0, len(deduplicated_data), batch_size):
+                batch_data = deduplicated_data[i:i + batch_size]
+                logger.info(f"处理批次 {i//batch_size + 1}: {len(batch_data)} 条记录")
+
+                try:
+                    # 使用PostgreSQL的批量UPSERT
+                    stmt = insert(UsStocksName).values(batch_data)
+
+                    # 定义更新字段（除主键和created_at外的所有字段）
+                    update_dict = {
+                        'name': stmt.excluded.name,
+                        'cname': stmt.excluded.cname,
+                        'updated_at': stmt.excluded.updated_at
+                    }
+
+                    # 基于主键symbol进行冲突处理
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=['symbol'],
+                        set_=update_dict
+                    )
+
+                    db.execute(stmt)
+                    total_processed += len(batch_data)
+                    logger.info(f"批次 {i//batch_size + 1} 处理完成")
+
+                except Exception as e:
+                    logger.error(f"批次 {i//batch_size + 1} 处理失败: {e}")
+
+            logger.info(f"成功批量处理 {total_processed} 条美股名称数据")
+            return total_processed
+
+        except Exception as e:
+            logger.error(f"批量处理美股名称数据失败: {e}")
+            return 0
+
     def persist_pending_data(self, db: Session) -> Dict[str, Any]:
         """
         持久化待处理数据的核心函数
@@ -304,16 +734,15 @@ class DatabaseWriter:
                                 db, StockPriceWeekly, weekly_data, ['ticker', 'date']
                             )
 
-                        elif period == 'hourly':
-                            hourly_data = self._prepare_hourly_price_data(ticker, dataframe)
-                            processed_rows = self._batch_upsert_prices(
-                                db, StockPriceHourly, hourly_data, ['ticker', 'hour_timestamp']
-                            )
-
                         elif period == 'minute':
                             # 分钟线数据不持久化到PostgreSQL，只保存在Redis缓存中
                             logger.info(f"跳过分钟线数据持久化: {ticker} (分钟线数据仅保存在Redis缓存中)")
                             processed_rows = 0
+
+                        elif period == 'realtime_quotes':
+                            # 处理实时行情数据
+                            quote_data = self._prepare_realtime_quote_data(dataframe)
+                            processed_rows = self._batch_upsert_realtime_quotes(db, quote_data)
 
                         else:
                             raise Exception(f"不支持的period类型: {period}")
@@ -377,7 +806,7 @@ class DatabaseWriter:
 
         Args:
             ticker: 股票代码
-            period: 时间周期 ('daily', 'weekly', 'hourly', 'minute', 'news')
+            period: 时间周期 ('daily', 'weekly', '10min', 'minute', 'news')
             dataframe: 待保存的数据
             pending_cache_key (Optional[str]): 如果提供，操作成功后将从Redis中删除此键。
 
@@ -404,15 +833,14 @@ class DatabaseWriter:
                         processed_rows = self._batch_upsert_prices(
                             db, StockPriceWeekly, weekly_data, ['ticker', 'date']
                         )
-                    elif period == 'hourly':
-                        hourly_data = self._prepare_hourly_price_data(ticker, dataframe)
-                        processed_rows = self._batch_upsert_prices(
-                            db, StockPriceHourly, hourly_data, ['ticker', 'hour_timestamp']
-                        )
                     elif period == 'minute':
                         # 分钟线数据不持久化到PostgreSQL，只保存在Redis缓存中
                         logger.info(f"跳过分钟线数据持久化: {ticker} (分钟线数据仅保存在Redis缓存中)")
                         processed_rows = 0
+                    elif period == 'realtime_quotes':
+                        # 处理实时行情数据
+                        quote_data = self._prepare_realtime_quote_data(dataframe)
+                        processed_rows = self._batch_upsert_realtime_quotes(db, quote_data)
                     else:
                         raise Exception(f"不支持的period类型: {period}")
 
@@ -597,6 +1025,88 @@ class DatabaseWriter:
             logger.error(f"保存新闻数据到数据库失败 {ticker}: {e}")
             return False
 
+    def save_realtime_quotes_to_db(self, dataframe: pd.DataFrame, pending_cache_key: Optional[str] = None) -> bool:
+        """
+        将实时行情数据直接持久化到stock_symbols表
+
+        Args:
+            dataframe: 实时行情数据DataFrame
+            pending_cache_key (Optional[str]): 如果提供，操作成功后将从Redis中删除此键
+
+        Returns:
+            bool: 保存成功返回True，失败返回False
+        """
+        try:
+            # 检查数据库会话是否已初始化
+            if database.SessionLocal is None:
+                logger.error("数据库会话未初始化，无法保存实时行情数据")
+                return False
+
+            with database.SessionLocal() as db:
+                with db.begin():
+                    # 准备实时行情数据
+                    quote_data = self._prepare_realtime_quote_data(dataframe)
+
+                    if not quote_data:
+                        logger.warning("没有有效的实时行情数据需要保存")
+                        return True
+
+                    # 批量插入实时行情数据
+                    processed_rows = self._batch_upsert_realtime_quotes(db, quote_data)
+
+                    logger.info(f"成功将实时行情数据存入数据库，处理行数: {processed_rows}")
+
+            # 如果提供了缓存键，并且数据库操作成功，则删除它
+            if pending_cache_key:
+                logger.info(f"实时行情数据写入成功，现在删除 pending_save 缓存键: {pending_cache_key}")
+                delete_from_redis(pending_cache_key)
+
+            return True
+        except Exception as e:
+            logger.error(f"保存实时行情数据到数据库失败: {e}")
+            return False
+
+    def save_us_stock_names_to_db(self, dataframe: pd.DataFrame, pending_cache_key: Optional[str] = None) -> bool:
+        """
+        将美股名称数据直接持久化到us_stocks_name表
+
+        Args:
+            dataframe: 美股名称数据DataFrame
+            pending_cache_key (Optional[str]): 如果提供，操作成功后将从Redis中删除此键
+
+        Returns:
+            bool: 保存成功返回True，失败返回False
+        """
+        try:
+            # 检查数据库会话是否已初始化
+            if database.SessionLocal is None:
+                logger.error("数据库会话未初始化，无法保存美股名称数据")
+                return False
+
+            with database.SessionLocal() as db:
+                with db.begin():
+                    # 准备美股名称数据
+                    name_data = self._prepare_us_stock_name_data(dataframe)
+
+                    if not name_data:
+                        logger.warning("没有有效的美股名称数据需要保存")
+                        return True
+
+                    # 批量插入美股名称数据
+                    processed_rows = self._batch_upsert_us_stock_names(db, name_data)
+
+                    logger.info(f"成功将美股名称数据存入数据库，处理行数: {processed_rows}")
+
+            # 如果提供了缓存键，并且数据库操作成功，则删除它
+            if pending_cache_key:
+                logger.info(f"美股名称数据写入成功，现在删除 pending_save 缓存键: {pending_cache_key}")
+                delete_from_redis(pending_cache_key)
+
+            return True
+        except Exception as e:
+            logger.error(f"保存美股名称数据到数据库失败: {e}")
+            return False
+
 
 # 创建全局数据库写入器实例
 database_writer = DatabaseWriter()
@@ -620,11 +1130,40 @@ def save_dataframe_to_db(ticker: str, period: str, dataframe: pd.DataFrame, pend
     """
     return database_writer.save_dataframe_to_db(ticker, period, dataframe, pending_cache_key)
 
+def save_realtime_quotes_to_db(dataframe: pd.DataFrame, pending_cache_key: Optional[str] = None) -> bool:
+    """
+    将实时行情数据直接持久化到stock_symbols表
+
+    Args:
+        dataframe: 实时行情数据DataFrame
+        pending_cache_key (Optional[str]): 如果提供，操作成功后将从Redis中删除此键
+
+    Returns:
+        bool: 保存成功返回True，失败返回False
+    """
+    return database_writer.save_realtime_quotes_to_db(dataframe, pending_cache_key)
+
+
+def save_us_stock_names_to_db(dataframe: pd.DataFrame, pending_cache_key: Optional[str] = None) -> bool:
+    """
+    将美股名称数据直接持久化到us_stocks_name表
+
+    Args:
+        dataframe: 美股名称数据DataFrame
+        pending_cache_key (Optional[str]): 如果提供，操作成功后将从Redis中删除此键
+
+    Returns:
+        bool: 保存成功返回True，失败返回False
+    """
+    return database_writer.save_us_stock_names_to_db(dataframe, pending_cache_key)
+
 
 # 导出主要组件
 __all__ = [
     'DatabaseWriter',
     'database_writer',
     'persist_pending_data',
-    'save_dataframe_to_db'
+    'save_dataframe_to_db',
+    'save_realtime_quotes_to_db',
+    'save_us_stock_names_to_db'
 ]
