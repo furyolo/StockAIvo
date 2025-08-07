@@ -1,9 +1,10 @@
 import { useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { format } from 'date-fns';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { DateRangePicker, type DateRange } from './ui/date-range-picker';
+import { DatePicker } from './ui/date-picker';
 import { Play, Square, Sparkles, TrendingUp, Zap } from 'lucide-react';
 
 interface AIAnalysisProps {
@@ -14,7 +15,7 @@ interface AIAnalysisProps {
 const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState('');
-  const [dateRange, setDateRange] = useState<DateRange | undefined>();
+  const [endDate, setEndDate] = useState<Date | undefined>();
   const useParallelAnalysis = true; // 固定使用并行分析模式
   console.log('Using parallel analysis:', useParallelAnalysis); // 避免未使用变量警告
   const [parallelProgress, setParallelProgress] = useState<{[key: string]: boolean}>({}); // 跟踪并行任务进度
@@ -40,10 +41,9 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
         summary: `分析股票 ${selectedStock}`,
         value: {
           ticker: selectedStock,
-          // 如果用户选择了日期范围，则使用用户选择的日期；否则不传日期，让后端使用默认值
-          ...(dateRange?.from && dateRange?.to && {
-            start_date: dateRange.from.toISOString().split('T')[0],
-            end_date: dateRange.to.toISOString().split('T')[0],
+          // 如果用户选择了结束日期，则使用用户选择的日期；否则不传日期，让后端使用默认值
+          ...(endDate && {
+            end_date: format(endDate, 'yyyy-MM-dd'),
           }),
         },
       };
@@ -195,12 +195,12 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
           <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
             <div className="space-y-2">
               <label className="text-sm font-medium text-gray-700">
-                分析时间范围
+                分析结束日期
               </label>
-              <DateRangePicker
-                date={dateRange}
-                onDateChange={setDateRange}
-                placeholder="选择日期范围（可选）"
+              <DatePicker
+                date={endDate}
+                onDateChange={setEndDate}
+                placeholder="选择结束日期（可选）"
                 className=""
               />
             </div>

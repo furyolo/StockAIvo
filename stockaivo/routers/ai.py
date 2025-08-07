@@ -24,54 +24,10 @@ router = APIRouter(prefix="/ai", tags=["AI分析"])
 # 移除全局状态管理，改为直接流式响应
 
 
-class DateRangeOptions(str, Enum):
-    """预设的日期范围选项"""
-    # 日线数据选项
-    PAST_30_DAYS = "past_30_days"
-    PAST_60_DAYS = "past_60_days"
-    PAST_90_DAYS = "past_90_days"
-    PAST_180_DAYS = "past_180_days"
-    PAST_1_YEAR = "past_1_year"
-
-    # 周线数据选项
-    PAST_8_WEEKS = "past_8_weeks"
-    PAST_16_WEEKS = "past_16_weeks"
-    PAST_24_WEEKS = "past_24_weeks"
-    PAST_52_WEEKS = "past_52_weeks"
-
-
 class AnalysisRequest(BaseModel):
     """分析请求模型"""
     ticker: str = Field(..., description="股票代码，例如 'AAPL'")
-    date_range_option: Optional[DateRangeOptions] = Field(None, description="选择一个预设的日期范围")
-    start_date: Optional[date] = Field(None, description="自定义开始日期 (YYYY-MM-DD)")
-    end_date: Optional[date] = Field(None, description="自定义结束日期 (YYYY-MM-DD)")
-
-    @model_validator(mode='before')
-    @classmethod
-    def validate_date_range(cls, data):
-        """验证日期范围的逻辑"""
-        option = data.get('date_range_option')
-        start = data.get('start_date')
-        end = data.get('end_date')
-
-        # 如果选择了预设选项，则不能使用自定义日期
-        if option and (start or end):
-            raise ValueError("当选择预set日期范围时，不能提供自定义的 start_date 或 end_date")
-
-        # 如果提供了自定义日期，则必须同时提供开始和结束
-        if bool(start) ^ bool(end):
-            raise ValueError("必须同时提供 start_date 和 end_date")
-
-        # 确保结束日期不晚于开始日期
-        if start and end and date.fromisoformat(end) < date.fromisoformat(start):
-            raise ValueError("end_date 不能早于 start_date")
-
-        # 如果没有提供任何日期选项，则由 agent 处理默认值
-        if not option and not start and not end:
-            pass
-            
-        return data
+    end_date: Optional[date] = Field(None, description="自定义结束日期 (YYYY-MM-DD)，开始日期由系统根据数据周期自动计算")
 
 
 class NestedAnalysisRequest(BaseModel):
@@ -90,19 +46,17 @@ async def analyze_stock_stream(nested_request: NestedAnalysisRequest):
     """
     try:
         request = nested_request.value
-        logger.info(f"收到AI分析请求: {request.ticker}, 日期选项: {request.date_range_option}, 自定义范围: {request.start_date}-{request.end_date}")
+        logger.info(f"收到AI分析请求: {request.ticker}, 结束日期: {request.end_date}")
 
         custom_date_range = None
-        if request.start_date and request.end_date:
+        if request.end_date:
             custom_date_range = {
-                "start_date": request.start_date.isoformat(),
                 "end_date": request.end_date.isoformat()
             }
 
         # 直接创建并返回流式响应
         analysis_generator = run_ai_analysis_stream(
             ticker=request.ticker,
-            date_range_option=request.date_range_option.value if request.date_range_option else None,
             custom_date_range=custom_date_range
         )
 
@@ -146,19 +100,17 @@ async def analyze_stock_parallel_stream(nested_request: NestedAnalysisRequest):
     """
     try:
         request = nested_request.value
-        logger.info(f"收到AI并行分析请求: {request.ticker}, 日期选项: {request.date_range_option}, 自定义范围: {request.start_date}-{request.end_date}")
+        logger.info(f"收到AI并行分析请求: {request.ticker}, 结束日期: {request.end_date}")
 
         custom_date_range = None
-        if request.start_date and request.end_date:
+        if request.end_date:
             custom_date_range = {
-                "start_date": request.start_date.isoformat(),
                 "end_date": request.end_date.isoformat()
             }
 
         # 创建并行流式响应
         analysis_generator = run_ai_analysis_parallel_stream(
             ticker=request.ticker,
-            date_range_option=request.date_range_option.value if request.date_range_option else None,
             custom_date_range=custom_date_range
         )
 

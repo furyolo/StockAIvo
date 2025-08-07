@@ -71,7 +71,7 @@ async def get_daily_data(
         logger.info(f"获取日线数据请求: {ticker}, 日期范围: {start_date} - {end_date}")
 
         # 调用数据服务获取日线数据
-        data = await get_stock_data(db, ticker, "daily", start_date, end_date, background_tasks)
+        data = await get_stock_data(db, ticker, "daily", end_date, background_tasks)
 
         if data is None or data.empty:
             raise HTTPException(
@@ -128,7 +128,7 @@ async def get_weekly_data(
         logger.info(f"获取周线数据请求: {ticker}, 日期范围: {start_date} - {end_date}")
         
         # 调用数据服务获取周线数据
-        data = await get_stock_data(db, ticker, "weekly", start_date, end_date, background_tasks)
+        data = await get_stock_data(db, ticker, "weekly", end_date, background_tasks)
         
         if data is None or data.empty:
             raise HTTPException(
@@ -185,7 +185,7 @@ async def get_10min_data(
         logger.info(f"获取10分钟线数据请求: {ticker}, 日期范围: {start_date} - {end_date}")
 
         # 调用数据服务获取10分钟线数据
-        data = await get_stock_data(db, ticker, "10min", start_date, end_date, background_tasks)
+        data = await get_stock_data(db, ticker, "10min", end_date, background_tasks)
 
         if data is None or data.empty:
             raise HTTPException(
@@ -243,7 +243,7 @@ async def get_minute_data(
         logger.info(f"获取分钟线数据请求: {ticker}, 日期范围: {start_date} - {end_date}")
 
         # 调用数据服务获取分钟线数据
-        data = await get_stock_data(db, ticker, "minute", start_date, end_date, background_tasks)
+        data = await get_stock_data(db, ticker, "minute", end_date, background_tasks)
 
         if data is None or data.empty:
             raise HTTPException(
@@ -277,6 +277,7 @@ async def get_minute_data(
 async def get_stock_news_data(
     ticker: str,
     background_tasks: BackgroundTasks,
+    end_date: Optional[str] = Query(None, description="新闻截止日期 (YYYY-MM-DD)，如果不提供则获取所有可用新闻"),
 ):
     """
     获取指定股票的新闻数据
@@ -284,6 +285,7 @@ async def get_stock_news_data(
     Args:
         ticker: 股票代码 (如: AAPL, TSLA)
         background_tasks: 后台任务管理器
+        end_date: 新闻截止日期 (YYYY-MM-DD)，如果不提供则获取所有可用新闻
 
     Returns:
         包含新闻数据的响应对象
@@ -295,10 +297,10 @@ async def get_stock_news_data(
         # 验证股票代码
         ticker = validate_ticker(ticker)
 
-        logger.info(f"获取新闻数据请求: {ticker}")
+        logger.info(f"获取新闻数据请求: {ticker}, 截止日期: {end_date}")
 
         # 调用数据服务获取新闻数据
-        news_data = await get_stock_news(ticker, background_tasks)
+        news_data = await get_stock_news(ticker, background_tasks, end_date)
 
         if news_data is None or news_data.empty:
             raise HTTPException(

@@ -103,20 +103,19 @@ describe('AI分析数据处理', () => {
     expect(expectedFormat).toContain('数据收集完成');
   });
 
-  it('应该能够处理自定义日期范围格式', () => {
+  it('应该能够处理自定义结束日期格式', () => {
     const requestData = {
       summary: '分析股票 AAPL',
       value: {
         ticker: 'AAPL',
-        start_date: '2024-01-01',
         end_date: '2024-12-31'
       }
     };
 
     // 验证请求数据格式正确
     expect(requestData.value.ticker).toBe('AAPL');
-    expect(requestData.value.start_date).toBe('2024-01-01');
     expect(requestData.value.end_date).toBe('2024-12-31');
+    expect(requestData.value).not.toHaveProperty('start_date');
     expect(requestData.value).not.toHaveProperty('date_range_option');
   });
 

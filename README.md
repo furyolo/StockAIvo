@@ -12,6 +12,7 @@
 - 📰 **新闻数据集成**：TickerTick API实时新闻，Redis缓存优化
 - 🛡️ **智能数据验证**：`ValidationResult`类 + 价格边界修复 + 分层验证策略
 - 🔧 **自动修复机制**：异常容忍度5%，智能修复超范围价格数据
+- 🔄 **数据管理API**：实时行情更新、美股名称数据同步
 
 ### 🤖 AI分析引擎
 **基于LangGraph的多Agent并行分析架构**
@@ -20,6 +21,7 @@
 - 📊 **技术指标**：MA、RSI、MACD、布林带、ATR等完整技术分析
 - 📈 **流式响应**：实时输出分析结果，动态进度显示
 - 🗞️ **新闻情感**：基于实时新闻的市场情绪评估
+- 🏢 **公司信息增强**：自动获取公司名称，优化分析准确性
 
 ### 🎨 现代化界面
 **专业级用户体验，适配多设备**
@@ -120,14 +122,15 @@ AI_SYNTHESIS_MODEL="gemini-2.5-pro"             # 综合分析专用
 ### 💡 AI分析示例
 
 ```bash
-# 并行AI分析 (推荐)
+# 并行AI分析 (推荐) - 使用默认日期范围
 curl -X POST "http://127.0.0.1:8000/ai/analyze-parallel" \
   -H "Content-Type: application/json" \
-  -d '{"ticker": "AAPL", "date_range_option": "past_90_days"}'
+  -d '{"summary": "分析股票 AAPL", "value": {"ticker": "AAPL"}}'
 
-# 支持的日期范围
-past_30_days | past_60_days | past_90_days | past_180_days | past_1_year
-past_8_weeks | past_16_weeks | past_24_weeks | past_52_weeks
+# 使用自定义结束日期
+curl -X POST "http://127.0.0.1:8000/ai/analyze-parallel" \
+  -H "Content-Type: application/json" \
+  -d '{"summary": "分析股票 AAPL", "value": {"ticker": "AAPL", "end_date": "2024-12-31"}}'
 ```
 
 ### 🔄 数据管理示例
@@ -212,8 +215,17 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 - 🚀 **三级缓存策略**：Redis → PostgreSQL → AKShare，智能数据获取
 - 🛡️ **智能数据验证**：`ValidationResult` + 价格修复 + 异常容忍机制
 - 📰 **新闻缓存系统**：TickerTick API + Redis缓存，实时新闻获取
+- 🔄 **数据管理API**：自动化数据更新，支持手动触发和定时任务
 
 ## 📋 版本历史
+
+### 🚀 v2.1.0 (2025-08) - 数据管理与AI增强
+- 🔄 **数据管理API**：新增实时行情和美股名称数据更新端点
+- 🗃️ **数据库优化**：移除StockSymbols表index字段，完善UsStocksName模型
+- 📰 **新闻系统重构**：移除新闻数据持久化，改为仅使用Redis缓存
+- 🤖 **AI分析增强**：news_agent添加公司名称获取功能，优化分析准确性
+- 🔧 **架构改进**：完善数据验证、清洗和批量UPSERT机制
+- 📚 **文档完善**：更新API文档，添加数据管理示例和响应格式
 
 ### 🚀 v2.0.0 (2025-07) - 技术架构重构
 - 📚 **文档重构**：完全重写技术架构文档，面向开发者的专业文档

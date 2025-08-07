@@ -8,11 +8,9 @@ Each function represents an agent and will be a node in the graph.
 import asyncio
 import logging
 import pandas as pd
-import pandas_market_calendars as mcal
 from typing import Dict, Any, Optional, AsyncGenerator, NamedTuple
 from datetime import date, timedelta, datetime
-from functools import lru_cache
-from stockaivo.data_service import get_stock_data, get_stock_news, PeriodType, get_market_aware_current_date, get_market_aware_minute_date
+from stockaivo.data_service import get_stock_data, get_stock_news, PeriodType, get_market_aware_current_date, get_market_aware_minute_date, MarketStateManager
 from stockaivo.cache_manager import _is_market_open
 from sqlalchemy import select
 from stockaivo.database import get_db
@@ -35,79 +33,25 @@ class MarketAnalysisResult(NamedTuple):
     trading_days_count: int
     calendar_days: int              # 新增：日历天数
 
-# ==================== 缓存层 ====================
+# ==================== 重构：使用统一的MarketStateManager ====================
 
-@lru_cache(maxsize=32)
+# 注意：原有的缓存层函数已被删除，现在使用data_service.py中的MarketStateManager
+# 这避免了重复的NYSE日历获取和交易日集合缓存逻辑
+
 def _get_nyse_calendar():
-    """缓存的NYSE日历获取"""
-    return mcal.get_calendar('NYSE')
+    """使用统一的NYSE日历获取（向后兼容）"""
+    return MarketStateManager.get_nyse_calendar()
 
-@lru_cache(maxsize=128)
 def _get_trading_schedule(start_date: date, end_date: date):
-    """缓存的交易时间表获取"""
-    calendar = _get_nyse_calendar()
+    """使用统一的交易时间表获取（向后兼容）"""
+    calendar = MarketStateManager.get_nyse_calendar()
     return calendar.schedule(start_date=start_date, end_date=end_date)
 
-@lru_cache(maxsize=64)
 def _get_trading_days_set(start_date: date, end_date: date) -> set[date]:
-    """缓存的交易日集合"""
-    schedule = _get_trading_schedule(start_date, end_date)
-    return {d.date() for d in schedule.index} if not schedule.empty else set()
+    """使用统一的交易日集合获取（向后兼容）"""
+    return MarketStateManager.get_trading_days_set(start_date, end_date)
 
-def _calculate_date_range(period: PeriodType, date_range_option: Optional[str], custom_date_range: Optional[dict], market_aware_date: Optional[date] = None) -> tuple[Optional[str], Optional[str]]:
-    """
-    根据用户的选择和数据周期计算最终的开始和结束日期。
 
-    Args:
-        period: 数据周期类型
-        date_range_option: 日期范围选项
-        custom_date_range: 自定义日期范围
-        market_aware_date: 可选的市场感知日期，如果不提供则内部调用获取
-    """
-    # 1. 优先使用自定义日期范围
-    if custom_date_range and custom_date_range.get('start_date') and custom_date_range.get('end_date'):
-        return custom_date_range['start_date'], custom_date_range['end_date']
-
-    # 2. 处理预设选项
-    if market_aware_date is None:
-        # 根据数据周期选择合适的市场感知日期函数
-        if period in ["10min", "minute"]:
-            # 分钟线和10分钟线数据使用专门的市场感知日期函数
-            market_aware_date = get_market_aware_minute_date()
-        else:
-            # 日线和周线数据使用通用的市场感知日期函数
-            market_aware_date = get_market_aware_current_date()
-    today = market_aware_date
-    start_date = None
-
-    # 根据数据周期类型处理不同的日期范围选项
-    if period == "daily":
-        # 日线数据选项
-        if date_range_option == 'past_30_days':
-            start_date = today - timedelta(days=30)
-        elif date_range_option == 'past_60_days':
-            start_date = today - timedelta(days=60)
-        elif date_range_option == 'past_90_days':
-            start_date = today - timedelta(days=90)
-        elif date_range_option == 'past_180_days':
-            start_date = today - timedelta(days=180)
-        elif date_range_option == 'past_1_year':
-            start_date = today - timedelta(days=365)
-    elif period == "weekly":
-        # 周线数据选项
-        if date_range_option == 'past_8_weeks':
-            start_date = today - timedelta(weeks=8)
-        elif date_range_option == 'past_16_weeks':
-            start_date = today - timedelta(weeks=16)
-        elif date_range_option == 'past_24_weeks':
-            start_date = today - timedelta(weeks=24)
-        elif date_range_option == 'past_52_weeks':
-            start_date = today - timedelta(weeks=52)
-
-    if start_date:
-        return start_date.isoformat(), today.isoformat()
-
-    return None, None
 
 async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
     """
@@ -116,20 +60,25 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
     - This is the entry point for the workflow.
     - It interacts with the DataService to leverage the project's caching and data persistence layers.
     """
-    print("\n---Executing Data Collection Agent---")
     ticker = state.get("ticker")
     if not ticker:
         raise ValueError("Ticker is not provided in the state.")
 
-    date_range_option = state.get("date_range_option")
+    print(f"\n=== Data Collection Agent: {ticker} ===")
+
     custom_date_range = state.get("custom_date_range")
 
-    print(f"Collecting data for {ticker} with option: {date_range_option}")
-
     # 统一获取市场分析结果（用于日线和周线数据）
-    market_analysis = get_market_analysis()
-    print(f"Using unified market analysis: {market_analysis.market_aware_date}")
-    print(f"Target Friday: {market_analysis.target_friday}, Trading days: {market_analysis.trading_days_count}")
+    # 如果用户提供了自定义日期，使用用户指定的日期，跳过市场感知处理
+    user_specified_date = None
+    if custom_date_range and custom_date_range.get('end_date'):
+        user_specified_date = datetime.strptime(custom_date_range['end_date'], '%Y-%m-%d').date()
+        print(f"📅 Using custom end date: {user_specified_date}")
+    else:
+        print("📅 Using default market-aware date logic")
+
+    market_analysis = get_market_analysis(user_specified_date)
+    print(f"📊 Market analysis: {market_analysis.market_aware_date} (target Friday: {market_analysis.target_friday}, {market_analysis.trading_days_count} trading days)")
 
     collected_data = {}
     db_session_gen = get_db()
@@ -140,47 +89,45 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
         periods_to_fetch: list[PeriodType] = ["daily", "weekly"]
 
         # 智能判断是否获取10分钟线数据
-        # 只有在交易时间内才获取10分钟线数据
-        is_trading_time = _is_market_open()
+        # 只有用户没有指定日期且在交易时间内才获取10分钟线数据
+        user_specified_end_date_str = custom_date_range and custom_date_range.get('end_date')
 
-        if is_trading_time:
-            periods_to_fetch.append("10min")
-            print(f"  - Market analysis: Including 10min data (market is open)")
+        if not user_specified_end_date_str:
+            # 用户没有指定日期，检查市场状态
+            is_trading_time = _is_market_open()
+            if is_trading_time:
+                periods_to_fetch.append("10min")
+                print("⏰ Market is open - including 10min data")
+            else:
+                print("🔒 Market is closed - skipping 10min data")
         else:
-            print(f"  - Market analysis: Skipping 10min data (market is closed)")
+            print("📈 Historical date specified - skipping 10min data")
 
         # 1. 获取股票价格数据
+        print(f"📈 Fetching price data: {', '.join(periods_to_fetch)}")
         price_tasks = []
         for period in periods_to_fetch:
-            # 为不同周期选择合适的市场感知日期策略
-            if period in ["daily", "weekly"]:
-                # 日线和周线数据使用统一的市场分析结果
-                period_market_aware_date = market_analysis.market_aware_date
-                start_date, end_date = _calculate_date_range(period, date_range_option, custom_date_range, period_market_aware_date)
-                print(f"  - For {period} data, using unified market date: {period_market_aware_date}, range: {start_date or 'default start'} to {end_date or 'default end'}")
-            else:
-                # 分钟线和10分钟线数据保持原有逻辑，因为它们有不同的业务需求
-                # 分钟线需要在交易时间内获取当日实时数据，而日线在交易时间内使用前一交易日
-                period_market_aware_date = None
-                start_date, end_date = _calculate_date_range(period, date_range_option, custom_date_range, None)
-                print(f"  - For {period} data, using period-specific market date (preserving real-time logic), range: {start_date or 'default start'} to {end_date or 'default end'}")
+            # 计算结束日期：优先使用自定义日期，否则使用默认值（None）
+            end_date = None
+            if custom_date_range and custom_date_range.get('end_date'):
+                end_date = custom_date_range['end_date']
 
             task = get_stock_data(
                 db=db,
                 ticker=ticker,
                 period=period,
-                start_date=start_date,
                 end_date=end_date,
                 background_tasks=None, # No background tasks needed for agent context
-                market_aware_date=period_market_aware_date  # 传递适当的市场感知日期
+                market_aware_date=None  # 让get_stock_data内部处理市场感知日期
             )
             price_tasks.append(task)
 
         # 2. 获取新闻数据
-        print(f"  - Fetching news data for {ticker}")
+        print("📰 Fetching news data")
         news_task = get_stock_news(
             ticker=ticker,
-            background_tasks=None  # No background tasks needed for agent context
+            background_tasks=None,  # No background tasks needed for agent context
+            end_date=end_date  # 使用与股票数据相同的截止日期
         )
 
         # 3. 并行执行所有数据获取任务
@@ -191,32 +138,35 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
         price_results = results[:len(periods_to_fetch)]
         for period, result in zip(periods_to_fetch, price_results):
             if isinstance(result, Exception):
-                print(f"Error collecting {period} data for {ticker}: {result}")
+                print(f"❌ Error collecting {period} data: {result}")
             elif isinstance(result, pd.DataFrame) and not result.empty:
                 # 特殊处理10分钟线数据的键名
                 if period == "10min":
                     collected_data['tenmin_prices'] = result.to_dict(orient='split')
                 else:
                     collected_data[f'{period}_prices'] = result.to_dict(orient='split')
-                print(f"Successfully collected {period} data for {ticker}.")
+                print(f"✅ {period} data: {len(result)} records")
             else:
-                print(f"Could not find {period} data for {ticker}.")
+                print(f"⚠️  No {period} data available")
 
         # 5. 处理新闻数据结果
         news_result = results[-1]
         if isinstance(news_result, Exception):
-            print(f"Error collecting news data for {ticker}: {news_result}")
+            print(f"❌ Error collecting news data: {news_result}")
         elif isinstance(news_result, pd.DataFrame) and not news_result.empty:
             collected_data['news'] = news_result.to_dict(orient='records')
-            print(f"Successfully collected news data for {ticker}: {len(news_result)} articles.")
+            print(f"✅ News data: {len(news_result)} articles")
         else:
-            print(f"Could not find news data for {ticker}.")
+            print("⚠️  No news data available")
 
     finally:
         db.close()
 
 
     # 生成数据收集摘要
+    total_datasets = len(collected_data)
+    print(f"🎯 Data collection completed: {total_datasets} datasets collected")
+
     data_summary = f"数据收集完成 - 股票代码: {ticker}\n"
     for key, value in collected_data.items():
         if isinstance(value, dict) and 'data' in value:
@@ -258,10 +208,7 @@ def _calculate_target_friday_internal(market_aware_date: date) -> date:
             # 回退到简单逻辑
             return _get_fallback_target_friday_internal(today)
 
-        # 判断市场交易状态
-        is_market_open = False
-
-        # 🔧 FIX: 检查是否是历史日期
+        # 判断市场交易状态（使用统一的MarketStateManager）
         current_date_et = now_et.date()
         is_historical_date = today.date() < current_date_et
 
@@ -269,16 +216,8 @@ def _calculate_target_friday_internal(market_aware_date: date) -> date:
             # 对于历史日期，假设交易已经结束
             is_market_open = False
         else:
-            # 只有当日或未来日期才需要检查实时市场状态
-            try:
-                schedule = _get_trading_schedule(today.date(), today.date())
-                if not schedule.empty:
-                    is_market_open = nyse_calendar.open_at_time(schedule, now_et)
-            except:
-                # 简单时间判断回退
-                market_hour = now_et.hour
-                market_minute = now_et.minute
-                is_market_open = (market_hour > 9 or (market_hour == 9 and market_minute >= 30)) and market_hour < 16
+            # 使用统一的市场开放状态检查
+            is_market_open = MarketStateManager.check_market_open_status(today.date(), now_et)
 
         # 判断本周交易是否结束
         week_trading_ended = False
@@ -314,15 +253,18 @@ def _calculate_target_friday_internal(market_aware_date: date) -> date:
         return _get_fallback_target_friday_internal(today)
 
 def _find_last_trading_day_of_week_internal(week_start: date, trading_days_set: set[date]) -> date:
-    """内部函数：找到指定周的最后一个交易日"""
-    # 从周五开始往前找
-    for i in range(5):  # 周五到周一
-        check_date = week_start + timedelta(days=4-i)
-        if check_date in trading_days_set:
-            return check_date
+    """
+    内部函数：找到指定周的最后一个交易日（重构版本）
 
-    # 如果本周没有交易日，返回周五
-    return week_start + timedelta(days=4)
+    重构改进：
+    - 使用MarketStateManager的统一逻辑
+    - 保持向后兼容的接口
+    """
+    # 计算周五日期作为目标日期
+    week_friday = week_start + timedelta(days=4)
+
+    # 使用MarketStateManager的统一逻辑
+    return MarketStateManager.find_week_last_trading_day(week_friday, trading_days_set)
 
 def _calculate_trading_days_internal(market_aware_date: date, target_date: date) -> int:
     """内部函数：计算交易日数量"""
@@ -419,66 +361,9 @@ def _get_company_name(ticker: str) -> str:
         logger.warning(f"获取{ticker}公司名称失败，使用ticker作为fallback: {e}")
         return ticker
 
-def _get_target_friday_date(market_aware_date: Optional[date] = None) -> str:
-    """
-    计算周度最后一个交易日（向后兼容接口）
-
-    规则：
-    - 如果本周市场交易还未结束，返回本周最后一个交易日
-    - 如果本周市场交易已经结束，返回下周最后一个交易日
-    - 基于市场感知的基准日期和NYSE交易日历
-    - 处理节假日情况，确保返回的是真实的交易日
-
-    Args:
-        market_aware_date: 可选的市场感知日期，如果不提供则内部调用获取
-
-    Returns:
-        格式化的日期字符串 (YYYY-MM-DD)
-
-    Note:
-        这是向后兼容接口，内部调用优化后的实现。
-        推荐使用 get_market_analysis() 获取完整的市场分析结果。
-    """
-    # 使用新的统一接口，保持向后兼容
-    result = get_market_analysis(market_aware_date)
-    return result.target_friday
-
-
-# 注意：旧的辅助函数已被内部优化函数替代
-# _get_fallback_target_date 和 _find_last_trading_day_of_week
-# 现在由 _get_fallback_target_friday_internal 和 _find_last_trading_day_of_week_internal 替代
-
-
-def _calculate_trading_days_to_target(target_date_str: str, market_aware_date: Optional[date] = None) -> int:
-    """
-    计算从市场感知基准日期到目标日期的交易日总数（向后兼容接口）
-
-    Args:
-        target_date_str: 目标日期字符串 (YYYY-MM-DD)
-        market_aware_date: 可选的市场感知日期，如果不提供则内部调用获取
-
-    Returns:
-        int: 交易日数量
-
-    Note:
-        这是向后兼容接口，内部调用优化后的实现。
-        推荐使用 get_market_analysis() 获取完整的市场分析结果。
-    """
-    # 优化：如果可能，直接使用统一接口避免重复计算
-    if market_aware_date is not None:
-        result = get_market_analysis(market_aware_date)
-        if result.target_friday == target_date_str:
-            return result.trading_days_count
-
-    # 回退到单独计算
-    try:
-        if market_aware_date is None:
-            market_aware_date = get_market_aware_current_date()
-        target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
-        return _calculate_trading_days_internal(market_aware_date, target_date)
-    except Exception:
-        # 最终回退
-        return 1
+# 注意：原有的向后兼容函数 _get_target_friday_date 和 _calculate_trading_days_to_target 已被删除
+# 现在统一使用 get_market_analysis() 获取完整的市场分析结果
+# 这避免了重复的计算逻辑和多个接口的维护负担
 
 def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_price_str: str, tenmin_price_str: str,
                                    daily_indicators: list[str] | None = None, weekly_indicators: list[str] | None = None, tenmin_indicators: list[str] | None = None,
@@ -928,7 +813,8 @@ async def technical_analysis_agent(state: GraphState) -> Dict[str, Any]:
     技术分析 Agent
     - 分析价格和交易量数据以识别趋势和模式.
     """
-    print("\n---Executing Technical Analysis Agent---")
+    ticker = state.get("ticker", "UNKNOWN")
+    print(f"\n=== Technical Analysis Agent: {ticker} ===")
 
     # 优先使用state中的market_analysis，避免重复计算
     market_analysis = state.get("market_analysis")
@@ -955,10 +841,10 @@ async def fundamental_analysis_agent(state: GraphState) -> Dict[str, Any]:
     基本面分析 Agent
     - 检查财务报表、行业趋势和经济状况.
     """
-    print("\n---Executing Fundamental Analysis Agent---")
-
     # 使用共用函数检查数据和获取ticker
     has_fundamental_data, ticker = _check_fundamental_data_and_get_ticker(state)
+
+    print(f"\n=== Fundamental Analysis Agent: {ticker} ===")
 
     if not has_fundamental_data:
         print("缺少基本面数据，跳过基本面分析")
@@ -976,10 +862,10 @@ async def news_sentiment_analysis_agent(state: GraphState) -> Dict[str, Any]:
     新闻舆情分析 Agent
     - 分析新闻文章和社交媒体以评估市场情绪.
     """
-    print("\n---Executing News Sentiment Analysis Agent---")
-
     # 使用共用函数检查数据和获取ticker
     has_news_data, ticker, news_data = _check_news_data_and_get_ticker(state)
+
+    print(f"\n=== News Sentiment Analysis Agent: {ticker} ===")
 
     if not has_news_data:
         print("缺少新闻情感数据，跳过新闻情感分析")
@@ -997,7 +883,8 @@ async def synthesis_agent(state: GraphState) -> Dict[str, Any]:
     决策合成 Agent
     - 整合所有分析师的见解以形成最终的投资报告.
     """
-    print("\n---Executing Synthesis Agent---")
+    ticker = state.get("ticker", "UNKNOWN")
+    print(f"\n=== Synthesis Agent: {ticker} ===")
 
     # 优先使用state中的market_analysis，避免重复计算
     market_analysis = state.get("market_analysis")
@@ -1030,7 +917,8 @@ async def technical_analysis_agent_stream(state: GraphState) -> AsyncGenerator[D
     """
     技术分析 Agent - 流式版本
     """
-    print("\n---Executing Technical Analysis Agent (Stream)---")
+    ticker = state.get("ticker", "UNKNOWN")
+    print(f"\n=== Technical Analysis Agent (Stream): {ticker} ===")
 
     # 优先使用state中的market_analysis，避免重复计算
     market_analysis = state.get("market_analysis")
@@ -1060,7 +948,8 @@ async def synthesis_agent_stream(state: GraphState) -> AsyncGenerator[Dict[str, 
     """
     决策合成 Agent - 流式版本
     """
-    print("\n---Executing Synthesis Agent (Stream)---")
+    ticker = state.get("ticker", "UNKNOWN")
+    print(f"\n=== Synthesis Agent (Stream): {ticker} ===")
 
     # 优先使用state中的market_analysis，避免重复计算
     market_analysis = state.get("market_analysis")
@@ -1094,10 +983,10 @@ async def fundamental_analysis_agent_stream(state: GraphState) -> AsyncGenerator
     基本面分析 Agent - 流式版本
     - 检查财务报表、行业趋势和经济状况.
     """
-    print("\n---Executing Fundamental Analysis Agent (Stream)---")
-
     # 使用共用函数检查数据和获取ticker
     has_fundamental_data, ticker = _check_fundamental_data_and_get_ticker(state)
+
+    print(f"\n=== Fundamental Analysis Agent (Stream): {ticker} ===")
 
     if not has_fundamental_data:
         print("缺少基本面数据，跳过基本面分析")
@@ -1120,10 +1009,10 @@ async def news_sentiment_analysis_agent_stream(state: GraphState) -> AsyncGenera
     新闻舆情分析 Agent - 流式版本
     - 分析新闻文章和社交媒体以评估市场情绪.
     """
-    print("\n---Executing News Sentiment Analysis Agent (Stream)---")
-
     # 使用共用函数检查数据和获取ticker
     has_news_data, ticker, news_data = _check_news_data_and_get_ticker(state)
+
+    print(f"\n=== News Sentiment Analysis Agent (Stream): {ticker} ===")
 
     if not has_news_data:
         print("缺少新闻情感数据，跳过新闻情感分析")

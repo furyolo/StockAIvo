@@ -23,7 +23,6 @@ class GraphState(TypedDict):
         market_analysis: Market analysis result containing unified market context.
     """
     ticker: str
-    date_range_option: str | None
     custom_date_range: dict | None
     raw_data: Annotated[dict, merge_dicts]
     analysis_results: Annotated[dict, merge_dicts]

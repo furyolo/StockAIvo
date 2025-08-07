@@ -73,23 +73,24 @@ class LangGraphOrchestrator:
         # 4. Compile the graph into a runnable application
         return workflow.compile()
 
-    async def run_analysis(self, ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
+    async def run_analysis(self, ticker: str, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
         """
         Runs the full AI analysis workflow for a given stock ticker
         and yields the output of each agent as a JSON string.
         """
-        print(f"\n---Starting AI Analysis for {ticker}---")
+        print(f"\n🚀 Starting AI Analysis for {ticker}")
 
         # 重置性能统计（debug级别）
         reset_market_date_performance_stats()
         logger.debug("Performance monitoring: Reset market date function call counters")
 
-        initial_state = {
+        initial_state: GraphState = {
             "ticker": ticker,
-            "date_range_option": date_range_option,
             "custom_date_range": custom_date_range,
+            "raw_data": {},
             "analysis_results": {},
-            "final_report": ""
+            "final_report": "",
+            "market_analysis": None
         }
         
         # Use astream for async iteration
@@ -131,12 +132,12 @@ class LangGraphOrchestrator:
 orchestrator = LangGraphOrchestrator()
 
 # Main async function to run the analysis and stream results
-async def run_ai_analysis(ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
+async def run_ai_analysis(ticker: str, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
     """
     Runs the full AI analysis workflow for a given stock ticker
     and yields the output of each agent as a JSON string.
     """
-    async for chunk in orchestrator.run_analysis(ticker, date_range_option, custom_date_range):
+    async for chunk in orchestrator.run_analysis(ticker, custom_date_range):
         yield chunk
 
 
@@ -149,11 +150,11 @@ class StreamingLangGraphOrchestrator:
     def __init__(self) -> None:
         pass
 
-    async def run_analysis_stream(self, ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
+    async def run_analysis_stream(self, ticker: str, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
         """
         运行流式AI分析工作流
         """
-        print(f"\n=== Starting Streaming AI Analysis for {ticker} ===")
+        print(f"\n🚀 Starting Streaming AI Analysis for {ticker}")
 
         # 重置性能统计（debug级别）
         reset_market_date_performance_stats()
@@ -162,7 +163,6 @@ class StreamingLangGraphOrchestrator:
         # 初始化状态
         initial_state: GraphState = {
             "ticker": ticker,
-            "date_range_option": date_range_option,
             "custom_date_range": custom_date_range,
             "raw_data": {},
             "analysis_results": {},
@@ -346,7 +346,7 @@ class ParallelStreamingOrchestrator:
     def __init__(self) -> None:
         pass
 
-    async def run_parallel_analysis_stream(self, ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
+    async def run_parallel_analysis_stream(self, ticker: str, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
         """
         运行并行流式AI分析工作流
 
@@ -355,7 +355,7 @@ class ParallelStreamingOrchestrator:
         2. 三个分析代理并行执行，各自独立流式输出
         3. 综合分析阶段（等待所有分析完成后执行）
         """
-        print(f"\n=== Starting Parallel Streaming AI Analysis for {ticker} ===")
+        print(f"\n🚀 Starting Parallel Streaming AI Analysis for {ticker}")
 
         # 重置性能统计（debug级别）
         reset_market_date_performance_stats()
@@ -364,11 +364,11 @@ class ParallelStreamingOrchestrator:
         # 初始化状态
         initial_state: GraphState = {
             "ticker": ticker,
-            "date_range_option": date_range_option,
             "custom_date_range": custom_date_range,
             "raw_data": {},
             "analysis_results": {},
-            "final_report": ""
+            "final_report": "",
+            "market_analysis": None
         }
 
         # 1. 数据收集阶段（非流式，必须先完成）
@@ -733,20 +733,20 @@ streaming_orchestrator = StreamingLangGraphOrchestrator()
 parallel_streaming_orchestrator = ParallelStreamingOrchestrator()
 
 # 流式分析主函数
-async def run_ai_analysis_stream(ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
+async def run_ai_analysis_stream(ticker: str, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
     """
     运行流式AI分析工作流并产生结果
     """
-    async for chunk in streaming_orchestrator.run_analysis_stream(ticker, date_range_option, custom_date_range):
+    async for chunk in streaming_orchestrator.run_analysis_stream(ticker, custom_date_range):
         yield chunk
 
 # 并行流式分析主函数
-async def run_ai_analysis_parallel_stream(ticker: str, date_range_option: Optional[str] = None, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
+async def run_ai_analysis_parallel_stream(ticker: str, custom_date_range: Optional[Dict[str, Any]] = None) -> AsyncGenerator[str, None]:
     """
     运行并行流式AI分析工作流并产生结果
     三个分析代理（技术分析、基本面分析、新闻情感分析）将并行执行
     """
-    async for chunk in parallel_streaming_orchestrator.run_parallel_analysis_stream(ticker, date_range_option, custom_date_range):
+    async for chunk in parallel_streaming_orchestrator.run_parallel_analysis_stream(ticker, custom_date_range):
         yield chunk
 
 # Example usage for testing
