@@ -1,0 +1,30 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "cmd",
+      "args": ["/c", "pnpm dlx", 
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://postgres:123456@localhost:5432/stock"
+      ]
+    },
+    "git": {
+      "command": "cmd",
+      "args": ["/c", "uvx", "mcp-server-git@latest", "--repository", "D://Coding//StockAIvo"],
+      "alwaysAllow": [
+        "git_log",
+        "git_status",
+        "git_diff_unstaged",
+        "git_diff_staged",
+        "git_diff",
+        "git_commit",
+        "git_add",
+        "git_reset",
+        "git_create_branch",
+        "git_checkout",
+        "git_show",
+        "git_init",
+        "git_branch"
+      ]
+    }
+  }
+}

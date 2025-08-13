@@ -424,7 +424,7 @@ def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_p
     if tenmin_indicators and len(tenmin_indicators) > 0:
         tenmin_indicators_desc = build_indicators_description(tenmin_indicators)
     else:
-        tenmin_indicators_desc = "- 10分钟线数据专注于短期价格波动观察，不计算技术指标以避免噪音信号"
+        tenmin_indicators_desc = "- 10分钟线数据专注于短期价格和成交量波动观察，不计算复杂技术指标以避免噪音信号"
 
     # 构建分析要求，根据可用指标调整
     analysis_requirements = []
@@ -468,7 +468,7 @@ def _build_technical_analysis_prompt(ticker: str, daily_price_str: str, weekly_p
 
     # 10分钟线特定分析（如果有数据）
     if "无10分钟线数据" not in tenmin_price_str:
-        analysis_requirements.append("5.  **10分钟线短期波动分析:** 基于10分钟线数据，识别短期价格波动模式、关键支撑阻力位，以及精确的入场时机。注意：10分钟线主要用于观察短期波动，不依赖技术指标。")
+        analysis_requirements.append("5.  **10分钟线短期波动分析:** 基于10分钟线数据，识别短期价格波动模式、关键支撑阻力位、以及成交量的关键变化（例如放量突破或缩量回调），并结合这些信息寻找精确的入场时机。注意：10分钟线主要用于观察短期波动，不依赖技术指标。")
 
     # 短期前景（总是包含）
     final_req_num = len(analysis_requirements) + 1
