@@ -79,6 +79,7 @@ Redis → PostgreSQL → AKShare
 - **基本面分析Agent**: 公司基本面数据分析
 - **新闻情感Agent**: 基于实时新闻的情绪分析
 - **综合分析Agent**: 整合多个Agent的分析结果
+- **⚠️ 执行依赖策略**: 综合分析仅在技术分析成功时执行，确保分析质量
 
 #### 3. 现代化依赖注入
 使用FastAPI的`Annotated`类型系统：
@@ -114,6 +115,7 @@ LangGraph多Agent工作流编排：
 - 并行执行多个分析Agent (技术分析、基本面分析、新闻情感分析)
 - 流式响应支持和状态管理
 - 错误处理和Agent间通信
+- **执行依赖控制**: 综合分析仅在技术分析成功时执行
 
 #### stockaivo/cache_manager.py
 Redis缓存管理：

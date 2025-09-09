@@ -456,18 +456,14 @@ class ParallelStreamingOrchestrator:
         # 3. 综合分析阶段（等待所有分析完成）
         print("\n---Phase 3: Synthesis (waiting for all analyses to complete)---")
 
-        # 检查是否有有效的分析结果
+        # 检查技术分析是否成功 - 技术分析是synthesis的必需前提
         analysis_results = state.get("analysis_results", {})
-        has_valid_analysis = any([
-            self._is_valid_analysis_result(analysis_results.get("technical_analyst")),
-            self._is_valid_analysis_result(analysis_results.get("fundamental_analyst")),
-            self._is_valid_analysis_result(analysis_results.get("news_sentiment_analyst"))
-        ])
+        technical_analysis_valid = self._is_valid_analysis_result(analysis_results.get("technical_analyst"))
 
-        if not has_valid_analysis:
+        if not technical_analysis_valid:
             error_data = {
                 "agent": "system",
-                "output": "所有分析阶段都未返回有效结果，无法进行综合分析。",
+                "output": "技术分析未返回有效结果，跳过综合分析。综合分析需要技术分析作为基础。",
                 "error": True,
                 "phase": "synthesis"
             }

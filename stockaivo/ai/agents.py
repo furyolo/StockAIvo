@@ -882,9 +882,28 @@ async def synthesis_agent(state: GraphState) -> Dict[str, Any]:
     """
     决策合成 Agent
     - 整合所有分析师的见解以形成最终的投资报告.
+    - 注意：只有技术分析成功时才会执行综合分析
     """
     ticker = state.get("ticker", "UNKNOWN")
     print(f"\n=== Synthesis Agent: {ticker} ===")
+
+    # 检查技术分析是否成功 - 技术分析是synthesis的必需前提
+    analysis_results = state.get("analysis_results", {})
+    technical_result = analysis_results.get("technical_analyst")
+    
+    def is_valid_analysis_result(result):
+        """检查分析结果是否有效"""
+        if not result or not isinstance(result, str) or result.strip() == "":
+            return False
+        error_indicators = [
+            "Error calling", "HTTP Error", "Error:",
+            "所有重试都失败了", "LLM服务未正确配置", "失败:"
+        ]
+        return not any(indicator in result for indicator in error_indicators)
+    
+    if not is_valid_analysis_result(technical_result):
+        print("技术分析未返回有效结果，跳过综合分析")
+        return {"final_report": "技术分析未返回有效结果，无法进行综合分析。综合分析需要技术分析作为基础。"}
 
     # 优先使用state中的market_analysis，避免重复计算
     market_analysis = state.get("market_analysis")
