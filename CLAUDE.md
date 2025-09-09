@@ -13,10 +13,13 @@ uv sync --extra dev
 uv run dev                          # 开发服务器 (http://127.0.0.1:8000)
 
 # 类型检查和测试
-uv run mypy stockaivo/              # MyPy类型检查
+uv run mypy stockaivo/              # MyPy类型检查 (渐进式类型检查策略)
 uv run pytest tests/ -v            # 运行所有后端测试
 uv run pytest tests/test_file.py -v # 运行单个测试文件
 uv run pytest tests/test_file.py::test_func -v # 运行单个测试函数
+
+# 开发工作流建议
+uv run mypy stockaivo/ && uv run pytest tests/ -v  # 类型检查+测试一键运行
 
 # 生产环境启动
 uv run start                        # 生产服务器
@@ -53,10 +56,12 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 ### 整体架构
 StockAIvo是一个现代化的全栈美股分析平台，采用前后端分离架构：
 
-- **前端**: React 19 + TypeScript + Vite + TailwindCSS + TradingView图表
-- **后端**: Python 3.12 + FastAPI + SQLAlchemy 2.0 + LangGraph
-- **数据库**: PostgreSQL (主存储) + Redis (三级缓存)
-- **数据源**: AKShare (美股数据) + TickerTick (新闻数据)
+- **前端**: React 19.1.0 + TypeScript 5.8.3 + Vite 7.0.0 + TailwindCSS 4.1.11 + TradingView Lightweight Charts 5.0.8
+- **后端**: Python 3.12 + FastAPI 0.115.13+ + SQLAlchemy 2.0.41+ + LangGraph 0.4.8+
+- **数据库**: PostgreSQL (主存储) + Redis 6.2.0+ (三级缓存)
+- **数据源**: AKShare 1.17.6+ (美股数据) + TickerTick (新闻数据)
+- **AI引擎**: Google Generative AI 0.8.5+ (Gemini模型)
+- **工具链**: uv (Python包管理) + pnpm 10.14.0 (前端包管理) + MyPy 1.8.0+ (类型检查)
 
 ### 核心架构模式
 
@@ -98,33 +103,68 @@ CacheDep = Annotated[redis.Redis, Depends(get_redis)]
 
 ### 关键服务模块
 
-#### data_service.py
+#### stockaivo/data_service.py
 核心数据查询逻辑，协调数据库、缓存和外部数据源：
 - `MarketStateManager`: 统一市场状态和交易日管理
 - `get_stock_data()`: 多时间粒度数据获取 (daily/weekly/10min/minute)
-- 智能缓存失效策略
+- 智能缓存失效策略和数据验证
 
-#### ai/orchestrator.py
+#### stockaivo/ai/orchestrator.py
 LangGraph多Agent工作流编排：
-- 并行执行多个分析Agent
-- 流式响应支持
-- 状态管理和错误处理
+- 并行执行多个分析Agent (技术分析、基本面分析、新闻情感分析)
+- 流式响应支持和状态管理
+- 错误处理和Agent间通信
 
-#### cache_manager.py
+#### stockaivo/cache_manager.py
 Redis缓存管理：
-- 三级缓存策略实现
+- 三级缓存策略实现 (Redis → PostgreSQL → AKShare)
 - 缓存统计和健康检查
-- 待处理数据管理
+- 待处理数据管理和批量UPSERT优化
+
+#### stockaivo/models.py
+SQLAlchemy 2.0数据模型定义：
+- `StockSymbols`: 股票基础信息和实时行情
+- `StockPriceDaily/Weekly`: K线数据表 (复合主键优化)
+- `UsStocksName`: 美股名称表 (支持中英文搜索)
+
+#### stockaivo/dependencies.py
+现代化依赖注入系统：
+- `DatabaseDep = Annotated[Session, Depends(get_db)]`
+- `CacheDep = Annotated[redis.Redis, Depends(get_redis)]`
+- 统一的依赖管理和资源清理
 
 ### API设计模式
 
 #### RESTful API结构
-- `/stocks/{ticker}/{period}`: 股票数据获取
-- `/ai/analyze-parallel`: 并行AI分析 (推荐)
+- `/stocks/{ticker}/{period}`: 股票数据获取 (daily/weekly/10min/minute)
+- `/stocks/{ticker}/news`: 股票新闻数据获取 (Redis缓存)
+- `/ai/analyze-parallel`: 并行AI分析 (推荐，速度提升2-3倍)
 - `/ai/analyze-stream`: 流式AI分析
-- `/search/stocks`: 股票搜索和建议
-- `/stocks/realtime-quotes/update`: 实时行情更新
-- `/stocks/us-stock-names/update`: 美股名称数据更新
+- `/search/stocks?q=keyword`: 股票搜索和建议
+- `/search/stocks/suggestions?q=keyword`: 实时搜索建议
+- `/stocks/realtime-quotes/update`: 更新实时行情数据
+- `/stocks/us-stock-names/update`: 更新美股名称数据
+- `/health`: 系统健康检查
+- `/cache-stats`: 缓存统计信息
+
+#### 数据管理API示例
+```bash
+# 更新美股名称数据
+curl -X POST "http://127.0.0.1:8000/stocks/us-stock-names/update"
+
+# 更新实时行情数据  
+curl -X POST "http://127.0.0.1:8000/stocks/realtime-quotes/update"
+
+# 并行AI分析（推荐）
+curl -X POST "http://127.0.0.1:8000/ai/analyze-parallel" \
+  -H "Content-Type: application/json" \
+  -d '{"summary": "分析股票 AAPL", "value": {"ticker": "AAPL"}}'
+
+# 自定义日期范围分析
+curl -X POST "http://127.0.0.1:8000/ai/analyze-parallel" \
+  -H "Content-Type: application/json" \
+  -d '{"summary": "分析股票 AAPL", "value": {"ticker": "AAPL", "end_date": "2024-12-31"}}'
+```
 
 #### 统一响应格式
 所有API返回统一的JSON结构：
@@ -160,6 +200,12 @@ Redis缓存管理：
 - 分层异常类：`ValidationException`、`DataServiceException`、`AIServiceException`
 - 全局异常处理器：`stockaivo.exceptions.register_exception_handlers()`
 - 中间件系统：请求日志、性能监控、安全头
+
+#### MyPy类型检查策略
+- **渐进式类型检查**：暂时允许未类型化的函数 (`disallow_untyped_defs = false`)
+- **严格检查启用**：不完整定义检查、冗余转换警告、未使用忽略警告
+- **第三方库兼容**：忽略AKShare、LangGraph等第三方库的类型检查
+- **FastAPI装饰器兼容**：允许未类型化装饰器以支持FastAPI路由装饰器
 
 #### AI模型配置
 - 支持按Agent类型配置专用AI模型
@@ -203,3 +249,46 @@ AI_DEFAULT_MODEL="gemini-2.5-flash"
 AI_TECHNICAL_ANALYSIS_MODEL="gemini-2.5-pro"
 AI_SYNTHESIS_MODEL="gemini-2.5-pro"
 ```
+
+## 项目结构详解
+
+```
+StockAIvo/
+├── 📁 stockaivo/                   # 核心后端模块
+│   ├── 🤖 ai/                      # AI分析引擎
+│   │   ├── agents.py               # 多Agent定义 (技术/基本面/新闻)
+│   │   ├── orchestrator.py         # LangGraph编排器 (并行工作流)
+│   │   └── technical_indicator.py  # 技术指标计算 (MA/RSI/MACD等)
+│   ├── 🌐 routers/                 # FastAPI路由模块
+│   │   ├── stocks.py               # 股票数据API
+│   │   ├── ai.py                   # AI分析API
+│   │   └── search.py               # 搜索API
+│   ├── 📊 data_service.py          # 核心数据服务 (三级缓存协调)
+│   ├── 🗄️ models.py                # SQLAlchemy 2.0模型
+│   ├── 🔧 dependencies.py          # 现代化依赖注入
+│   ├── ⚡ cache_manager.py         # Redis缓存管理
+│   └── 🛡️ exceptions.py            # 统一异常处理
+├── 🎨 frontend/                    # React前端
+│   ├── 📦 src/components/          # 核心React组件
+│   │   ├── StockSearch.tsx         # 智能股票搜索
+│   │   ├── TradingViewChart.tsx    # 专业K线图表
+│   │   ├── AIAnalysis.tsx          # AI分析结果展示
+│   │   └── ui/                     # shadcn/ui组件库
+│   ├── 📱 src/hooks/               # React Hooks
+│   └── 🎯 src/types/               # TypeScript类型定义
+├── 🧪 tests/                       # 测试代码
+│   ├── test_data_service.py        # 数据服务测试
+│   ├── test_ai_analysis.py         # AI分析测试
+│   └── conftest.py                 # 测试配置
+├── 🗃️ database_migrations/         # 数据库迁移脚本
+├── 📖 main.py                      # FastAPI应用入口
+├── ⚙️ pyproject.toml               # uv项目配置 (Python依赖)
+└── 📋 frontend/package.json        # pnpm配置 (前端依赖)
+```
+
+### 关键目录说明
+- **stockaivo/ai/**: LangGraph多Agent并行分析系统核心
+- **stockaivo/routers/**: RESTful API端点定义，按功能模块组织
+- **frontend/src/components/**: React 19组件，使用TypeScript和shadcn/ui
+- **tests/**: pytest测试套件，包含单元测试和集成测试
+- **database_migrations/**: 数据库schema变更脚本
