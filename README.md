@@ -114,7 +114,7 @@ AI_SYNTHESIS_MODEL="gemini-2.5-pro"             # 综合分析专用
 | **智能搜索** | `GET /search/stocks?q=apple`           | 股票搜索               |
 |              | `GET /search/stocks/suggestions?q=app` | 实时建议               |
 | **AI分析**   | `POST /ai/analyze-parallel`            | **并行AI分析（推荐）** |
-|              | `POST /ai/analyze-stream`              | 流式AI分析             |
+|              | `POST /ai/analyze-sequential`          | 顺序AI分析             |
 | **数据管理** | `POST /stocks/realtime-quotes/update`  | 更新实时行情数据       |
 |              | `POST /stocks/us-stock-names/update`   | 更新美股名称数据       |
 | **系统监控** | `GET /health`                          | 健康检查               |

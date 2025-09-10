@@ -36,17 +36,17 @@ class NestedAnalysisRequest(BaseModel):
     value: AnalysisRequest
 
 
-@router.post("/analyze")
-async def analyze_stock_stream(nested_request: NestedAnalysisRequest):
+@router.post("/analyze-sequential")
+async def analyze_stock_sequential(nested_request: NestedAnalysisRequest):
     """
-    启动AI投资分析并流式返回结果。
+    启动AI投资分析并顺序流式返回结果。
 
-    这是一个简化的单一端点，直接返回流式分析结果，
-    无需额外的GET请求。
+    分析代理将按顺序执行，提供逐步的分析过程展示。
+    这是一个简化的单一端点，直接返回流式分析结果。
     """
     try:
         request = nested_request.value
-        logger.info(f"收到AI分析请求: {request.ticker}, 结束日期: {request.end_date}")
+        logger.info(f"收到AI顺序分析请求: {request.ticker}, 结束日期: {request.end_date}")
 
         custom_date_range = None
         if request.end_date:
@@ -66,28 +66,28 @@ async def analyze_stock_stream(nested_request: NestedAnalysisRequest):
                 async for event in analysis_generator:
                     yield event
             except asyncio.CancelledError:
-                logger.warning("客户端断开了连接，AI分析流已取消。")
+                logger.warning("客户端断开了连接，AI顺序分析流已取消。")
                 # 客户端断开连接时不需要发送错误事件
             except Exception as e:
-                logger.error(f"AI分析过程中发生错误: {e}")
+                logger.error(f"AI顺序分析过程中发生错误: {e}")
                 # 使用统一的错误响应格式
                 error_response = create_error_response(
-                    message=f"AI分析过程中发生错误: {str(e)}",
+                    message=f"AI顺序分析过程中发生错误: {str(e)}",
                     status_code=500
                 )
                 error_event = f"data: {error_response}\n\n"
                 yield error_event
             finally:
-                logger.info("AI分析流结束。")
+                logger.info("AI顺序分析流结束。")
 
         return StreamingResponse(stream_wrapper(), media_type="text/event-stream")
 
     except ValueError as e:
-        logger.error(f"AI分析请求验证失败: {e}")
+        logger.error(f"AI顺序分析请求验证失败: {e}")
         raise ValidationException(f"请求参数验证失败: {str(e)}")
     except Exception as e:
-        logger.error(f"启动AI分析失败: {e}")
-        raise AIServiceException(f"启动AI分析失败: {str(e)}")
+        logger.error(f"启动AI顺序分析失败: {e}")
+        raise AIServiceException(f"启动AI顺序分析失败: {str(e)}")
 
 
 @router.post("/analyze-parallel")

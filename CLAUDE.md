@@ -141,7 +141,7 @@ SQLAlchemy 2.0数据模型定义：
 - `/stocks/{ticker}/{period}`: 股票数据获取 (daily/weekly/10min/minute)
 - `/stocks/{ticker}/news`: 股票新闻数据获取 (Redis缓存)
 - `/ai/analyze-parallel`: 并行AI分析 (推荐，速度提升2-3倍)
-- `/ai/analyze-stream`: 流式AI分析
+- `/ai/analyze-sequential`: 顺序AI分析
 - `/search/stocks?q=keyword`: 股票搜索和建议
 - `/search/stocks/suggestions?q=keyword`: 实时搜索建议
 - `/stocks/realtime-quotes/update`: 更新实时行情数据
