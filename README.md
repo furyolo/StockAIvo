@@ -22,6 +22,7 @@
 - 📈 **流式响应**：实时输出分析结果，动态进度显示
 - 🗞️ **新闻情感**：基于实时新闻的市场情绪评估
 - 🏢 **公司信息增强**：自动获取公司名称，优化分析准确性
+- 🎲 **结构化预测**：基于多维分析生成概率化股价预测，包含方向、概率值、置信度和详细推理
 - ⚠️ **执行依赖策略**：综合分析(synthesis)仅在技术分析成功时执行，确保分析质量
 - ✅ **数据验证增强**：所有Agent在数据缺失时统一跳过LLM调用，避免无效分析和资源浪费
 
@@ -116,6 +117,7 @@ AI_SYNTHESIS_MODEL="gemini-2.5-pro"             # 综合分析专用
 |              | `GET /search/stocks/suggestions?q=app` | 实时建议               |
 | **AI分析**   | `POST /ai/analyze-parallel`            | **并行AI分析（推荐）** |
 |              | `POST /ai/analyze-sequential`          | 顺序AI分析             |
+|              | `POST /ai/predict-structured`          | **结构化概率预测**     |
 | **数据管理** | `POST /stocks/realtime-quotes/update`  | 更新实时行情数据       |
 |              | `POST /stocks/us-stock-names/update`   | 更新美股名称数据       |
 | **系统监控** | `GET /health`                          | 健康检查               |
@@ -127,13 +129,49 @@ AI_SYNTHESIS_MODEL="gemini-2.5-pro"             # 综合分析专用
 # 并行AI分析 (推荐) - 使用默认日期范围
 curl -X POST "http://127.0.0.1:8000/ai/analyze-parallel" \
   -H "Content-Type: application/json" \
-  -d '{"summary": "分析股票 AAPL", "value": {"ticker": "AAPL"}}'
+  -d '{"ticker": "AAPL"}'
 
 # 使用自定义结束日期
 curl -X POST "http://127.0.0.1:8000/ai/analyze-parallel" \
   -H "Content-Type: application/json" \
-  -d '{"summary": "分析股票 AAPL", "value": {"ticker": "AAPL", "end_date": "2024-12-31"}}'
+  -d '{"ticker": "AAPL", "end_date": "2024-12-31"}'
+
+# 结构化概率预测 - 基于分析结果生成量化预测
+curl -X POST "http://127.0.0.1:8000/ai/predict-structured" \
+  -H "Content-Type: application/json" \
+  -d '{"ticker": "AAPL", "end_date": "2024-12-31"}'
 ```
+
+### 🎲 结构化预测功能
+
+**量化概率预测系统**，基于多维度分析生成精确的股价预测：
+
+#### 📊 预测输出格式
+```json
+{
+  "success": true,
+  "data": {
+    "prediction_probability": 0.72,
+    "direction": "UP",
+    "confidence_level": "MEDIUM",
+    "reasoning": "技术分析显示RSI从超卖区域反弹，MACD出现金叉信号...",
+    "ticker": "AAPL",
+    "timestamp": "2025-09-13T14:30:00"
+  }
+}
+```
+
+#### 🎯 预测参数说明
+- **prediction_probability**: 预测概率值（0.0-1.0），表示达成目标的可能性
+- **direction**: 预测方向（UP/DOWN），基于多Agent分析综合判断
+- **confidence_level**: 置信度等级（HIGH/MEDIUM/LOW），反映预测可靠性
+- **reasoning**: 详细推理过程，解释概率计算依据和关键信号
+
+#### ⚡ 智能特性
+- **多维度分析**：整合技术分析、基本面分析、新闻情感的综合信号
+- **动态适配**：根据可用分析维度自动调整预测策略和置信度评估
+- **概率量化**：将定性分析转化为定量概率值，支持量化投资决策
+- **风险评估**：提供置信度等级，帮助用户评估预测可靠性
 
 ### 🔄 数据管理示例
 
@@ -176,7 +214,7 @@ StockAIvo/
 │   └── package.json                # 前端依赖 (pnpm)
 ├── 🚀 stockaivo/                   # Python 3.12 后端
 │   ├── ai/                         # AI分析引擎
-│   │   ├── agents.py               # 多Agent定义 (增强数据验证)
+│   │   ├── agents.py               # 多Agent定义 (含结构化预测Agent)
 │   │   ├── orchestrator.py         # LangGraph编排
 │   │   └── technical_indicator.py  # 技术指标计算
 │   ├── routers/                    # FastAPI路由
@@ -237,6 +275,14 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 - 🛡️ **智能数据验证**：`ValidationResult`类 + 价格边界修复 + 分层验证策略
 - 📰 **新闻系统重构**：TickerTick API集成 + Redis缓存优化 + 时区智能处理
 - ⚡ **现代化依赖注入**：`Annotated`类型系统 + 分层异常处理 + 中间件架构
+
+### 🎲 v0.1.1 - 结构化预测与智能验证
+- 🚀 **结构化预测Agent**：基于多维分析生成概率化股价预测，支持量化投资决策
+- 🧠 **LLM结构化输出**：统一Google GenAI和OpenAI API，支持Pydantic模型返回
+- 🔧 **Schema自动转换**：Pydantic模型到OpenAI格式的智能转换器
+- ✅ **智能数据验证**：Agent执行前自动检查数据可用性，避免无效LLM调用
+- 🏷️ **Agent名称规范化**：统一所有Agent调用的agent_name参数，支持专用模型配置
+- 📊 **API格式优化**：简化前端请求JSON结构，提升开发效率和用户体验
 
 ### ⚡ v1.8.0 - 性能优化与逻辑统一
 - 🧹 **代码清理**：移除小时线功能，10分钟线实时聚合优化
