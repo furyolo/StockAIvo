@@ -75,11 +75,14 @@ Redis → PostgreSQL → AKShare
 
 #### 2. 多Agent并行AI分析
 基于LangGraph的并行分析架构：
-- **技术分析Agent**: MA、RSI、MACD、布林带等技术指标
+- **技术分析Agent**: MA、RSI、MACD、布林带等技术指标，增强数据验证机制
 - **基本面分析Agent**: 公司基本面数据分析
 - **新闻情感Agent**: 基于实时新闻的情绪分析
 - **综合分析Agent**: 整合多个Agent的分析结果
+- **结构化预测Agent**: 基于原始分析结果生成概率预测，支持动态Prompt适配
 - **⚠️ 执行依赖策略**: 综合分析仅在技术分析成功时执行，确保分析质量
+- **🔧 异常处理优化**: 并行执行时的类型安全异常处理，防止Exception对象调用.items()方法
+- **✅ 数据验证增强**: 所有Agent在数据缺失时正确跳过LLM调用，统一返回None，避免无效分析和资源浪费
 
 #### 3. 现代化依赖注入
 使用FastAPI的`Annotated`类型系统：
@@ -116,6 +119,20 @@ LangGraph多Agent工作流编排：
 - 流式响应支持和状态管理
 - 错误处理和Agent间通信
 - **执行依赖控制**: 综合分析仅在技术分析成功时执行
+
+#### stockaivo/ai/agents.py
+多Agent分析系统核心实现：
+- **数据验证机制**: 所有Agent在执行前检查必需数据，确保只有在数据可用时才调用LLM
+- **Agent名称规范化**: 统一所有Agent调用中的agent_name参数传递，支持专用模型配置和日志追踪
+- **动态Prompt生成**: 结构化预测Agent根据实际可用分析结果动态调整提示词内容
+- **智能文本适配**: 根据技术分析、基本面分析、新闻情感分析的可用性调整预测方向和置信度评估描述
+- **自然语言优化**: 将技术性表述改为LLM易理解的自然语言，提升预测准确性
+
+#### stockaivo/routers/ai.py  
+AI分析API路由处理：
+- **类型安全异常处理**: 在处理asyncio.gather()结果时添加isinstance检查，防止Exception对象调用.items()
+- **并行执行优化**: 结构化预测支持并行Agent执行，提升性能
+- **状态管理改进**: 优化分析结果合并逻辑，保留data_collector等关键信息
 
 #### stockaivo/cache_manager.py
 Redis缓存管理：

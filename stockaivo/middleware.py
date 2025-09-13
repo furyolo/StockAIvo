@@ -105,11 +105,15 @@ class PerformanceMonitoringMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             process_time = time.time() - start_time
             
-            # 检查慢请求
-            if process_time > self.slow_request_threshold:
+            # 检查慢请求，但对特定端点使用不同阈值
+            threshold = self.slow_request_threshold
+            if request.url.path == "/ai/predict-structured":
+                threshold = 120.0  # predict-structured允许2分钟处理时间
+            
+            if process_time > threshold:
                 logger.warning(
                     f"慢请求检测: {request.method} {request.url} - "
-                    f"处理时间: {process_time:.3f}s (阈值: {self.slow_request_threshold}s)"
+                    f"处理时间: {process_time:.3f}s (阈值: {threshold}s)"
                 )
             
             # 添加性能相关响应头

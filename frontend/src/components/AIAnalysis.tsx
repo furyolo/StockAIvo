@@ -36,16 +36,13 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
     setAvailableAnalyses([]); // 重置可用分析列表
 
     try {
-      // 准备请求数据
+      // 准备请求数据 - 使用扁平JSON格式
       const requestData = {
-        summary: `分析股票 ${selectedStock}`,
-        value: {
-          ticker: selectedStock,
-          // 如果用户选择了结束日期，则使用用户选择的日期；否则不传日期，让后端使用默认值
-          ...(endDate && {
-            end_date: format(endDate, 'yyyy-MM-dd'),
-          }),
-        },
+        ticker: selectedStock,
+        // 如果用户选择了结束日期，则使用用户选择的日期；否则不传日期，让后端使用默认值
+        ...(endDate && {
+          end_date: format(endDate, 'yyyy-MM-dd'),
+        }),
       };
 
       // 固定使用并行分析

@@ -23,6 +23,7 @@
 - 🗞️ **新闻情感**：基于实时新闻的市场情绪评估
 - 🏢 **公司信息增强**：自动获取公司名称，优化分析准确性
 - ⚠️ **执行依赖策略**：综合分析(synthesis)仅在技术分析成功时执行，确保分析质量
+- ✅ **数据验证增强**：所有Agent在数据缺失时统一跳过LLM调用，避免无效分析和资源浪费
 
 ### 🎨 现代化界面
 **专业级用户体验，适配多设备**
@@ -175,7 +176,7 @@ StockAIvo/
 │   └── package.json                # 前端依赖 (pnpm)
 ├── 🚀 stockaivo/                   # Python 3.12 后端
 │   ├── ai/                         # AI分析引擎
-│   │   ├── agents.py               # 多Agent定义
+│   │   ├── agents.py               # 多Agent定义 (增强数据验证)
 │   │   ├── orchestrator.py         # LangGraph编排
 │   │   └── technical_indicator.py  # 技术指标计算
 │   ├── routers/                    # FastAPI路由

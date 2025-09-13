@@ -1,5 +1,5 @@
 from typing import Dict, Optional
-from stockaivo.ai.llm_service import llm_service
+from stockaivo.ai.llm_service import get_llm_service
 from langchain_core.tools import tool
 
 
@@ -14,5 +14,5 @@ async def llm_tool(input_dict: Dict) -> str:
         return "Error: 'prompt' key is missing in the input dictionary."
 
     agent_name = input_dict.get("agent_name")
-    result = await llm_service.invoke(prompt, agent_name)
+    result = await get_llm_service().invoke(prompt, agent_name)
     return result

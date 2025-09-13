@@ -105,32 +105,26 @@ describe('AI分析数据处理', () => {
 
   it('应该能够处理自定义结束日期格式', () => {
     const requestData = {
-      summary: '分析股票 AAPL',
-      value: {
-        ticker: 'AAPL',
-        end_date: '2024-12-31'
-      }
+      ticker: 'AAPL',
+      end_date: '2024-12-31'
     };
 
     // 验证请求数据格式正确
-    expect(requestData.value.ticker).toBe('AAPL');
-    expect(requestData.value.end_date).toBe('2024-12-31');
-    expect(requestData.value).not.toHaveProperty('start_date');
-    expect(requestData.value).not.toHaveProperty('date_range_option');
+    expect(requestData.ticker).toBe('AAPL');
+    expect(requestData.end_date).toBe('2024-12-31');
+    expect(requestData).not.toHaveProperty('start_date');
+    expect(requestData).not.toHaveProperty('date_range_option');
   });
 
   it('应该能够处理不选择日期的情况', () => {
     const requestData = {
-      summary: '分析股票 AAPL',
-      value: {
-        ticker: 'AAPL'
-      }
+      ticker: 'AAPL'
     };
 
     // 验证请求数据格式正确（不包含日期字段时使用系统默认值）
-    expect(requestData.value.ticker).toBe('AAPL');
-    expect(requestData.value).not.toHaveProperty('start_date');
-    expect(requestData.value).not.toHaveProperty('end_date');
-    expect(requestData.value).not.toHaveProperty('date_range_option');
+    expect(requestData.ticker).toBe('AAPL');
+    expect(requestData).not.toHaveProperty('start_date');
+    expect(requestData).not.toHaveProperty('end_date');
+    expect(requestData).not.toHaveProperty('date_range_option');
   });
 });

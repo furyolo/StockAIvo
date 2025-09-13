@@ -8,9 +8,12 @@ import asyncio
 import httpx
 import json
 import random
-from typing import Dict, Any, Optional, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, Type, Union
 import logging
-import google.generativeai as genai
+from google.generativeai.generative_models import GenerativeModel
+from google.generativeai.types import GenerationConfig
+from google.generativeai.client import configure
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +73,8 @@ class LLMService:
             self.mode = "gemini"
             # 使用默认模型作为服务级别的基础模型
             self.gemini_model_name = self.ai_default_model
-            genai.configure(api_key=self.gemini_api_key)  # type: ignore
-            self.model = genai.GenerativeModel(self.gemini_model_name)  # type: ignore
+            configure(api_key=self.gemini_api_key)
+            self.model = GenerativeModel(self.gemini_model_name)
             logger.info(f"LLM服务已配置为使用Google Gemini API (默认模型: {self.gemini_model_name})。")
         else:
             raise ValueError("必须配置OpenAI或Gemini的API密钥环境变量")
@@ -113,6 +116,32 @@ class LLMService:
         else:
             return "LLM服务未正确配置"
 
+    async def invoke_structured(
+        self, 
+        prompt: str, 
+        response_model: Type[BaseModel], 
+        agent_name: Optional[str] = None
+    ) -> Union[BaseModel, str]:
+        """
+        调用LLM并返回结构化响应。
+        
+        支持统一的结构化输出接口，自动处理Google GenAI和OpenAI API的差异。
+
+        Args:
+            prompt: 发送给LLM的提示词。
+            response_model: Pydantic模型类，定义期望的响应结构。
+            agent_name: 代理名称，用于选择特定的模型。
+
+        Returns:
+            结构化的Pydantic模型实例，或错误字符串。
+        """
+        if self.mode == "openai":
+            return await self._invoke_openai_structured(prompt, response_model, agent_name)
+        elif self.mode == "gemini":
+            return await self._invoke_gemini_structured(prompt, response_model, agent_name)
+        else:
+            return "LLM服务未正确配置"
+
     def _should_retry(self, status_code: int) -> bool:
         """
         判断是否应该重试请求
@@ -143,7 +172,7 @@ class LLMService:
         jitter = random.uniform(0.1, 0.5) * exponential_delay
         total_delay = exponential_delay + jitter
         # 最大延迟不超过60秒
-        return min(total_delay, 60.0)
+        return float(min(total_delay, 60.0))
 
     def _build_request_data(self, prompt: str, stream: bool = False, agent_name: Optional[str] = None) -> dict:
         """
@@ -186,9 +215,9 @@ class LLMService:
             )
         else:
             return httpx.Timeout(
-                timeout=120.0,
+                timeout=180.0,  # 增加非流式请求超时时间以处理长Prompt
                 connect=30.0,
-                read=120.0,
+                read=180.0,    # 增加读取超时时间
                 write=30.0
             )
 
@@ -274,7 +303,7 @@ class LLMService:
 
                 content = data['choices'][0]['message']['content']
                 logger.info(f"Received response from OpenAI API: content_length={len(content)}")
-                return content
+                return str(content)
 
             except httpx.HTTPStatusError as e:
                 if self._should_retry(e.response.status_code) and attempt < max_retries:
@@ -301,14 +330,14 @@ class LLMService:
             model_name = self.get_model_name_for_agent(agent_name)
             # 如果需要使用不同的模型，创建新的模型实例
             if model_name != self.gemini_model_name:
-                model = genai.GenerativeModel(model_name)  # type: ignore
+                model = GenerativeModel(model_name)
                 logger.info(f"Using specific model for agent {agent_name}: {model_name}")
             else:
                 model = self.model
 
             response = await model.generate_content_async(prompt)
             if response.candidates and response.candidates[0].content.parts:
-                return response.candidates[0].content.parts[0].text
+                return str(response.candidates[0].content.parts[0].text)
             else:
                 logger.warning(f"LLM for prompt '{prompt[:50]}...' returned no content.")
                 if response.prompt_feedback.block_reason:
@@ -326,7 +355,7 @@ class LLMService:
             model_name = self.get_model_name_for_agent(agent_name)
             # 如果需要使用不同的模型，创建新的模型实例
             if model_name != self.gemini_model_name:
-                model = genai.GenerativeModel(model_name)  # type: ignore
+                model = GenerativeModel(model_name)
                 logger.info(f"Using specific model for streaming agent {agent_name}: {model_name}")
             else:
                 model = self.model
@@ -417,8 +446,8 @@ class LLMService:
             if response.status_code != 200:
                 error_text = ""
                 try:
-                    error_text = await response.aread()
-                    error_text = error_text.decode('utf-8') if isinstance(error_text, bytes) else str(error_text)
+                    error_content = await response.aread()
+                    error_text = error_content.decode('utf-8') if isinstance(error_content, bytes) else str(error_content)
                 except Exception:
                     error_text = "无法读取错误响应"
 
@@ -435,8 +464,8 @@ class LLMService:
                 if line_bytes:
                     # 解码为UTF-8字符串
                     try:
-                        line = line_bytes.decode('utf-8') if isinstance(line_bytes, bytes) else line_bytes
-                    except UnicodeDecodeError:
+                        line = line_bytes.decode('utf-8') if isinstance(line_bytes, bytes) else str(line_bytes)  # type: ignore
+                    except (UnicodeDecodeError, AttributeError):
                         continue  # 跳过无法解码的行
 
                     if line.startswith("data: "):
@@ -457,6 +486,133 @@ class LLMService:
                             # 跳过无法解析的行
                             continue
 
+    async def _invoke_openai_structured(
+        self, 
+        prompt: str, 
+        response_model: Type[BaseModel], 
+        agent_name: Optional[str] = None
+    ) -> Union[BaseModel, str]:
+        """
+        调用OpenAI兼容API进行结构化输出（带重试机制）
+        """
+        # 导入转换工具
+        try:
+            from .schema_converter import pydantic_to_openai_schema
+        except ImportError as e:
+            logger.error(f"无法导入schema转换工具: {e}")
+            return "Schema转换工具导入失败"
+        
+        max_retries = 3
+        model_name = self.get_model_name_for_agent(agent_name)
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                # 构建带有response_format的请求数据
+                request_data = self._build_request_data(prompt, stream=False, agent_name=agent_name)
+                
+                # 添加结构化输出格式
+                openai_schema = pydantic_to_openai_schema(response_model)
+                request_data["response_format"] = openai_schema
+                
+                logger.info(f"Sending structured request to OpenAI API: model={model_name}, agent={agent_name}, schema={response_model.__name__}, prompt_length={len(prompt)}")
+
+                response = await self.client.post(
+                    "/chat/completions",
+                    json=request_data,
+                    timeout=self._get_timeout_config(is_stream=False)
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                content = data['choices'][0]['message']['content']
+                logger.info(f"Received structured response from OpenAI API: content_length={len(content)}")
+                
+                # 解析JSON并创建Pydantic模型实例
+                try:
+                    response_data = json.loads(content)
+                    structured_response = response_model(**response_data)
+                    logger.info(f"Successfully parsed structured response for model: {response_model.__name__}")
+                    return structured_response
+                except (json.JSONDecodeError, ValueError) as parse_error:
+                    logger.error(f"解析结构化响应失败: {parse_error}, 原始内容: {content}")
+                    return f"解析结构化响应失败: {str(parse_error)}"
+
+            except httpx.HTTPStatusError as e:
+                if self._should_retry(e.response.status_code) and attempt < max_retries:
+                    delay = await self._calculate_retry_delay(attempt)
+                    logger.warning(f"结构化请求失败 (状态码: {e.response.status_code})，{delay:.1f}秒后进行第{attempt + 1}次重试...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    return self._log_http_error(e, "结构化调用")
+
+            except httpx.RequestError as e:
+                return self._log_request_error(e, "结构化请求")
+
+            except Exception as e:
+                logger.error(f"调用OpenAI兼容API结构化输出时发生未知错误: {type(e).__name__}: {e}")
+                return f"Error calling OpenAI-compatible API for structured output: {type(e).__name__}: {str(e)}"
+
+        return "结构化请求达到最大重试次数后仍然失败"
+
+    async def _invoke_gemini_structured(
+        self, 
+        prompt: str, 
+        response_model: Type[BaseModel], 
+        agent_name: Optional[str] = None
+    ) -> Union[BaseModel, str]:
+        """
+        调用Google Gemini API进行结构化输出
+        """
+        try:
+            model_name = self.get_model_name_for_agent(agent_name)
+            
+            # 如果需要使用不同的模型，创建新的模型实例
+            if model_name != self.gemini_model_name:
+                model = GenerativeModel(
+                    model_name,
+                    generation_config=GenerationConfig(
+                        response_mime_type="application/json",
+                        response_schema=response_model
+                    )
+                )
+                logger.info(f"Using specific structured model for agent {agent_name}: {model_name}")
+            else:
+                # 使用现有模型但配置结构化输出
+                model = GenerativeModel(
+                    self.gemini_model_name,
+                    generation_config=GenerationConfig(
+                        response_mime_type="application/json",
+                        response_schema=response_model
+                    )
+                )
+
+            logger.info(f"Sending structured request to Gemini API: model={model_name}, schema={response_model.__name__}")
+            response = await model.generate_content_async(prompt)
+            
+            if response.candidates and response.candidates[0].content.parts:
+                content = response.candidates[0].content.parts[0].text
+                logger.info(f"Received structured response from Gemini API: content_length={len(content)}")
+                
+                # 解析JSON并创建Pydantic模型实例
+                try:
+                    response_data = json.loads(content)
+                    structured_response = response_model(**response_data)
+                    logger.info(f"Successfully parsed structured response for model: {response_model.__name__}")
+                    return structured_response
+                except (json.JSONDecodeError, ValueError) as parse_error:
+                    logger.error(f"解析结构化响应失败: {parse_error}, 原始内容: {content}")
+                    return f"解析结构化响应失败: {str(parse_error)}"
+            else:
+                logger.warning(f"Gemini structured request returned no content for prompt: '{prompt[:50]}...'")
+                if response.prompt_feedback.block_reason:
+                    return f"Blocked for {response.prompt_feedback.block_reason_message}"
+                return "Gemini did not return any structured content."
+                
+        except Exception as e:
+            logger.error(f"调用Gemini结构化输出时发生意外错误: {e}")
+            return f"Error calling Gemini for structured output: {str(e)}"
+
     async def _fallback_to_simulated_stream(self, prompt: str, agent_name: Optional[str] = None) -> AsyncGenerator[str, None]:
         """
         回退到非流式调用并模拟流式输出
@@ -473,5 +629,12 @@ class LLMService:
             logger.error(f"非流式回退也失败: {fallback_error}")
             yield f"Error: {str(fallback_error)}"
 
-# 单例模式
-llm_service = LLMService()
+# 单例模式 - 延迟初始化
+llm_service = None
+
+def get_llm_service() -> LLMService:
+    """获取LLM服务实例（延迟初始化）"""
+    global llm_service
+    if llm_service is None:
+        llm_service = LLMService()
+    return llm_service

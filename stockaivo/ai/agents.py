@@ -16,12 +16,40 @@ from sqlalchemy import select
 from stockaivo.database import get_db
 from stockaivo.models import UsStocksName
 from stockaivo.ai.state import GraphState
-from stockaivo.ai.llm_service import llm_service
+from stockaivo.ai.llm_service import get_llm_service
 from stockaivo.ai.tools import llm_tool
 from stockaivo.ai.technical_indicator import TechnicalIndicator
 
 # 配置日志
 logger = logging.getLogger(__name__)
+
+# ==================== 错误检查辅助函数 ====================
+
+def _is_llm_error_result(result: str) -> bool:
+    """
+    检查LLM返回的结果是否是错误信息
+    
+    Args:
+        result: LLM返回的字符串结果
+    
+    Returns:
+        如果是错误信息返回True，否则返回False
+    """
+    if not isinstance(result, str):
+        return False
+    
+    error_indicators = [
+        "Error calling",
+        "HTTP Error",
+        "Error:",
+        "所有重试都失败了",
+        "LLM服务未正确配置",
+        "失败:",
+        "Blocked for",
+        "LLM did not return any content"
+    ]
+    
+    return any(indicator in result for indicator in error_indicators)
 
 # ==================== 重构：统一市场分析接口 ====================
 
@@ -826,12 +854,25 @@ async def technical_analysis_agent(state: GraphState) -> Dict[str, Any]:
     market_aware_date = market_analysis.market_aware_date
     print(f"Technical analysis using market date: {market_aware_date}")
 
+    # 检查是否有任何价格数据可用
+    raw_data = state.get("raw_data", {})
+    has_any_price_data = any(key in raw_data and raw_data[key] for key in ['daily_prices', 'weekly_prices', 'tenmin_prices'])
+    
+    if not has_any_price_data:
+        print("缺少所有价格数据（日线、周线、10分钟线），跳过技术分析")
+        return {"analysis_results": {"technical_analyst": None}}
+
     # 使用共用函数处理数据
     ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(state)
 
     # 使用共享的prompt构建函数，传递market_aware_date
     prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators, market_aware_date)
     analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": prompt, "agent_name": "technical_analysis_agent"}})
+
+    # 检查是否是错误结果
+    if _is_llm_error_result(analysis_result):
+        print(f"技术分析LLM调用失败: {analysis_result}")
+        return {"analysis_results": {"technical_analyst": analysis_result}}  # 技术分析失败时保留错误信息，因为它是必需的
 
     return {"analysis_results": {"technical_analyst": analysis_result}}
 
@@ -853,7 +894,13 @@ async def fundamental_analysis_agent(state: GraphState) -> Dict[str, Any]:
     # 使用共用函数构建prompt
     fundamental_prompt = _build_fundamental_analysis_prompt(ticker)
 
-    analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": fundamental_prompt}})
+    analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": fundamental_prompt, "agent_name": "fundamental_analysis_agent"}})
+    
+    # 检查是否是错误结果
+    if _is_llm_error_result(analysis_result):
+        print(f"基本面分析LLM调用失败: {analysis_result}")
+        return {"analysis_results": {"fundamental_analyst": None}}
+    
     return {"analysis_results": {"fundamental_analyst": analysis_result}}
 
 
@@ -874,7 +921,13 @@ async def news_sentiment_analysis_agent(state: GraphState) -> Dict[str, Any]:
     # 使用共用函数构建prompt，传入实际新闻数据
     sentiment_prompt = _build_news_sentiment_analysis_prompt(ticker, news_data)
 
-    analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": sentiment_prompt}})
+    analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": sentiment_prompt, "agent_name": "news_sentiment_agent"}})
+    
+    # 检查是否是错误结果
+    if _is_llm_error_result(analysis_result):
+        print(f"新闻情感分析LLM调用失败: {analysis_result}")
+        return {"analysis_results": {"news_sentiment_analyst": None}}
+    
     return {"analysis_results": {"news_sentiment_analyst": analysis_result}}
 
 
@@ -949,6 +1002,15 @@ async def technical_analysis_agent_stream(state: GraphState) -> AsyncGenerator[D
     market_aware_date = market_analysis.market_aware_date
     print(f"Technical analysis (stream) using market date: {market_aware_date}")
 
+    # 检查是否有任何价格数据可用
+    raw_data = state.get("raw_data", {})
+    has_any_price_data = any(key in raw_data and raw_data[key] for key in ['daily_prices', 'weekly_prices', 'tenmin_prices'])
+    
+    if not has_any_price_data:
+        print("缺少所有价格数据（日线、周线、10分钟线），跳过技术分析")
+        yield {"analysis_results": {"technical_analyst": None}}
+        return
+
     # 使用共用函数处理数据
     ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(state)
 
@@ -957,7 +1019,7 @@ async def technical_analysis_agent_stream(state: GraphState) -> AsyncGenerator[D
 
     # 流式生成分析结果
     accumulated_result = ""
-    async for chunk in llm_service.invoke_stream(prompt, "technical_analysis_agent"):
+    async for chunk in get_llm_service().invoke_stream(prompt, "technical_analysis_agent"):
         accumulated_result += chunk
         # 实时返回累积的结果
         yield {"analysis_results": {"technical_analyst": accumulated_result}}
@@ -991,7 +1053,7 @@ async def synthesis_agent_stream(state: GraphState) -> AsyncGenerator[Dict[str, 
 
     # 流式生成综合分析结果
     accumulated_result = ""
-    async for chunk in llm_service.invoke_stream(synthesis_prompt, "synthesis_agent"):
+    async for chunk in get_llm_service().invoke_stream(synthesis_prompt, "synthesis_agent"):
         accumulated_result += chunk
         # 实时返回累积的结果
         yield {"final_report": accumulated_result}
@@ -1017,7 +1079,7 @@ async def fundamental_analysis_agent_stream(state: GraphState) -> AsyncGenerator
 
     # 流式生成分析结果
     accumulated_result = ""
-    async for chunk in llm_service.invoke_stream(fundamental_prompt):
+    async for chunk in get_llm_service().invoke_stream(fundamental_prompt, "fundamental_analysis_agent"):
         accumulated_result += chunk
         # 实时返回累积的结果
         yield {"analysis_results": {"fundamental_analyst": accumulated_result}}
@@ -1043,7 +1105,238 @@ async def news_sentiment_analysis_agent_stream(state: GraphState) -> AsyncGenera
 
     # 流式生成分析结果
     accumulated_result = ""
-    async for chunk in llm_service.invoke_stream(sentiment_prompt):
+    async for chunk in get_llm_service().invoke_stream(sentiment_prompt, "news_sentiment_agent"):
         accumulated_result += chunk
         # 实时返回累积的结果
         yield {"analysis_results": {"news_sentiment_analyst": accumulated_result}}
+
+
+async def structured_prediction_agent(state: GraphState) -> Dict[str, Any]:
+    """
+    结构化预测 Agent - 生成概率化股价预测
+    
+    基于综合分析生成结构化的预测结果，输出包含：
+    - 预测概率值（0.0-1.0）
+    - 预测方向（UP/DOWN）
+    - 置信度（HIGH/MEDIUM/LOW）
+    - 推理说明
+    
+    注意：需要技术分析成功执行后才能进行结构化预测
+    """
+    from stockaivo.ai.prediction_models import StockPredictionResult
+    from datetime import datetime
+    
+    ticker = state.get("ticker", "UNKNOWN")
+    print(f"\n=== Structured Prediction Agent: {ticker} ===")
+    
+    # 检查技术分析是否成功 - 这是必需前提
+    analysis_results = state.get("analysis_results", {})
+    technical_analysis = analysis_results.get("technical_analyst")
+    
+    if not technical_analysis or "Error" in technical_analysis or "获取数据失败" in technical_analysis:
+        logger.warning(f"技术分析失败或不完整，跳过结构化预测: {ticker}")
+        return {
+            "structured_prediction": {
+                "error": "技术分析失败，无法进行结构化预测",
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    
+    # 构建结构化预测提示词
+    prediction_prompt = _build_structured_prediction_prompt(state)
+    
+    try:
+        # 调用LLM进行结构化预测
+        logger.info(f"开始为 {ticker} 生成结构化预测")
+        
+        prediction_result = await get_llm_service().invoke_structured(
+            prediction_prompt, 
+            StockPredictionResult,
+            agent_name="synthesis_agent"  # 使用synthesis模型配置
+        )
+        
+        if isinstance(prediction_result, StockPredictionResult):
+            logger.info(f"结构化预测成功生成: {ticker}, 方向={prediction_result.direction}, 概率={prediction_result.prediction_probability:.2f}")
+            
+            return {
+                "structured_prediction": {
+                    "prediction_probability": prediction_result.prediction_probability,
+                    "direction": prediction_result.direction,
+                    "confidence_level": prediction_result.confidence_level,
+                    "reasoning": prediction_result.reasoning,
+                    "ticker": ticker,
+                    "timestamp": datetime.now().isoformat(),
+                    "success": True
+                }
+            }
+        else:
+            # LLM返回了错误字符串
+            logger.error(f"结构化预测失败: {ticker}, 错误: {prediction_result}")
+            return {
+                "structured_prediction": {
+                    "error": f"结构化预测生成失败: {prediction_result}",
+                    "ticker": ticker,
+                    "timestamp": datetime.now().isoformat(),
+                    "success": False
+                }
+            }
+            
+    except Exception as e:
+        logger.error(f"结构化预测Agent异常: {ticker}, 错误: {str(e)}")
+        return {
+            "structured_prediction": {
+                "error": f"结构化预测Agent异常: {str(e)}",
+                "ticker": ticker,
+                "timestamp": datetime.now().isoformat(),
+                "success": False
+            }
+        }
+
+
+def _build_structured_prediction_prompt(state: GraphState) -> str:
+    """构建结构化预测提示词"""
+    ticker = state.get("ticker", "UNKNOWN")
+    analysis_results = state.get("analysis_results", {})
+    raw_data = state.get("raw_data", {})
+    
+    # 获取原始分析结果（专注于三个基础分析agent的输出）
+    technical_analysis = analysis_results.get("technical_analyst")
+    fundamental_analysis = analysis_results.get("fundamental_analyst") 
+    news_sentiment = analysis_results.get("news_sentiment_analyst")
+    
+    # 获取市场分析数据，用于计算预测时间范围
+    market_analysis = state.get("market_analysis")
+    if market_analysis is None:
+        # 回退机制：如果state中没有market_analysis，则调用get_market_analysis()
+        market_analysis = get_market_analysis()
+    
+    target_date = market_analysis.target_friday
+    trading_days_count = market_analysis.trading_days_count
+    market_aware_date = market_analysis.market_aware_date
+    
+    # 获取当前价格数据（从市场感知日期的收盘价）
+    current_price_info = ""
+    latest_close = None
+    upside_target = None
+    downside_target = None
+    
+    try:
+        daily_prices_data = raw_data.get("daily_prices")
+        if daily_prices_data:
+            daily_price_df = pd.DataFrame(daily_prices_data['data'], columns=daily_prices_data['columns'], index=daily_prices_data['index'])
+            if not daily_price_df.empty:
+                # 获取最近的收盘价（使用小写列名）
+                if 'close' in daily_price_df.columns:
+                    latest_close = daily_price_df['close'].iloc[-1]
+                    # 计算目标价格水平
+                    upside_target = latest_close * 1.03  # 上涨3%目标
+                    downside_target = latest_close * 0.97  # 下跌3%目标
+                    
+                    current_price_info = f"""
+**当前市场数据（{market_aware_date}）:**
+- 当前收盘价: ${latest_close:.2f}
+- 上涨目标价位（+3%）: ${upside_target:.2f}
+- 下跌目标价位（-3%）: ${downside_target:.2f}
+"""
+    except Exception as e:
+        current_price_info = f"\n**价格数据获取异常:** {e}"
+    
+    # 构建分析部分 - 专注于原始三个agent的分析结果
+    analysis_sections = []
+    available_analyses = []
+    
+    if technical_analysis and technical_analysis != "无技术分析":
+        analysis_sections.append(f"### 技术分析结果：\n{technical_analysis}")
+        available_analyses.append("技术面")
+    
+    if fundamental_analysis:
+        analysis_sections.append(f"### 基本面分析结果：\n{fundamental_analysis}")
+        available_analyses.append("基本面")
+    
+    if news_sentiment:
+        analysis_sections.append(f"### 新闻情感分析结果：\n{news_sentiment}")
+        available_analyses.append("新闻情感")
+    
+    # 动态生成第一步的文本描述
+    if len(available_analyses) == 3:
+        step1_text = "先分析技术面、基本面、新闻情感的综合信号，判断在预测时间范围内股价的主导趋势："
+    elif len(available_analyses) == 2:
+        step1_text = f"先分析{available_analyses[0]}、{available_analyses[1]}的综合信号，判断在预测时间范围内股价的主导趋势："
+    elif len(available_analyses) == 1:
+        step1_text = f"基于{available_analyses[0]}分析信号，判断在预测时间范围内股价的主导趋势："
+    else:
+        step1_text = "基于可用的市场数据分析，判断在预测时间范围内股价的主导趋势："
+    
+    # 动态生成第三步的置信度评估文本
+    if len(available_analyses) == 3:
+        confidence_text = """- **HIGH**: 三个分析维度高度一致，技术信号强烈，概率>0.75
+- **MEDIUM**: 大部分分析支持，有少量冲突信号，概率0.6-0.75
+- **LOW**: 信号混合，市场不确定性较高，概率0.5-0.6"""
+    elif len(available_analyses) == 2:
+        confidence_text = f"""- **HIGH**: 两个分析维度高度一致，信号强烈，概率>0.75
+- **MEDIUM**: 分析结果大致支持，有少量不确定性，概率0.6-0.75
+- **LOW**: 信号冲突或不确定性较高，概率0.5-0.6"""
+    elif len(available_analyses) == 1:
+        confidence_text = f"""- **HIGH**: {available_analyses[0]}信号非常强烈且明确，概率>0.75
+- **MEDIUM**: {available_analyses[0]}信号相对明确，但存在一定不确定性，概率0.6-0.75
+- **LOW**: {available_analyses[0]}信号模糊或冲突，不确定性较高，概率0.5-0.6"""
+    else:
+        confidence_text = """- **HIGH**: 基础市场数据显示明确信号，概率>0.75
+- **MEDIUM**: 市场数据显示相对明确的方向，概率0.6-0.75
+- **LOW**: 市场数据信号不明确，不确定性较高，概率0.5-0.6"""
+    
+    prompt = f"""
+你是一个专业的股票量化分析师，需要基于多维度分析结果为股票 {ticker} 生成结构化的概率预测。
+
+**预测时间范围:** 从 {market_aware_date} 到 {target_date} 前{trading_days_count}个交易日
+
+{current_price_info}
+
+## 分析数据输入
+
+{chr(10).join(analysis_sections)}
+
+## 概率预测任务要求
+
+请基于以上原始分析结果，生成一个结构化的股价概率预测：
+
+### 第一步：确定预测方向
+{step1_text}
+- **UP**: 预期上涨趋势占优
+- **DOWN**: 预期下跌趋势占优
+
+### 第二步：计算具体概率值
+{f'''**如果预测方向为UP（上涨）:**
+在接下来{trading_days_count}个交易日内（到{target_date}前），股价从当前的${latest_close:.2f}上涨至少3%，达到或超过${upside_target:.2f}的概率是多少？请给出0.0-1.0的概率值。
+
+**如果预测方向为DOWN（下跌）:**
+在接下来{trading_days_count}个交易日内（到{target_date}前），股价从当前的${latest_close:.2f}下跌至少3%，跌至或低于${downside_target:.2f}的概率是多少？请给出0.0-1.0的概率值。''' if latest_close is not None else '''**价格数据不可用，请基于分析信号估算概率:**
+- UP方向：股价在预测期内上涨至少3%的概率
+- DOWN方向：股价在预测期内下跌至少3%的概率'''}
+
+### 第三步：评估置信度
+{confidence_text}
+
+### 第四步：生成推理说明
+详细解释概率预测的逻辑（最多1000字符）：
+1. 基于{'、'.join([f"{analysis}" for analysis in available_analyses])}分析的关键信号识别
+2. 说明概率值计算的依据和各维度权重考量
+3. 指出影响预测的主要支撑和风险因素
+4. 解释为什么选择该概率值和置信度等级
+
+
+## 输出格式要求
+请严格按照以下JSON结构输出：
+- **prediction_probability**: 浮点数，0.0-1.0，表示目标价位达成的概率
+- **direction**: 字符串，"UP"或"DOWN"
+- **confidence_level**: 字符串，"HIGH"、"MEDIUM"或"LOW"
+- **reasoning**: 字符串，详细推理说明
+
+## 重要提醒
+- 概率值应基于历史统计规律和当前分析信号的强度
+- 避免极端概率值（<0.1或>0.9），除非有极强的确定性信号
+- 重点关注{trading_days_count}个交易日的短期波动特征
+- 考虑当前市场环境和股票特性的影响
+"""
+    
+    return prompt.strip()

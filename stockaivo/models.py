@@ -211,3 +211,52 @@ class UsStocksName(Base):
 # StockNews模型已删除 - 新闻数据仅使用Redis缓存，不再持久化到数据库
 
 
+class StockPrediction(Base):
+    """
+    股票预测结果表
+    存储AI分析的结构化概率预测结果
+    """
+    __tablename__ = 'stock_predictions'
+    
+    # 复合主键：股票代码 + 市场感知日期
+    ticker = Column(String(10), primary_key=True, nullable=False, comment='股票代码')
+    market_aware_date = Column(Date, primary_key=True, nullable=False, comment='市场感知日期（分析基准日期）')
+    
+    # 预测相关日期信息
+    target_date = Column(Date, nullable=False, comment='预测目标日期')
+    trading_days_count = Column(BigInteger, nullable=False, comment='预测交易日数量')
+    
+    # 预测结果
+    prediction_probability = Column(Numeric(5, 4), nullable=False, comment='预测概率值(0.0000-1.0000)')
+    direction = Column(String(4), nullable=False, comment='预测方向(UP/DOWN)')
+    confidence_level = Column(String(6), nullable=False, comment='置信度(HIGH/MEDIUM/LOW)')
+    reasoning = Column(Text, nullable=True, comment='预测推理说明')
+    
+    # 时间戳字段
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
+    
+    # 表约束和索引
+    __table_args__ = (
+        # 复合主键约束
+        UniqueConstraint('ticker', 'market_aware_date', name='uk_prediction_ticker_date'),
+        
+        # 基础索引
+        Index('idx_stock_predictions_ticker', 'ticker'),
+        Index('idx_stock_predictions_market_date', 'market_aware_date'),
+        Index('idx_stock_predictions_target_date', 'target_date'),
+        Index('idx_stock_predictions_direction', 'direction'),
+        Index('idx_stock_predictions_confidence', 'confidence_level'),
+        
+        # 复合索引
+        Index('idx_stock_predictions_ticker_direction', 'ticker', 'direction'),
+        Index('idx_stock_predictions_date_range', 'market_aware_date', 'target_date'),
+        
+        # 表注释
+        {'comment': '股票预测结果表，存储AI分析的结构化概率预测数据'}
+    )
+    
+    def __repr__(self):
+        return f"<StockPrediction(ticker='{self.ticker}', date='{self.market_aware_date}', direction='{self.direction}', probability={self.prediction_probability})>"
+
+
