@@ -1,11 +1,23 @@
 import { useState, useEffect } from 'react';
+import { Container, Title, Text, Paper, Group, Select, Button, Stack, Center, Loader } from '@mantine/core';
+import { IconTrendingUp, IconChartBar, IconRefresh } from '@tabler/icons-react';
 import StockSearch from './components/StockSearch';
 import TradingViewChart from './components/TradingViewChart';
 import AIAnalysis from './components/AIAnalysis';
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select';
-import { Button } from './components/ui/button';
-import { TrendingUp, BarChart3, RefreshCw } from 'lucide-react';
+
+// 定义API响应数据类型
+interface StockDataItem {
+  date?: string;
+  timestamp_10min?: string;
+  minute_timestamp?: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume?: string;
+  price_change?: string;
+  price_change_percent?: string;
+}
 
 interface ChartData {
   time?: string;
@@ -57,7 +69,7 @@ function App() {
 
       if (response.ok) {
         const data = await response.json();
-        const formattedData: ChartData[] = data.data.map((item: any) => ({
+        const formattedData: ChartData[] = data.data.map((item: StockDataItem) => ({
           time: item.date || item.timestamp_10min || item.minute_timestamp,
           date: item.date,
           timestamp_10min: item.timestamp_10min,
@@ -98,61 +110,95 @@ function App() {
 
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* 头部 */}
-        <div className="text-center space-y-2">
-          <h1 className="text-3xl font-bold text-gray-900 flex items-center justify-center gap-2">
-            <TrendingUp className="h-8 w-8 text-blue-600" />
-            StockAIvo
-          </h1>
-          <p className="text-gray-600">智能美股数据与分析平台</p>
-        </div>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f7f8fa' }}>
+      <Container size="xl" py="md">
+        <Stack gap="lg">
+          {/* 头部 */}
+          <Paper 
+            p="lg" 
+            style={{ 
+              backgroundColor: '#ffffff',
+              border: '1px solid #e1e4e8',
+              borderRadius: '8px',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            }}
+          >
+            <Center>
+              <Stack gap="xs" align="center">
+                <Group gap="sm">
+                  <div
+                    style={{
+                      padding: '8px',
+                      backgroundColor: '#0066cc',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <IconTrendingUp size={24} color="white" />
+                  </div>
+                  <Title order={1} c="#1a1a1a" style={{ fontWeight: 600 }}>StockAIvo</Title>
+                </Group>
+                <Text c="#8a8a8a" size="sm">智能美股数据与分析平台</Text>
+              </Stack>
+            </Center>
+          </Paper>
 
-        {/* 搜索栏 */}
-        <div className="flex justify-center">
-          <StockSearch onSelectStock={handleSelectStock} />
-        </div>
+          {/* 搜索栏 */}
+          <Center>
+            <StockSearch onSelectStock={handleSelectStock} />
+          </Center>
 
-        {/* 主要内容区域 - 上下布局 */}
-        <div className="space-y-6">
-          {/* 图表区域 */}
-          <div className="w-full">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2 flex-wrap">
-                    <BarChart3 className="h-5 w-5" />
-                    股票图表
+          {/* 主要内容区域 */}
+          <Stack gap="lg">
+            {/* 图表区域 */}
+            <Paper 
+              p="lg" 
+              style={{ 
+                backgroundColor: '#ffffff',
+                border: '1px solid #e1e4e8',
+                borderRadius: '8px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+              }}
+            >
+              <Stack gap="md">
+                {/* 标题行包含图表名称、股票信息、OHLC信息、时间选择器和刷新按钮 */}
+                <Group justify="space-between" align="center" wrap="wrap">
+                  <Group gap="sm" align="center" wrap="wrap">
+                    <Group gap="xs" align="center">
+                      <IconChartBar size={20} />
+                      <Text fw={500}>股票图表</Text>
+                    </Group>
                     {selectedStock && (
-                      <span className="text-sm font-normal text-gray-600">
+                      <Text size="sm" c="dimmed">
                         - {selectedStock} {stockName}
-                      </span>
+                      </Text>
                     )}
                     {/* OHLC 信息显示 */}
                     {currentOHLC && (
-                      <div className="flex items-center gap-3 text-sm font-mono ml-4">
+                      <Group gap="md" style={{ fontSize: '0.875rem', fontFamily: 'monospace' }}>
                         <span>
-                          <span className="text-black">开=</span>
-                          <span className={getPriceColor(currentOHLC)}>
+                          <span style={{ color: 'black' }}>开=</span>
+                          <span style={{ color: getPriceColor(currentOHLC) === 'text-green-600' ? 'var(--mantine-color-green-6)' : getPriceColor(currentOHLC) === 'text-red-600' ? 'var(--mantine-color-red-6)' : 'black' }}>
                             {currentOHLC.open.toFixed(2)}
                           </span>
                         </span>
                         <span>
-                          <span className="text-black">高=</span>
-                          <span className={getPriceColor(currentOHLC)}>
+                          <span style={{ color: 'black' }}>高=</span>
+                          <span style={{ color: getPriceColor(currentOHLC) === 'text-green-600' ? 'var(--mantine-color-green-6)' : getPriceColor(currentOHLC) === 'text-red-600' ? 'var(--mantine-color-red-6)' : 'black' }}>
                             {currentOHLC.high.toFixed(2)}
                           </span>
                         </span>
                         <span>
-                          <span className="text-black">低=</span>
-                          <span className={getPriceColor(currentOHLC)}>
+                          <span style={{ color: 'black' }}>低=</span>
+                          <span style={{ color: getPriceColor(currentOHLC) === 'text-green-600' ? 'var(--mantine-color-green-6)' : getPriceColor(currentOHLC) === 'text-red-600' ? 'var(--mantine-color-red-6)' : 'black' }}>
                             {currentOHLC.low.toFixed(2)}
                           </span>
                         </span>
                         <span>
-                          <span className="text-black">收=</span>
-                          <span className={getPriceColor(currentOHLC)}>
+                          <span style={{ color: 'black' }}>收=</span>
+                          <span style={{ color: getPriceColor(currentOHLC) === 'text-green-600' ? 'var(--mantine-color-green-6)' : getPriceColor(currentOHLC) === 'text-red-600' ? 'var(--mantine-color-red-6)' : 'black' }}>
                             {currentOHLC.close.toFixed(2)}
                             {currentOHLC.price_change !== undefined && currentOHLC.price_change_percent !== undefined && (
                               <>
@@ -165,65 +211,70 @@ function App() {
                             )}
                           </span>
                         </span>
-                      </div>
+                      </Group>
                     )}
-                  </CardTitle>
-                  <div className="flex items-center gap-2">
-                    <Select value={period} onValueChange={(value: any) => setPeriod(value)}>
-                      <SelectTrigger className="w-32">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="daily">日线</SelectItem>
-                        <SelectItem value="weekly">周线</SelectItem>
-                        <SelectItem value="10min">10分钟线</SelectItem>
-                        <SelectItem value="minute">分钟线</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  </Group>
+                  
+                  {/* 右侧控制区域 */}
+                  <Group gap="xs" align="center">
+                    <Select
+                      value={period}
+                      onChange={(value) => setPeriod(value as 'daily' | 'weekly' | '10min' | 'minute')}
+                      data={[
+                        { value: 'daily', label: '日线' },
+                        { value: 'weekly', label: '周线' },
+                        { value: '10min', label: '10分钟线' },
+                        { value: 'minute', label: '分钟线' },
+                      ]}
+                      w={120}
+                      size="sm"
+                    />
                     <Button
                       onClick={handleRefresh}
                       disabled={!selectedStock || isLoading}
-                      size="sm"
-                      variant="outline"
+                      size="compact-sm"
+                      variant="light"
                     >
-                      <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                      <IconRefresh size={16} style={{ animation: isLoading ? 'spin 1s linear infinite' : 'none' }} />
                     </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {selectedStock ? (
-                  isLoading ? (
-                    <div className="flex items-center justify-center h-96">
-                      <div className="text-gray-500">加载中...</div>
-                    </div>
-                  ) : chartData.length > 0 ? (
-                    <TradingViewChart
-                      data={chartData}
-                      height={500}
-                      period={period}
-                      onOHLCChange={handleOHLCChange}
-                    />
+                  </Group>
+                </Group>
+                
+                <div style={{ minHeight: '400px' }}>
+                  {selectedStock ? (
+                    isLoading ? (
+                      <Center h={400}>
+                        <Stack gap="sm" align="center">
+                          <Loader />
+                          <Text c="dimmed">加载中...</Text>
+                        </Stack>
+                      </Center>
+                    ) : chartData.length > 0 ? (
+                      <TradingViewChart
+                        data={chartData}
+                        height={500}
+                        period={period}
+                        onOHLCChange={handleOHLCChange}
+                      />
+                    ) : (
+                      <Center h={400}>
+                        <Text c="dimmed">暂无数据</Text>
+                      </Center>
+                    )
                   ) : (
-                    <div className="flex items-center justify-center h-96">
-                      <div className="text-gray-500">暂无数据</div>
-                    </div>
-                  )
-                ) : (
-                  <div className="flex items-center justify-center h-96">
-                    <div className="text-gray-500">请选择一只股票查看图表</div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                    <Center h={400}>
+                      <Text c="dimmed">请选择一只股票查看图表</Text>
+                    </Center>
+                  )}
+                </div>
+              </Stack>
+            </Paper>
 
-          {/* AI 分析区域 */}
-          <div className="w-full">
+            {/* AI 分析区域 */}
             <AIAnalysis selectedStock={selectedStock} stockName={stockName} />
-          </div>
-        </div>
-      </div>
+          </Stack>
+        </Stack>
+      </Container>
     </div>
   );
 }

@@ -38,8 +38,8 @@ class StockPredictionResult(BaseModel):
     
     reasoning: str = Field(
         ...,
-        max_length=1000,
-        description="预测推理说明，简要解释预测的主要依据，包括技术指标、市场趋势、基本面因素等关键分析要点"
+        max_length=2500,
+        description="预测推理说明，详细解释预测的主要依据，包括技术指标、市场趋势、基本面因素等关键分析要点"
     )
 
     class Config:

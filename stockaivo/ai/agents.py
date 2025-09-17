@@ -1318,7 +1318,7 @@ def _build_structured_prediction_prompt(state: GraphState) -> str:
 {confidence_text}
 
 ### 第四步：生成推理说明
-详细解释概率预测的逻辑（最多1000字符）：
+详细解释概率预测的逻辑（严格控制在1000字符以内）：
 1. 基于{'、'.join([f"{analysis}" for analysis in available_analyses])}分析的关键信号识别
 2. 说明概率值计算的依据和各维度权重考量
 3. 指出影响预测的主要支撑和风险因素

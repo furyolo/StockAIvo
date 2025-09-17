@@ -25,13 +25,13 @@ uv run mypy stockaivo/ && uv run pytest tests/ -v  # 类型检查+测试一键�
 uv run start                        # 生产服务器
 ```
 
-### 前端开发 (React 19 + TypeScript)
+### 前端开发 (React 19 + TypeScript + Mantine UI)
 ```bash
 # 安装依赖
 cd frontend && pnpm install
 
 # 开发服务器
-cd frontend && pnpm dev             # 开发服务器 (http://localhost:5173)
+cd frontend && pnpm dev             # 开发服务器 (http://localhost:3223)
 
 # 构建和测试
 cd frontend && pnpm build           # 生产构建
@@ -39,6 +39,38 @@ cd frontend && pnpm test            # 运行测试
 cd frontend && pnpm lint            # ESLint检查
 cd frontend && pnpm test:ui         # UI测试界面
 ```
+
+#### 前端UI架构重构 (v3.0.0+)
+**2025年9月17日完成了全面的UI框架迁移:**
+
+**从 shadcn/ui + TailwindCSS → Mantine UI 8.3.1**
+
+**重构详情:**
+- **组件库升级**: 完全替换shadcn/ui组件为Mantine原生组件
+  - Card → Paper, Button → Button, Input → TextInput
+  - Select → Select, Date-picker → DateInput
+  - 删除了@radix-ui系列依赖和class-variance-authority
+- **样式系统重构**: 移除TailwindCSS，采用Mantine CSS-in-JS + 原生CSS
+  - 保留自定义动画(spin, bounce, pulse)和滚动条样式
+  - 使用Mantine颜色变量和主题系统
+- **图标库迁移**: lucide-react → @tabler/icons-react
+- **布局系统现代化**: 
+  - div + className → Stack/Group/Grid组件
+  - 支持响应式布局和灵活间距控制
+- **主题配置**: 
+  - 集成MantineProvider和Notifications
+  - 支持auto色彩方案(自动适配明暗主题)
+
+**核心组件重构:**
+- **App.tsx**: 主布局使用Container/Stack/Paper重新设计
+- **StockSearch.tsx**: 智能搜索用TextInput/Paper重构，保持所有交互功能
+- **AIAnalysis.tsx**: AI分析面板使用Alert/ScrollArea/DateInput等现代组件
+
+**开发体验提升:**
+- 更好的TypeScript集成和类型安全
+- 统一的设计系统和组件API
+- 更丰富的内置功能(通知、日期选择、表单验证等)
+- 更小的包体积和更好的性能优化
 
 ### 数据库和缓存
 ```bash
@@ -56,7 +88,7 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 ### 整体架构
 StockAIvo是一个现代化的全栈美股分析平台，采用前后端分离架构：
 
-- **前端**: React 19.1.0 + TypeScript 5.8.3 + Vite 7.0.0 + TailwindCSS 4.1.11 + TradingView Lightweight Charts 5.0.8
+- **前端**: React 19.1.0 + TypeScript 5.8.3 + Vite 7.0.0 + Mantine UI 8.3.1 + TradingView Lightweight Charts 5.0.8
 - **后端**: Python 3.12 + FastAPI 0.115.13+ + SQLAlchemy 2.0.41+ + LangGraph 0.4.8+
 - **数据库**: PostgreSQL (主存储) + Redis 6.2.0+ (三级缓存)
 - **数据源**: AKShare 1.17.6+ (美股数据) + TickerTick (新闻数据)

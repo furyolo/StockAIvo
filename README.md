@@ -27,18 +27,23 @@
 - ✅ **数据验证增强**：所有Agent在数据缺失时统一跳过LLM调用，避免无效分析和资源浪费
 
 ### 🎨 现代化界面
-**专业级用户体验，适配多设备**
+**专业级用户体验，适配多设备 • v3.0.0全新UI升级**
 - 📈 **TradingView图表**：专业K线图表，实时OHLC数据显示
 - 🔍 **智能搜索**：股票代码、公司名称模糊匹配和实时建议
 - 📱 **响应式设计**：完美适配桌面和移动设备
 - 🎯 **一致性体验**：图表与数据颜色逻辑统一
+- ✨ **UI框架升级**：从shadcn/ui迁移至Mantine UI 8.3.1
+  - 🎨 统一设计系统与现代化组件API
+  - ⚡ 更好的性能与TypeScript集成
+  - 🌙 内置明暗主题切换支持
+  - 📦 更小包体积，丰富内置功能
 
 ## 🏗️ 系统架构
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    前端 (React 19 + TypeScript)              │
-│  TradingView Charts • 智能搜索 • AI分析界面 • shadcn/ui     │
+│  TradingView Charts • 智能搜索 • AI分析界面 • Mantine UI    │
 └─────────────────────────────────────────────────────────────┘
                               │ HTTP/WebSocket
 ┌─────────────────────────────────────────────────────────────┐
@@ -59,7 +64,7 @@
 | 层级       | 技术                           | 版本                     | 特色                   |
 | ---------- | ------------------------------ | ------------------------ | ---------------------- |
 | **前端**   | React + TypeScript + Vite      | 19.1.0 + 5.8.3 + 7.0.0   | 现代化前端框架         |
-| **UI**     | TailwindCSS + shadcn/ui        | 4.1.11 + latest          | 原子化CSS + 现代组件库 |
+| **UI**     | Mantine UI                     | 8.3.1                    | 现代React组件库        |
 | **图表**   | TradingView Lightweight Charts | 5.0.8                    | 专业金融图表           |
 | **后端**   | Python + FastAPI + SQLAlchemy  | 3.12 + 0.115.13 + 2.0.41 | 高性能异步API          |
 | **数据库** | PostgreSQL + Redis             | 15+ + 7+                 | 主存储 + 高速缓存      |
@@ -91,7 +96,7 @@ cd frontend && pnpm install           # 前端依赖
 
 # 4️⃣ 启动服务
 uv run dev                            # 后端: http://127.0.0.1:8000
-cd frontend && pnpm dev               # 前端: http://localhost:5173
+cd frontend && pnpm dev               # 前端: http://localhost:3223
 ```
 
 ### 🔧 AI模型配置 (可选)
@@ -259,13 +264,24 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 
 ## 📋 版本历史
 
-### 🎲 v3.0.0 (2025-09) - 结构化预测与智能验证系统
+### 🎲 v3.0.0 (2025-09) - 结构化预测与UI架构升级
+**AI分析系统增强**
 - 🚀 **结构化预测Agent**：基于多维分析生成概率化股价预测，支持量化投资决策
 - 🧠 **LLM结构化输出**：统一Google GenAI和OpenAI API，支持Pydantic模型返回
 - 🔧 **Schema自动转换**：Pydantic模型到OpenAI格式的智能转换器
 - ✅ **智能数据验证**：Agent执行前自动检查数据可用性，避免无效LLM调用
 - 🏷️ **Agent名称规范化**：统一所有Agent调用的agent_name参数，支持专用模型配置
 - 📊 **API格式优化**：简化前端请求JSON结构，提升开发效率和用户体验
+
+**前端UI架构重构 (2025-09-17)**
+- 🎨 **UI框架迁移**：shadcn/ui + TailwindCSS → Mantine UI 8.3.1
+- 🗑️ **依赖清理**：移除@radix-ui系列、class-variance-authority、tailwind-merge等
+- 🔄 **组件升级**：Card→Paper, Input→TextInput, Select→Select等现代组件
+- 🎭 **图标更新**：lucide-react → @tabler/icons-react
+- 🏗️ **布局重构**：div+className → Stack/Group/Grid组件化布局
+- 🎯 **样式系统**：CSS-in-JS + Mantine主题变量替代TailwindCSS
+- 🌙 **主题支持**：内置明暗主题自动切换
+- ⚡ **性能优化**：更小包体积，更好的TypeScript集成
 
 ### 🚀 v2.1.0 (2025-08) - 数据管理与AI增强
 - 🔄 **数据管理API**：新增实时行情和美股名称数据更新端点

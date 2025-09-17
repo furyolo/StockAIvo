@@ -1,11 +1,22 @@
 import { useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { format } from 'date-fns';
-import { Button } from './ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { DatePicker } from './ui/date-picker';
-import { Play, Square, Sparkles, TrendingUp, Zap } from 'lucide-react';
+import { 
+  Paper, 
+  Stack, 
+  Group, 
+  Text, 
+  Button, 
+  Grid,
+  Center,
+  Loader,
+  Badge,
+  Title,
+  Alert,
+  ScrollArea
+} from '@mantine/core';
+import { DateInput } from '@mantine/dates';
+import { IconPlayerPlay, IconSquare, IconSparkles, IconTrendingUp, IconBolt } from '@tabler/icons-react';
 
 interface AIAnalysisProps {
   selectedStock: string | null;
@@ -15,12 +26,13 @@ interface AIAnalysisProps {
 const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState('');
-  const [endDate, setEndDate] = useState<Date | undefined>();
+  const [endDate, setEndDate] = useState<string | null>(null);
   const useParallelAnalysis = true; // 固定使用并行分析模式
   console.log('Using parallel analysis:', useParallelAnalysis); // 避免未使用变量警告
   const [parallelProgress, setParallelProgress] = useState<{[key: string]: boolean}>({}); // 跟踪并行任务进度
   const [availableAnalyses, setAvailableAnalyses] = useState<string[]>([]); // 跟踪可用的分析类型
-  const eventSourceRef = useRef<EventSource | null>(null);
+  // 用于存储流式响应的取消函数
+  const readerCancelRef = useRef<(() => void) | null>(null);
 
   const handleStartAnalysis = async (e: React.MouseEvent) => {
     e.preventDefault(); // 防止表单提交或页面跳转
@@ -41,7 +53,7 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
         ticker: selectedStock,
         // 如果用户选择了结束日期，则使用用户选择的日期；否则不传日期，让后端使用默认值
         ...(endDate && {
-          end_date: format(endDate, 'yyyy-MM-dd'),
+          end_date: endDate,
         }),
       };
 
@@ -70,14 +82,14 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
       }
 
       // 存储reader引用以便停止分析时使用
-      eventSourceRef.current = { close: () => reader.cancel() } as any;
+      readerCancelRef.current = () => reader.cancel();
 
       while (true) {
         const { done, value } = await reader.read();
 
         if (done) {
           setIsAnalyzing(false);
-          eventSourceRef.current = null;
+          readerCancelRef.current = null;
           break;
         }
 
@@ -159,89 +171,138 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
   const handleStopAnalysis = (e: React.MouseEvent) => {
     e.preventDefault(); // 防止表单提交或页面跳转
 
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+    if (readerCancelRef.current) {
+      readerCancelRef.current();
+      readerCancelRef.current = null;
     }
     setIsAnalyzing(false);
   };
 
   return (
-    <Card className="w-full border-0 shadow-lg bg-gradient-to-br from-white to-gray-50/50">
-      <CardHeader className="pb-6">
-        <CardTitle className="flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl shadow-lg">
-            <Sparkles className="h-5 w-5 text-white" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-xl font-semibold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
-              AI 智能分析
-            </span>
-            {selectedStock && (
-              <span className="text-sm font-medium text-gray-500 flex items-center gap-1">
-                <TrendingUp className="h-3 w-3" />
-                {selectedStock} {stockName}
-              </span>
-            )}
-          </div>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        {/* 控制面板 - 日期范围和分析按钮 */}
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-700">
-                分析结束日期
-              </label>
-              <DatePicker
-                date={endDate}
-                onDateChange={setEndDate}
-                placeholder="选择结束日期（可选）"
-                className=""
-              />
+    <Stack gap="xs">
+      {/* AI分析控制面板 */}
+      <Paper 
+        p="lg" 
+        style={{ 
+          backgroundColor: '#ffffff',
+          border: '1px solid #e1e4e8',
+          borderRadius: '8px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+        }}
+      >
+        <Group justify="space-between" align="center" wrap="wrap">
+          {/* 左侧标题和股票信息 */}
+          <Group gap="md" align="center">
+            <div
+              style={{
+                padding: '8px',
+                backgroundColor: '#0066cc',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <IconSparkles size={18} color="white" />
             </div>
-          </div>
+            <Group gap="sm" align="center">
+              <Title order={3} c="#1a1a1a" style={{ fontWeight: 600 }}>
+                AI 智能分析
+              </Title>
+              {selectedStock && (
+                <Group gap="xs">
+                  <IconTrendingUp size={12} color="#8a8a8a" />
+                  <Text size="sm" c="#8a8a8a" fw={500}>
+                    {selectedStock} {stockName}
+                  </Text>
+                </Group>
+              )}
+            </Group>
+          </Group>
 
-          <div className="flex gap-3 w-full sm:w-auto">
+          {/* 右侧控制区域 */}
+          <Group gap="md" align="center">
+            <DateInput
+              value={endDate}
+              onChange={setEndDate}
+              placeholder="选择结束日期（可选）"
+              clearable
+              size="sm"
+              w={200}
+              styles={{
+                input: {
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #e1e4e8',
+                  borderRadius: '6px',
+                  '&:focus': {
+                    borderColor: '#0066cc',
+                    boxShadow: '0 0 0 3px rgba(0, 102, 204, 0.1)',
+                  }
+                }
+              }}
+            />
             <Button
-              type="button"
               onClick={handleStartAnalysis}
               disabled={isAnalyzing || !selectedStock}
-              className="flex-1 sm:flex-none bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-200 px-6 py-2.5 rounded-xl font-medium"
+              leftSection={<IconPlayerPlay size={16} />}
+              size="sm"
+              style={{
+                backgroundColor: '#0066cc',
+                border: 'none',
+                borderRadius: '6px',
+                color: 'white',
+                fontWeight: 500,
+                transition: 'all 0.15s ease',
+              }}
+              styles={{
+                root: {
+                  '&:hover': {
+                    backgroundColor: '#0052a3',
+                  },
+                  '&:disabled': {
+                    backgroundColor: '#f0f0f0',
+                    color: '#8a8a8a',
+                  }
+                }
+              }}
             >
-              <Play className="h-4 w-4 mr-2" />
               {isAnalyzing ? '分析中...' : '开始分析'}
             </Button>
             {isAnalyzing && (
               <Button
-                type="button"
                 onClick={handleStopAnalysis}
                 variant="outline"
-                className="border-gray-300 hover:bg-gray-50 text-gray-700 rounded-xl px-4 py-2.5 transition-all duration-200"
+                leftSection={<IconSquare size={16} />}
+                size="sm"
+                styles={{
+                  root: {
+                    borderColor: '#e1e4e8',
+                    color: '#1a1a1a',
+                    borderRadius: '6px',
+                    '&:hover': {
+                      backgroundColor: '#f6f8fa',
+                      borderColor: '#d0d7de',
+                    }
+                  }
+                }}
               >
-                <Square className="h-4 w-4 mr-2" />
                 停止
               </Button>
             )}
-          </div>
-        </div>
+          </Group>
+        </Group>
 
         {/* 并行分析进度指示器 */}
         {isAnalyzing && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Zap className="h-4 w-4 text-blue-600" />
-              <span className="text-sm font-medium text-blue-800">并行分析进度</span>
-            </div>
+          <Alert
+            icon={<IconBolt size={16} />}
+            color="blue"
+            variant="light"
+            mt="sm"
+          >
             {availableAnalyses.length > 0 ? (
-              <div className={`grid gap-2 ${
-                availableAnalyses.length === 1 ? 'grid-cols-1' :
-                availableAnalyses.length === 2 ? 'grid-cols-1 sm:grid-cols-2' :
-                'grid-cols-1 sm:grid-cols-3'
-              }`}>
+              <Grid gutter="sm">
                 {availableAnalyses.map((analysisType) => {
-                  // 将分析类型映射到agent名称
                   const agentMap = {
                     'technical_analysis': 'technical_analyst',
                     'fundamental_analysis': 'fundamental_analyst',
@@ -254,102 +315,186 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                     'fundamental_analysis': '基本面分析',
                     'news_sentiment': '新闻情感分析'
                   };
+                  
                   return (
-                    <div key={analysisType} className={`flex items-center gap-2 p-3 rounded-lg transition-colors ${
-                      isActive ? 'bg-green-100 text-green-800 border border-green-200' : 'bg-gray-100 text-gray-600 border border-gray-200'
-                    }`}>
-                      <div className={`w-3 h-3 rounded-full transition-colors ${
-                        isActive ? 'bg-green-500' : 'bg-gray-400 animate-pulse'
-                      }`}></div>
-                      <span className="text-sm font-medium">{agentNames[analysisType as keyof typeof agentNames]}</span>
-                      {isActive && <span className="text-sm ml-auto">✓</span>}
-                    </div>
+                    <Grid.Col key={analysisType} span={{ base: 12, sm: availableAnalyses.length === 1 ? 12 : availableAnalyses.length === 2 ? 6 : 4 }}>
+                      <Group
+                        gap="xs"
+                        p="sm"
+                        style={{
+                          borderRadius: '8px',
+                          backgroundColor: isActive ? 'var(--mantine-color-green-0)' : 'var(--mantine-color-gray-0)',
+                          border: `1px solid ${isActive ? 'var(--mantine-color-green-2)' : 'var(--mantine-color-gray-2)'}`,
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: '12px',
+                            height: '12px',
+                            borderRadius: '50%',
+                            backgroundColor: isActive ? 'var(--mantine-color-green-5)' : 'var(--mantine-color-gray-4)',
+                            animation: !isActive ? 'pulse 1.5s infinite' : 'none',
+                          }}
+                        />
+                        <Text size="sm" fw={500} style={{ flex: 1 }}>
+                          {agentNames[analysisType as keyof typeof agentNames]}
+                        </Text>
+                        {isActive && <Badge size="xs" color="green">✓</Badge>}
+                      </Group>
+                    </Grid.Col>
                   );
                 })}
-              </div>
+              </Grid>
             ) : (
-              // 如果还没有收到可用分析信息，显示加载状态
-              <div className="flex items-center gap-2 p-3 bg-gray-100 rounded-lg">
-                <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
-                <span className="text-sm font-medium text-gray-600">正在检查数据可用性...</span>
-              </div>
+              <Group gap="xs" p="sm" style={{ backgroundColor: 'var(--mantine-color-gray-0)', borderRadius: '8px' }}>
+                <Loader size="xs" />
+                <Text size="sm" fw={500}>
+                  正在检查数据可用性...
+                </Text>
+              </Group>
             )}
-          </div>
+          </Alert>
         )}
+      </Paper>
 
-        {/* 分析结果显示 */}
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-semibold text-gray-800">分析结果</label>
-            {isAnalyzing && (
-              <div className="flex items-center gap-2 text-xs text-blue-600">
-                <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
-                并行分析中
-              </div>
-            )}
-          </div>
-
-          <div className="min-h-[300px] max-h-[500px] overflow-y-auto rounded-2xl border border-gray-200/60 bg-white/80 backdrop-blur-sm shadow-inner">
-            {analysisResult ? (
-              <div className="p-6">
-                <div className="prose prose-sm max-w-none">
+      {/* 分析结果 - 独立的Paper组件 */}
+      {(analysisResult || isAnalyzing) && (
+        <Paper 
+          p="lg" 
+          style={{ 
+            backgroundColor: 'transparent',
+            border: 'none',
+            borderRadius: '12px',
+            boxShadow: 'none',
+          }}
+        >
+          <Stack gap="sm">
+            <ScrollArea.Autosize
+              mah={500}
+              style={{
+                minHeight: analysisResult ? '150px' : '100px',
+                border: '1px solid #e1e4e8',
+                borderRadius: '8px',
+                backgroundColor: '#ffffff',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+              }}
+            >
+              {analysisResult ? (
+                <div style={{ padding: '30px', backgroundColor: '#ffffff' }}>
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
                     components={{
-                      // Apple风格的自定义样式
                       h1: ({children}) => (
-                        <h1 className="text-xl font-bold mb-4 text-gray-900 border-b border-gray-200 pb-2">
+                        <Title 
+                          order={2} 
+                          mb="md" 
+                          mt="lg" 
+                          c="dark.9"
+                          style={{ 
+                            borderBottom: '1px solid var(--mantine-color-gray-3)',
+                            paddingBottom: '8px',
+                            fontWeight: 600,
+                          }}
+                        >
                           {children}
-                        </h1>
+                        </Title>
                       ),
                       h2: ({children}) => (
-                        <h2 className="text-lg font-semibold mb-3 text-gray-800 mt-6 first:mt-0">
+                        <Title 
+                          order={3} 
+                          mb="md" 
+                          mt="lg" 
+                          c="dark.8"
+                          style={{ fontWeight: 600 }}
+                        >
                           {children}
-                        </h2>
+                        </Title>
                       ),
                       h3: ({children}) => (
-                        <h3 className="text-base font-medium mb-2 text-gray-700 mt-4">
+                        <Title 
+                          order={4} 
+                          mb="md" 
+                          mt="md" 
+                          c="dark.7"
+                          style={{ fontWeight: 600 }}
+                        >
                           {children}
-                        </h3>
+                        </Title>
                       ),
                       p: ({children}) => (
-                        <p className="mb-3 text-sm leading-relaxed text-gray-700">
+                        <Text 
+                          mb="md" 
+                          size="sm" 
+                          lh={1.6} 
+                          c="dark.7"
+                        >
                           {children}
-                        </p>
+                        </Text>
                       ),
                       ul: ({children}) => (
-                        <ul className="list-none mb-4 space-y-1 text-sm">
+                        <div style={{ marginBottom: '8px', fontSize: '14px' }}>
                           {children}
-                        </ul>
+                        </div>
                       ),
                       ol: ({children}) => (
-                        <ol className="list-decimal list-inside mb-4 space-y-1 text-sm">
+                        <div style={{ marginBottom: '8px', fontSize: '14px', paddingLeft: '20px' }}>
                           {children}
-                        </ol>
+                        </div>
                       ),
                       li: ({children}) => (
-                        <li className="text-gray-700 flex items-start gap-2">
-                          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-2 flex-shrink-0"></span>
-                          <span>{children}</span>
-                        </li>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', marginBottom: '2px' }}>
+                          <div
+                            style={{
+                              width: '6px',
+                              height: '6px',
+                              borderRadius: '50%',
+                              backgroundColor: 'var(--mantine-color-blue-6)',
+                              marginTop: '7px',
+                              flexShrink: 0,
+                            }}
+                          />
+                          <Text c="dark.7" size="sm">{children}</Text>
+                        </div>
                       ),
                       strong: ({children}) => (
-                        <strong className="font-semibold text-gray-900">
+                        <Text component="strong" fw={600} c="dark.8" inherit>
                           {children}
-                        </strong>
+                        </Text>
                       ),
                       em: ({children}) => (
-                        <em className="italic text-blue-700 font-medium">
+                        <Text component="em" fs="italic" c="blue.7" fw={500} inherit>
                           {children}
-                        </em>
+                        </Text>
                       ),
                       code: ({children}) => (
-                        <code className="bg-gray-100 text-blue-800 px-2 py-1 rounded-md text-xs font-mono">
+                        <code
+                          style={{
+                            backgroundColor: '#f1f3f4',
+                            color: '#1a73e8',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, "Liberation Mono", Menlo, monospace',
+                          }}
+                        >
                           {children}
                         </code>
                       ),
                       pre: ({children}) => (
-                        <pre className="bg-gray-50 border border-gray-200 p-4 rounded-xl text-xs overflow-x-auto mb-4 font-mono">
+                        <pre
+                          style={{
+                            backgroundColor: '#f6f8fa',
+                            border: '1px solid #e1e4e8',
+                            padding: '16px',
+                            borderRadius: '8px',
+                            fontSize: '13px',
+                            lineHeight: '1.5',
+                            overflowX: 'auto',
+                            marginBottom: '16px',
+                            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, "Liberation Mono", Menlo, monospace',
+                            color: '#24292f',
+                          }}
+                        >
                           {children}
                         </pre>
                       ),
@@ -358,47 +503,36 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                     {analysisResult}
                   </ReactMarkdown>
                 </div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-full min-h-[200px]">
-                <div className="text-center space-y-3">
-                  <div className="w-16 h-16 mx-auto bg-gradient-to-br from-gray-100 to-gray-200 rounded-2xl flex items-center justify-center">
-                    <Sparkles className="h-8 w-8 text-gray-400" />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-gray-600 font-medium">
-                      {isAnalyzing ? '正在分析中...' : '准备开始AI分析'}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {isAnalyzing
-                        ? '分析结果将实时显示在这里'
-                        : '选择股票并点击"开始分析"按钮'
-                      }
-                    </p>
-                  </div>
-                  {isAnalyzing && (
-                    <div className="flex justify-center">
-                      <div className="flex space-x-1">
-                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                      </div>
+              ) : !isAnalyzing ? (
+                <Center h="100%" mih={100}>
+                  <Stack align="center" gap="md">
+                    <div
+                      style={{
+                        width: '48px',
+                        height: '48px',
+                        background: 'linear-gradient(to bottom right, var(--mantine-color-gray-1), var(--mantine-color-gray-2))',
+                        borderRadius: '12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <IconSparkles size={24} color="var(--mantine-color-gray-4)" />
                     </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {isAnalyzing && (
-          <div className="flex items-center gap-2 text-xs text-gray-500 bg-blue-50 px-4 py-3 rounded-xl border border-blue-100">
-            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></div>
-            分析过程中会实时显示结果，请耐心等待分析完成
-          </div>
-        )}
-      </CardContent>
-    </Card>
+                    <Stack align="center" gap="xs">
+                      <Text fw={500} c="gray.6" size="sm">
+                        点击开始分析按钮
+                      </Text>
+                    </Stack>
+                  </Stack>
+                </Center>
+              ) : null
+              }
+            </ScrollArea.Autosize>
+          </Stack>
+        </Paper>
+      )}
+    </Stack>
   );
 };
 

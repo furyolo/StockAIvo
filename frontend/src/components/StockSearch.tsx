@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search } from 'lucide-react';
-import { Input } from './ui/input';
-import { Card } from './ui/card';
+import { TextInput, Paper, Stack, Group, Text, Loader, Center, rem } from '@mantine/core';
+import { IconSearch } from '@tabler/icons-react';
 
 interface SearchResult {
   symbol: string;
@@ -177,124 +176,194 @@ const StockSearch: React.FC<StockSearchProps> = ({ onSelectStock }) => {
   }, [suggestions.length, fullResults.length, query]);
 
   return (
-    <div ref={searchRef} className="relative w-full max-w-md">
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-        <Input
-          ref={inputRef}
-          type="text"
-          placeholder="搜索股票代码或公司名称..."
-          value={query}
-          onChange={handleInputChange}
-          onFocus={handleInputFocus}
-          onKeyDown={handleKeyDown}
-          className="pl-10"
-          autoComplete="off"
-        />
-      </div>
+    <div ref={searchRef} style={{ position: 'relative', width: '100%', maxWidth: '32rem' }}>
+      <TextInput
+        ref={inputRef}
+        placeholder="搜索股票代码或公司名称..."
+        value={query}
+        onChange={handleInputChange}
+        onFocus={handleInputFocus}
+        onKeyDown={handleKeyDown}
+        leftSection={<IconSearch size={16} color="#8a8a8a" />}
+        size="md"
+        styles={{
+          input: {
+            backgroundColor: '#ffffff',
+            border: '1px solid #e1e4e8',
+            borderRadius: '8px',
+            fontSize: '15px',
+            padding: '12px 16px 12px 40px',
+            '&:focus': {
+              borderColor: '#0066cc',
+              boxShadow: '0 0 0 3px rgba(0, 102, 204, 0.1)',
+            },
+            '&::placeholder': {
+              color: '#8a8a8a',
+            }
+          }
+        }}
+      />
 
       {showSuggestions && (
-        <Card className="absolute top-full left-0 right-0 mt-1 max-h-96 overflow-y-auto z-50 bg-white shadow-lg border">
+        <Paper
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            right: 0,
+            marginTop: rem(4),
+            maxHeight: rem(384),
+            overflowY: 'auto',
+            zIndex: 1000,
+            backgroundColor: '#ffffff',
+            border: '1px solid #e1e4e8',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)',
+          }}
+        >
           {isLoading ? (
-            <div className="p-4 text-center text-gray-500">
-              <div className="flex items-center justify-center space-x-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                <span>搜索中...</span>
-              </div>
-            </div>
+            <Center p="md">
+              <Stack gap="xs" align="center">
+                <Loader size="sm" />
+                <Text size="sm" c="dimmed">搜索中...</Text>
+              </Stack>
+            </Center>
           ) : showingFullResults ? (
             // 显示完整搜索结果
-            <div className="py-1">
-              <div className="px-4 py-2 bg-blue-50 border-b text-sm text-blue-800">
-                找到 {totalCount} 个结果，显示前 20 个
+            <Stack gap={0}>
+              <div style={{ padding: '12px 16px', backgroundColor: '#f6f8fa', borderBottom: '1px solid #e1e4e8' }}>
+                <Text size="sm" c="#0066cc" fw={500}>
+                  找到 {totalCount} 个结果，显示前 20 个
+                </Text>
               </div>
               {fullResults.map((result, index) => (
                 <div
                   key={result.symbol}
-                  className={`px-4 py-3 cursor-pointer border-b last:border-b-0 transition-colors ${
-                    index === selectedIndex
-                      ? 'bg-blue-50 border-blue-200'
-                      : 'hover:bg-gray-50'
-                  }`}
+                  style={{
+                    padding: '12px 16px',
+                    cursor: 'pointer',
+                    borderBottom: '1px solid #f0f0f0',
+                    backgroundColor: index === selectedIndex 
+                      ? '#f6f8fa' 
+                      : 'transparent',
+                    transition: 'background-color 0.15s ease',
+                  }}
                   onClick={() => handleSelectStock(result)}
                   onMouseEnter={() => setSelectedIndex(index)}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f6f8fa';
+                  }}
+                  onMouseOut={(e) => {
+                    if (index !== selectedIndex) {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                    }
+                  }}
                 >
-                  <div className="flex justify-between items-center">
-                    <div className="flex-1">
-                      <div className="font-semibold text-sm text-gray-900">
+                  <Group justify="space-between" align="flex-start">
+                    <Stack gap="xs" style={{ flex: 1 }}>
+                      <Text fw={600} size="sm" c="#1a1a1a">
                         {result.symbol}
-                      </div>
-                      <div className="text-xs text-gray-600 mt-0.5">
+                      </Text>
+                      <Text size="xs" c="#8a8a8a">
                         {result.name}
-                      </div>
+                      </Text>
                       {result.cname && (
-                        <div className="text-xs text-gray-500 mt-0.5">
+                        <Text size="xs" c="#8a8a8a">
                           {result.cname}
-                        </div>
+                        </Text>
                       )}
-                    </div>
-                    <div className="text-xs text-gray-400 ml-2">
-                      匹配度 {(result.relevance_score * 100).toFixed(0)}%
-                    </div>
-                  </div>
+                    </Stack>
+                    <Text size="xs" c="#0066cc" fw={500}>
+                      {(result.relevance_score * 100).toFixed(0)}%
+                    </Text>
+                  </Group>
                 </div>
               ))}
               {totalCount > 20 && (
-                <div className="px-4 py-2 bg-gray-50 border-t text-xs text-gray-500 text-center">
-                  还有 {totalCount - 20} 个结果未显示
-                </div>
+                <Center p="sm" style={{ backgroundColor: 'var(--mantine-color-gray-0)' }}>
+                  <Text size="xs" c="dimmed">
+                    还有 {totalCount - 20} 个结果未显示
+                  </Text>
+                </Center>
               )}
-            </div>
+            </Stack>
           ) : suggestions.length > 0 ? (
             // 显示搜索建议
-            <div className="py-1">
+            <Stack gap={0}>
               {suggestions.map((suggestion, index) => (
                 <div
                   key={suggestion.symbol}
-                  className={`px-4 py-3 cursor-pointer border-b last:border-b-0 transition-colors ${
-                    index === selectedIndex
-                      ? 'bg-blue-50 border-blue-200'
-                      : 'hover:bg-gray-50'
-                  }`}
+                  style={{
+                    padding: '12px 16px',
+                    cursor: 'pointer',
+                    borderBottom: '1px solid #f0f0f0',
+                    backgroundColor: index === selectedIndex 
+                      ? '#f6f8fa' 
+                      : 'transparent',
+                    transition: 'background-color 0.15s ease',
+                  }}
                   onClick={() => handleSelectStock(suggestion)}
                   onMouseEnter={() => setSelectedIndex(index)}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f6f8fa';
+                  }}
+                  onMouseOut={(e) => {
+                    if (index !== selectedIndex) {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                    }
+                  }}
                 >
-                  <div className="flex justify-between items-center">
-                    <div className="flex-1">
-                      <div className="font-semibold text-sm text-gray-900">
+                  <Group justify="space-between" align="flex-start">
+                    <Stack gap="xs" style={{ flex: 1 }}>
+                      <Text fw={600} size="sm" c="#1a1a1a">
                         {suggestion.symbol}
-                      </div>
-                      <div className="text-xs text-gray-600 mt-0.5">
+                      </Text>
+                      <Text size="xs" c="#8a8a8a">
                         {suggestion.name}
-                      </div>
+                      </Text>
                       {suggestion.cname && (
-                        <div className="text-xs text-gray-500 mt-0.5">
+                        <Text size="xs" c="#8a8a8a">
                           {suggestion.cname}
-                        </div>
+                        </Text>
                       )}
-                    </div>
-                    <div className="text-xs text-gray-400 ml-2">
-                      匹配度 {(suggestion.relevance_score * 100).toFixed(0)}%
-                    </div>
-                  </div>
+                    </Stack>
+                    <Text size="xs" c="#0066cc" fw={500}>
+                      {(suggestion.relevance_score * 100).toFixed(0)}%
+                    </Text>
+                  </Group>
                 </div>
               ))}
-              <div className="border-t bg-gray-50">
-                <button
-                  onClick={handleShowMoreResults}
-                  className="w-full px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 transition-colors"
-                >
+              <div
+                onClick={handleShowMoreResults}
+                style={{
+                  padding: '12px 16px',
+                  borderTop: '1px solid #f0f0f0',
+                  backgroundColor: '#fafbfc',
+                  cursor: 'pointer',
+                  textAlign: 'center',
+                  transition: 'background-color 0.15s ease',
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.backgroundColor = '#f6f8fa';
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.backgroundColor = '#fafbfc';
+                }}
+              >
+                <Text size="sm" c="#0066cc" fw={500}>
                   查看更多搜索结果
-                </button>
+                </Text>
               </div>
-            </div>
+            </Stack>
           ) : query.trim().length >= 2 ? (
-            <div className="p-4 text-center text-gray-500">
-              <div className="text-sm">未找到相关股票</div>
-              <div className="text-xs mt-1">请尝试输入股票代码或公司名称</div>
-            </div>
+            <Center p="md">
+              <Stack gap="xs" align="center">
+                <Text size="sm" c="dimmed">未找到相关股票</Text>
+                <Text size="xs" c="dimmed">请尝试输入股票代码或公司名称</Text>
+              </Stack>
+            </Center>
           ) : null}
-        </Card>
+        </Paper>
       )}
     </div>
   );

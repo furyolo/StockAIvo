@@ -21,7 +21,7 @@ class MockStockPredictionResult(BaseModel):
         ..., description="置信度"
     )
     reasoning: str = Field(
-        ..., max_length=1000,
+        ..., max_length=2500,
         description="预测推理说明"
     )
 
@@ -127,7 +127,7 @@ def test_schema_conversion_completeness():
     # 推理字段
     reasoning_field = properties["reasoning"]
     assert reasoning_field["type"] == "string"
-    assert reasoning_field["maxLength"] == 1000
+    assert reasoning_field["maxLength"] == 2500
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
