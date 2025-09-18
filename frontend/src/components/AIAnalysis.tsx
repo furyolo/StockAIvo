@@ -413,8 +413,8 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                       h3: ({children}) => (
                         <Title 
                           order={4} 
-                          mb="md" 
-                          mt="md" 
+                          mb="xs" 
+                          mt="xs" 
                           c="dark.7"
                           style={{ fontWeight: 600 }}
                         >
@@ -423,7 +423,7 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                       ),
                       p: ({children}) => (
                         <Text 
-                          mb="md" 
+                          mb="sm" 
                           size="sm" 
                           lh={1.6} 
                           c="dark.7"

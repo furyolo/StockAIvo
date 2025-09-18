@@ -93,7 +93,7 @@ class DataProviderConfig:
     TICKERTICK_BASE_URL = "https://api.tickertick.com/feed"
 
     # 数据处理配置
-    NEWS_FILTER_DAYS = 5  # 新闻数据过滤天数
+    NEWS_FILTER_DAYS = 3  # 新闻数据过滤天数
     MIN_CONTENT_LENGTH = 30  # 新闻内容最小长度
 
     # 时区配置
