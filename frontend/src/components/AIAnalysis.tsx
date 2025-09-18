@@ -388,7 +388,7 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                         <Title 
                           order={2} 
                           mb="md" 
-                          mt="lg" 
+                          mt="md" 
                           c="dark.9"
                           style={{ 
                             borderBottom: '1px solid var(--mantine-color-gray-3)',
@@ -403,7 +403,7 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                         <Title 
                           order={3} 
                           mb="md" 
-                          mt="lg" 
+                          mt="md" 
                           c="dark.8"
                           style={{ fontWeight: 600 }}
                         >
@@ -424,7 +424,7 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                       p: ({children}) => (
                         <Text 
                           mb="sm" 
-                          size="sm" 
+                          size="md" 
                           lh={1.6} 
                           c="dark.7"
                         >
@@ -432,12 +432,12 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                         </Text>
                       ),
                       ul: ({children}) => (
-                        <div style={{ marginBottom: '8px', fontSize: '14px' }}>
+                        <div style={{ marginBottom: '8px', fontSize: '16px' }}>
                           {children}
                         </div>
                       ),
                       ol: ({children}) => (
-                        <div style={{ marginBottom: '8px', fontSize: '14px', paddingLeft: '20px' }}>
+                        <div style={{ marginBottom: '8px', fontSize: '16px', paddingLeft: '20px' }}>
                           {children}
                         </div>
                       ),
@@ -449,7 +449,7 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
                               height: '6px',
                               borderRadius: '50%',
                               backgroundColor: 'var(--mantine-color-blue-6)',
-                              marginTop: '7px',
+                              marginTop: '8px',
                               flexShrink: 0,
                             }}
                           />
