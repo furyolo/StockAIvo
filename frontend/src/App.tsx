@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
-import { Container, Title, Text, Paper, Group, Select, Button, Stack, Center, Loader } from '@mantine/core';
-import { IconTrendingUp, IconChartBar, IconRefresh } from '@tabler/icons-react';
-import StockSearch from './components/StockSearch';
+import { useState, useEffect, useCallback } from 'react';
+import { Container, Text, Paper, Group, Select, Button, Stack, Center, Loader } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
+import { IconChartBar, IconRefresh } from '@tabler/icons-react';
+import DynamicNavbar from './components/DynamicNavbar';
 import TradingViewChart from './components/TradingViewChart';
 import AIAnalysis from './components/AIAnalysis';
 
@@ -40,6 +41,10 @@ function App() {
   const [period, setPeriod] = useState<'daily' | 'weekly' | '10min' | 'minute'>('daily');
   const [isLoading, setIsLoading] = useState(false);
   const [currentOHLC, setCurrentOHLC] = useState<ChartData | null>(null);
+  const [isAIAnalyzing, setIsAIAnalyzing] = useState(false);
+
+  // 响应式断点检测
+  const isMobile = useMediaQuery('(max-width: 768px)');
 
   const handleSelectStock = (symbol: string, name: string) => {
     setSelectedStock(symbol);
@@ -50,6 +55,11 @@ function App() {
   const handleOHLCChange = (ohlc: ChartData | null) => {
     setCurrentOHLC(ohlc);
   };
+
+  // AI分析状态变化回调
+  const handleAIAnalysisStateChange = useCallback((isAnalyzing: boolean) => {
+    setIsAIAnalyzing(isAnalyzing);
+  }, []);
 
   // 计算涨跌颜色 - 与K线一致，基于当日收盘价 vs 开盘价
   const getPriceColor = (ohlc: ChartData) => {
@@ -111,48 +121,20 @@ function App() {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f7f8fa' }}>
-      <Container size="xl" py="md">
+      {/* 动态导航栏 */}
+      <DynamicNavbar 
+        onSelectStock={handleSelectStock} 
+        isAIAnalyzing={isAIAnalyzing}
+      />
+      
+      <Container 
+        size="xl" 
+        pb="md"
+        pt={isMobile ? 65 : 80}
+      >
+        {/* 主要内容区域 */}
         <Stack gap="lg">
-          {/* 头部 */}
-          <Paper 
-            p="lg" 
-            style={{ 
-              backgroundColor: '#ffffff',
-              border: '1px solid #e1e4e8',
-              borderRadius: '8px',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-            }}
-          >
-            <Center>
-              <Stack gap="xs" align="center">
-                <Group gap="sm">
-                  <div
-                    style={{
-                      padding: '8px',
-                      backgroundColor: '#0066cc',
-                      borderRadius: '8px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <IconTrendingUp size={24} color="white" />
-                  </div>
-                  <Title order={1} c="#1a1a1a" style={{ fontWeight: 600 }}>StockAIvo</Title>
-                </Group>
-                <Text c="#8a8a8a" size="sm">智能美股数据与分析平台</Text>
-              </Stack>
-            </Center>
-          </Paper>
-
-          {/* 搜索栏 */}
-          <Center>
-            <StockSearch onSelectStock={handleSelectStock} />
-          </Center>
-
-          {/* 主要内容区域 */}
-          <Stack gap="lg">
-            {/* 图表区域 */}
+          {/* 图表区域 */}
             <Paper 
               p="lg" 
               style={{ 
@@ -270,9 +252,12 @@ function App() {
               </Stack>
             </Paper>
 
-            {/* AI 分析区域 */}
-            <AIAnalysis selectedStock={selectedStock} stockName={stockName} />
-          </Stack>
+          {/* AI 分析区域 */}
+          <AIAnalysis 
+            selectedStock={selectedStock} 
+            stockName={stockName}
+            onAnalysisStateChange={handleAIAnalysisStateChange}
+          />
         </Stack>
       </Container>
     </div>

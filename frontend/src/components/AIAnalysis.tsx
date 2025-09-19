@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { 
@@ -21,9 +21,10 @@ import { IconPlayerPlay, IconSquare, IconSparkles, IconTrendingUp, IconBolt } fr
 interface AIAnalysisProps {
   selectedStock: string | null;
   stockName: string | null;
+  onAnalysisStateChange?: (isAnalyzing: boolean) => void;
 }
 
-const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => {
+const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName, onAnalysisStateChange }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState('');
   const [endDate, setEndDate] = useState<string | null>(null);
@@ -33,6 +34,11 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName }) => 
   const [availableAnalyses, setAvailableAnalyses] = useState<string[]>([]); // 跟踪可用的分析类型
   // 用于存储流式响应的取消函数
   const readerCancelRef = useRef<(() => void) | null>(null);
+
+  // 通知父组件分析状态变化
+  useEffect(() => {
+    onAnalysisStateChange?.(isAnalyzing);
+  }, [isAnalyzing, onAnalysisStateChange]);
 
   const handleStartAnalysis = async (e: React.MouseEvent) => {
     e.preventDefault(); // 防止表单提交或页面跳转

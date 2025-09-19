@@ -11,9 +11,10 @@ interface SearchResult {
 
 interface StockSearchProps {
   onSelectStock: (symbol: string, name: string) => void;
+  onDropdownStateChange?: (isOpen: boolean) => void;
 }
 
-const StockSearch: React.FC<StockSearchProps> = ({ onSelectStock }) => {
+const StockSearch: React.FC<StockSearchProps> = ({ onSelectStock, onDropdownStateChange }) => {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -24,6 +25,11 @@ const StockSearch: React.FC<StockSearchProps> = ({ onSelectStock }) => {
   const [totalCount, setTotalCount] = useState(0);
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // 通知父组件下拉框状态变化
+  useEffect(() => {
+    onDropdownStateChange?.(showSuggestions);
+  }, [showSuggestions, onDropdownStateChange]);
 
   // 防抖获取建议
   useEffect(() => {
