@@ -17,6 +17,7 @@ import {
 } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
 import { IconPlayerPlay, IconSquare, IconSparkles, IconTrendingUp, IconBolt } from '@tabler/icons-react';
+import { apiFetch } from '../lib/api';
 
 interface AIAnalysisProps {
   selectedStock: string | null;
@@ -67,7 +68,7 @@ const AIAnalysis: React.FC<AIAnalysisProps> = ({ selectedStock, stockName, onAna
       const endpoint = 'analyze-parallel';
 
       // 发送 POST 请求并直接获取流式响应
-      const response = await fetch(`http://127.0.0.1:8000/ai/${endpoint}`, {
+      const response = await apiFetch(`/ai/${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

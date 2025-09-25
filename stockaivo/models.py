@@ -191,7 +191,7 @@ class UsStocksName(Base):
 
         # GIN索引：支持全文搜索和模糊匹配（使用trigram）
         # 注意：这些索引需要在数据库中手动创建，因为SQLAlchemy不直接支持GIN索引语法
-        # 实际创建语句在 database_migrations/add_search_indexes.sql 中
+        # 实际创建语句在 database_migrations/create_search_indexes.py 中
 
         # 表注释
         {'comment': '美股名称表，存储股票代码与中英文名称的映射关系，支持搜索和查询功能'}

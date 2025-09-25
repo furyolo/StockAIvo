@@ -19,7 +19,7 @@
 - ⚡ **并行分析**：技术分析、基本面分析、新闻情感分析同时执行，**速度提升2-3倍**
 - 🎯 **智能模型配置**：按Agent类型配置专用AI模型（Google Gemini）
 - 📊 **技术指标**：MA、RSI、MACD、布林带、ATR等完整技术分析
-- 📈 **流式响应**：实时输出分析结果，动态进度显示
+- 📈 **流式响应**：SSE 流式输出在本地与容器环境保持一致，Nginx 关闭缓冲确保长文本不被截断
 - 🗞️ **新闻情感**：基于实时新闻的市场情绪评估
 - 🏢 **公司信息增强**：自动获取公司名称，优化分析准确性
 - 🎲 **结构化预测**：基于多维分析生成概率化股价预测，包含方向、概率值、置信度和详细推理
@@ -99,6 +99,20 @@ cd frontend && pnpm install           # 前端依赖
 uv run dev                            # 后端: http://127.0.0.1:8000
 cd frontend && pnpm dev               # 前端: http://localhost:3223
 ```
+
+### 🐳 Docker 部署要点
+```bash
+# 首次构建并启动所有服务（FastAPI / Redis / PostgreSQL / 前端 / Nginx）
+docker-compose up --build -d
+
+# 查看后端实时日志，确认 SSE 推送与定时任务执行情况
+docker logs -f stockaivo-backend-1
+```
+- **镜像体积优化**：后端镜像采用多阶段构建与 `uv sync --frozen`，最终体积约 1.3GB，满足生产部署需求。
+- **健康检查一次性执行**：`HEALTHCHECK` 仅在容器首次就绪时请求 `/health` 并写入标记文件，避免 30 秒轮询打断 SSE。
+- **SSE 代理优化**：Nginx 上游统一代理 `/api/`，关闭请求/响应缓冲与 gzip，确保流式分析在容器环境不中断。
+- **LLM 服务地址**：容器内默认无法访问宿主 `localhost`，请在 `.env` 中将 `OPENAI_API_BASE` 指向 `http://host.docker.internal:3222/v1`（或对应的服务域名）。
+- **环境变量加载**：`docker-compose` 会自动读取 `.env`，更新后记得 `docker-compose up -d --build` 重新加载。
 
 ### 🔧 AI模型配置 (可选)
 ```bash
@@ -251,6 +265,11 @@ cd frontend && pnpm test            # 前端测试
 curl http://127.0.0.1:8000/health      # 健康检查
 curl http://127.0.0.1:8000/cache-stats # 缓存统计
 ```
+
+### 🕒 后台任务调度
+- APScheduler 以 8 分钟间隔触发 `persist_pending_data`，启用 `coalesce=True`、`misfire_grace_time=300`、`max_instances=1`，确保容器启动抖动不会导致重复执行。
+- 日志输出会在任务结束时记录计划开始时间（UTC，精确到秒）、实际耗时以及处理数量摘要，可在本地或容器中通过 `uv run dev`、`docker logs` 观察。
+- 如需临时暂停，可调用 `stockaivo.background_scheduler.stop_scheduler()`，重新启动前确保无并发任务残留。
 
 ### 🏗️ 架构特色
 - ⚡ **现代化依赖注入**：`DatabaseDep`、`CacheDep` 类型别名，`Annotated` 类型系统

@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 *$py.class
+.mypy_cache/
 
 # Virtual Environment
 .venv/
@@ -47,6 +48,7 @@ dist/
 
 # Logs
 *.log
+pnpm-debug.log*
 logs/
 
 # Backup files
@@ -87,6 +89,9 @@ tests/*$py.class
 
 # Claude
 .claude/
+
+# Serena language server
+.serena/
 
 # Kilo Code
 .kilocode/

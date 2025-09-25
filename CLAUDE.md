@@ -2,6 +2,37 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 一键启动脚本
+
+### Windows 环境
+```cmd
+# 开发环境启动 (推荐)
+.\start-dev.bat                     # 自动启动前端和后端开发服务器
+
+# 生产环境启动
+.\start-prod.bat                    # 构建并启动生产环境
+```
+
+### Linux/Mac 环境  
+```bash
+# 开发环境启动
+./start-dev.sh                      # 后台启动服务，支持日志查看
+
+# 生产环境启动
+./start-prod.sh                     # 生产环境部署
+
+# 管理命令
+./start-dev.sh status              # 查看服务状态
+./start-dev.sh stop                # 停止所有服务
+./start-dev.sh logs                # 查看实时日志
+```
+
+**Windows启动脚本特性:**
+- ✅ **智能颜色支持**: 自动检测PowerShell可用性，提供彩色输出
+- ✅ **依赖检查**: 自动验证pnpm、uv、Node.js、Python环境
+- ✅ **错误处理**: 详细的错误提示和安装指导
+- ✅ **跨终端兼容**: 支持CMD、PowerShell、Windows Terminal
+
 ## 常用开发命令
 
 ### 后端开发 (Python 3.12 + FastAPI)
@@ -39,6 +70,14 @@ cd frontend && pnpm test            # 运行测试
 cd frontend && pnpm lint            # ESLint检查
 cd frontend && pnpm test:ui         # UI测试界面
 ```
+
+## 容器部署与运维要点
+- 使用 `docker-compose up --build -d` 一次性启动 FastAPI、Redis、PostgreSQL、前端与 Nginx；重新调整 `.env` 后需重新构建。
+- 后端镜像基于多阶段构建与 `uv sync --frozen`，体积约 1.3GB；如要继续瘦身请评估 `akshare`、`google-api-python-client` 等大依赖。
+- Dockerfile 的 `HEALTHCHECK` 仅在首次成功后写入 `/tmp/.healthcheck_done`，避免 30 秒轮询打断 SSE 长连接；如需恢复轮询请确认前端流式输出不会被截断。
+- Nginx 代理 `/api/` 时已关闭请求/响应缓冲、`gzip` 与 `proxy_request_buffering`，强制 `chunked_transfer_encoding`，确保容器环境的流式响应与开发环境一致。
+- 容器内无法访问宿主 `localhost`，若本地提供 LLM 服务，请将 `.env` 中 `OPENAI_API_BASE` 设置为 `http://host.docker.internal:3222/v1`（或对应内网地址）。
+- 通过 `docker logs -f stockaivo-backend-1` 可同时观察健康检查、SSE 推送与 APScheduler 任务日志；日志条目会精确到秒并附带处理摘要。
 
 #### 前端UI架构重构 (v3.0.0+)
 **2025年9月17日完成了全面的UI框架迁移:**
@@ -89,7 +128,7 @@ python database_migrations/create_stock_news_table.py
 python database_migrations/drop_stock_news_table.py
 
 # 系统监控
-curl http://127.0.0.1:8000/health  # 健康检查
+curl http://127.0.0.1:8000/health  # 健康检查（容器模式下首次成功后即视为通过）
 curl http://127.0.0.1:8000/cache-stats # 缓存统计
 ```
 
@@ -258,6 +297,11 @@ curl -X POST "http://127.0.0.1:8000/ai/analyze-parallel" \
   - **AI分析完成状态管理**: AI分析完成后临时忽略滚动事件1秒，防止内容高度变化导致的误触发
   - **组件状态同步**: 通过回调机制实现组件间状态共享，确保动态UI行为的一致性
   - **关键技术点**: useState + useEffect + useCallback模式，防抖优化，事件监听器清理
+
+#### 后台数据持久化调度
+- APScheduler 以 8 分钟间隔运行 `persist_pending_data`，启用了 `coalesce=True`、`misfire_grace_time=300`、`max_instances=1` 来吸收容器冷启动带来的抖动。
+- 任务开始与结束日志分别记录 UTC 时间（精确到秒）与执行耗时，`summary_payload` 中可获取处理成功/失败数量、待处理键数量等指标。
+- 如需在测试中手动触发，请直接调用 `scheduled_persist_job()` 并确保关闭临时数据库会话；调试完成后可调用 `stop_scheduler()`/`start_scheduler()` 控制后台任务。
 
 #### 数据验证机制
 - 使用`ValidationResult`类进行分层验证

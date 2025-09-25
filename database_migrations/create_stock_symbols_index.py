@@ -46,7 +46,7 @@ def get_database_url():
     # 如果没有DATABASE_URL，尝试从单独的环境变量构建
     host = os.getenv('DB_HOST', 'localhost')
     port = os.getenv('DB_PORT', '5432')
-    database = os.getenv('DB_NAME', 'stockaivo')
+    database = os.getenv('DB_NAME', 'stock')
     username = os.getenv('DB_USER', 'postgres')
     password = os.getenv('DB_PASSWORD', '')
     
@@ -81,7 +81,9 @@ def create_stock_symbols_index():
         raw_conn = engine.raw_connection()
         try:
             # 设置autocommit模式
-            raw_conn.set_session(autocommit=True)
+            # 使用类型忽略来避免IDE类型检查错误
+            if hasattr(raw_conn, 'set_session'):
+                raw_conn.set_session(autocommit=True)  # type: ignore
             cursor = raw_conn.cursor()
 
             create_index_sql = """

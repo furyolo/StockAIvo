@@ -30,8 +30,20 @@ logger = logging.getLogger(__name__)
 
 
 def get_database_url():
-    """获取数据库连接URL"""
-    return os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/stockaivo_db")
+    """从环境变量获取数据库连接URL"""
+    # 尝试从环境变量获取数据库URL
+    database_url = os.getenv('DATABASE_URL')
+    if database_url:
+        return database_url
+    
+    # 如果没有DATABASE_URL，尝试从单独的环境变量构建
+    host = os.getenv('DB_HOST', 'localhost')
+    port = os.getenv('DB_PORT', '5432')
+    database = os.getenv('DB_NAME', 'stock')
+    username = os.getenv('DB_USER', 'postgres')
+    password = os.getenv('DB_PASSWORD', '')
+    
+    return f"postgresql://{username}:{password}@{host}:{port}/{database}"
 
 
 def check_pg_trgm_extension(engine):
@@ -159,7 +171,9 @@ def create_indexes(engine):
             raw_conn = engine.raw_connection()
             try:
                 # 设置autocommit模式
-                raw_conn.set_session(autocommit=True)
+                # 使用类型忽略来避免IDE类型检查错误
+                if hasattr(raw_conn, 'set_session'):
+                    raw_conn.set_session(autocommit=True)  # type: ignore
                 cursor = raw_conn.cursor()
                 cursor.execute(index_info['sql'].strip())
                 cursor.close()

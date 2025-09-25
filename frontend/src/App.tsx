@@ -5,6 +5,7 @@ import { IconChartBar, IconRefresh } from '@tabler/icons-react';
 import DynamicNavbar from './components/DynamicNavbar';
 import TradingViewChart from './components/TradingViewChart';
 import AIAnalysis from './components/AIAnalysis';
+import { apiFetch } from './lib/api';
 
 // 定义API响应数据类型
 interface StockDataItem {
@@ -73,8 +74,8 @@ function App() {
   const fetchStockData = async (symbol: string, selectedPeriod: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/stocks/${symbol}/${selectedPeriod}`
+      const response = await apiFetch(
+        `/stocks/${symbol}/${selectedPeriod}`
       );
 
       if (response.ok) {

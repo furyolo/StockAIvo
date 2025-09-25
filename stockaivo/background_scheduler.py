@@ -1,7 +1,8 @@
 # file: stockaivo/background_scheduler.py
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from time import perf_counter
 from typing import Dict, Any, Optional, cast
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy.orm import Session
@@ -17,7 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 
-scheduler = BackgroundScheduler(daemon=True)
+# 调整默认任务参数，允许短暂延迟并避免重复触发
+scheduler = BackgroundScheduler(
+    daemon=True,
+    job_defaults={
+        "coalesce": True,
+        "misfire_grace_time": 300,
+        "max_instances": 1,
+    },
+)
 
 def scheduled_persist_job():
     """
@@ -25,21 +34,27 @@ def scheduled_persist_job():
     为每个作业运行创建一个新的数据库会话。
     支持股票价格数据的批量持久化。
     """
-    # 增强定时任务日志记录以监控数据处理状态
     logger.info("开始执行预定的数据持久化任务...")
+    job_start_utc = datetime.now(timezone.utc)
+    job_timer = perf_counter()
     db_session: Session | None = None
+    result: Dict[str, Any] = {"success": False}
+
     try:
         db_session = next(get_db())
         logger.info(f"使用数据库会话 {db_session} 执行持久化任务。")
         result = persist_pending_data(db_session)
 
-        # 详细记录处理结果
-        if result.get('success'):
-            processed_count = result.get('processed_count', 0)
-            failed_count = result.get('failed_count', 0)
-            details = result.get('details', [])
-
-            logger.info(f"预定任务完成 - 总处理: {processed_count} 条, 失败: {failed_count} 条")
+        if result.get("success"):
+            processed_count = result.get("processed_count", 0)
+            failed_count = result.get("failed_count", 0)
+            pending_count = result.get("pending_count", 0)
+            logger.info(
+                "预定任务完成 - 总处理: %s 条, 失败: %s 条, Redis 待处理键: %s",
+                processed_count,
+                failed_count,
+                pending_count,
+            )
         else:
             logger.error(f"预定任务执行失败: {result.get('message', '未知错误')}")
 
@@ -49,6 +64,23 @@ def scheduled_persist_job():
         if db_session:
             logger.info(f"关闭数据库会话 {db_session}。")
             db_session.close()
+
+        duration = perf_counter() - job_timer
+        summary_payload = {
+            "success": result.get("success"),
+            "processed_count": result.get("processed_count", 0),
+            "failed_count": result.get("failed_count", 0),
+            "pending_count": result.get("pending_count", 0),
+            "cleared_count": result.get("cleared_count", 0),
+            "duration_seconds": result.get("duration_seconds"),
+            "message": result.get("message"),
+        }
+        logger.info(
+            "预定任务结束 - 计划开始时间: %s UTC, 实际耗时: %.2f 秒, 摘要: %s",
+            job_start_utc.strftime("%Y-%m-%dT%H:%M:%S"),
+            duration,
+            summary_payload,
+        )
 
 
 

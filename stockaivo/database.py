@@ -21,7 +21,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # 从环境变量获取数据库连接URL，并提供默认值
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/stockaivo_db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://stockaivo:StockAIvo_2025#Secure!@localhost:5432/stock")
 
 # 声明全局变量的类型
 engine: Optional[Engine] = None

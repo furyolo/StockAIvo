@@ -1660,29 +1660,59 @@ def get_cached_data_summary() -> dict:
 def check_data_service_health() -> dict:
     """
     检查数据服务健康状态
+    专注于业务层面的健康检查，不重复检查基础设施连接
 
     Returns:
-        dict: 包含各组件健康状态的字典
+        dict: 包含数据服务特有健康状态的字典
     """
     health_status = {
         "timestamp": datetime.now().isoformat(),
-        "redis_connection": False,
-        "database_connection": False,
-        "akshare_available": True  # 假设AKShare总是可用的
+        "akshare_available": True,  # AKShare数据源可用性
+        "market_state": "normal",  # 市场状态检查
+        "cache_performance": "good",  # 缓存性能
+        "healthy": True
     }
 
     try:
-        # 检查Redis连接
-        health_status["redis_connection"] = cache_manager.health_check()
+        # 检查AKShare可用性（轻量级检查）
+        try:
+            import akshare as ak
+            # 仅检查模块是否可导入，不执行实际API调用
+            health_status["akshare_available"] = True
+            health_status["akshare_version"] = getattr(ak, '__version__', 'unknown')
+        except Exception as e:
+            health_status["akshare_available"] = False
+            health_status["akshare_error"] = str(e)
+        
+        # 检查市场状态（是否在交易时间内）
+        try:
+            from stockaivo.cache_manager import _is_market_open
+            health_status["market_state"] = "open" if _is_market_open() else "closed"
+        except Exception:
+            health_status["market_state"] = "unknown"
+        
+        # 检查缓存性能（通过缓存统计）
+        try:
+            cache_stats = cache_manager.get_cache_stats()
+            if isinstance(cache_stats, dict) and "memory_usage" in cache_stats:
+                memory_mb = int(cache_stats["memory_usage"]) / 1024 / 1024
+                health_status["cache_performance"] = "good" if memory_mb < 100 else "high"
+        except Exception:
+            health_status["cache_performance"] = "unknown"
 
-        # 检查数据库连接
-        health_status["database_connection"] = database.check_db_connection()
+        # 判断整体健康状态（基于业务逻辑）
+        health_status["healthy"] = (
+            health_status["akshare_available"] and 
+            health_status["market_state"] != "unknown" and
+            health_status["cache_performance"] != "unknown"
+        )
 
         logger.info("数据服务健康检查完成")
 
     except Exception as e:
         logger.error(f"数据服务健康检查失败: {e}")
         health_status["error"] = str(e)
+        health_status["healthy"] = False
 
     return health_status
 

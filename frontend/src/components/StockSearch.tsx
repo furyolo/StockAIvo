@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { TextInput, Paper, Stack, Group, Text, Loader, Center, rem } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
+import { apiFetch } from '../lib/api';
 
 interface SearchResult {
   symbol: string;
@@ -67,8 +68,8 @@ const StockSearch: React.FC<StockSearchProps> = ({ onSelectStock, onDropdownStat
   const getSuggestions = useCallback(async (searchQuery: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/search/stocks/suggestions?q=${encodeURIComponent(searchQuery)}&limit=5`
+      const response = await apiFetch(
+        `/search/stocks/suggestions?q=${encodeURIComponent(searchQuery)}&limit=5`
       );
 
       if (response.ok) {
@@ -92,8 +93,8 @@ const StockSearch: React.FC<StockSearchProps> = ({ onSelectStock, onDropdownStat
   const getFullResults = useCallback(async (searchQuery: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/search/stocks?q=${encodeURIComponent(searchQuery)}&limit=20&offset=0`
+      const response = await apiFetch(
+        `/search/stocks?q=${encodeURIComponent(searchQuery)}&limit=20&offset=0`
       );
 
       if (response.ok) {

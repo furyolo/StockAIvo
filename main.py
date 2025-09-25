@@ -6,12 +6,13 @@ StockAIvo - FastAPI主应用
 import logging
 from contextlib import asynccontextmanager
 from typing import Dict, Any, List
+from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from datetime import datetime
- 
+
 # 导入项目模块
 from stockaivo import database, models
 from stockaivo.database import get_db
@@ -20,6 +21,7 @@ from stockaivo.cache_manager import get_pending_data_keys, health_check as redis
 from stockaivo.data_service import get_stock_data, check_data_service_health, PeriodType
 from stockaivo.routers import stocks_router, ai_router, search_router
 from stockaivo.background_scheduler import start_scheduler, stop_scheduler
+from stockaivo.migration_manager import run_database_migrations
 
 # 导入现代化依赖注入和异常处理模块
 from stockaivo.dependencies import DatabaseDep
@@ -56,6 +58,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"数据库表初始化失败: {e}")
     
+    # 执行数据库迁移（性能优化）
+    logger.info("检查并执行数据库迁移...")
+    try:
+        if run_database_migrations():
+            logger.info("数据库迁移执行完成")
+        else:
+            logger.warning("数据库迁移执行失败，但服务继续启动")
+    except Exception as e:
+        logger.warning(f"数据库迁移执行出错: {e}，服务继续启动")
+    
     logger.info("StockAIvo API 服务启动完成")
     
     # 启动后台调度器
@@ -91,7 +103,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3223",  # 前端开发服务器
+        "http://localhost:3223",  # 前端开发和生产服务器
         "http://127.0.0.1:3223",
     ],
     allow_credentials=True,
@@ -139,7 +151,7 @@ async def health_check():
     
     # 检查数据库连接
     try:
-        db_healthy = database.check_db_connection()
+        db_healthy = await run_in_threadpool(database.check_db_connection)
         health_status["components"]["database"] = {
             "status": "healthy" if db_healthy else "unhealthy",
             "details": "PostgreSQL连接正常" if db_healthy else "PostgreSQL连接失败"
@@ -153,7 +165,7 @@ async def health_check():
     
     # 检查Redis连接
     try:
-        redis_healthy = redis_health_check()
+        redis_healthy = await run_in_threadpool(redis_health_check)
         health_status["components"]["redis"] = {
             "status": "healthy" if redis_healthy else "unhealthy",
             "details": "Redis连接正常" if redis_healthy else "Redis连接失败"
@@ -167,7 +179,7 @@ async def health_check():
     
     # 检查数据服务
     try:
-        data_service_status = check_data_service_health()
+        data_service_status = await run_in_threadpool(check_data_service_health)
         health_status["components"]["data_service"] = {
             "status": "healthy" if data_service_status.get("healthy", False) else "unhealthy",
             "details": data_service_status

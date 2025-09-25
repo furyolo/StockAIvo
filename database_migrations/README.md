@@ -1,20 +1,20 @@
-# 数据库迁移脚本
+# 数据库迁移操作指南
 
 本目录包含用于优化数据库查询性能的索引创建脚本。
+
+> **系统架构和迁移规范** 请参考 [MIGRATIONS.md](./MIGRATIONS.md)
 
 ## 文件说明
 
 ### 搜索功能优化
-- `add_search_indexes.sql` - 原始SQL脚本，包含所有搜索索引创建语句
 - `create_search_indexes.py` - Python执行脚本，自动化搜索索引创建过程
 
 ### stock_symbols表优化
-- `create_stock_symbols_index.sql` - 为stock_symbols表创建索引的SQL脚本
 - `create_stock_symbols_index.py` - Python执行脚本，自动化stock_symbols索引创建
-- `remove_index_column.sql` - 删除stock_symbols表index字段的SQL脚本
-- `remove_index_column.py` - Python执行脚本，自动化删除index字段
+- `drop_minute_table.py` - 删除stock_prices_minute表的迁移脚本
+- `drop_hourly_table.py` - 删除stock_prices_hourly表的迁移脚本
 
-- `README.md` - 本说明文件
+> **详细的迁移文件列表和状态** 请参考 [MIGRATIONS.md](./MIGRATIONS.md#迁移文件列表)
 
 ## 索引说明
 
@@ -74,15 +74,16 @@ uv run create_stock_symbols_index.py
 uv run create_stock_symbols_index.py --test
 ```
 
-#### 删除stock_symbols表的index字段
+#### 删除废弃表
 ```bash
-# 在项目根目录执行
-cd database_migrations
-uv run remove_index_column.py
+# 删除分钟线表（数据已迁移到Redis）
+uv run drop_minute_table.py
 
-# 可选：仅验证不执行删除操作
-uv run remove_index_column.py --verify
+# 删除小时线表（功能被10分钟线取代）
+uv run drop_hourly_table.py
 ```
+
+> **完整的迁移执行顺序** 请参考 [MIGRATIONS.md](./MIGRATIONS.md#迁移执行顺序)
 
 **优势**:
 - 自动检查依赖（pg_trgm扩展）
@@ -105,6 +106,8 @@ psql -h localhost -U your_username -d stockaivo_db
 1. **数据库表存在**: 确保 `us_stocks_name` 表已创建
 2. **pg_trgm扩展**: 需要PostgreSQL的pg_trgm扩展支持trigram索引
 3. **数据库权限**: 需要CREATE INDEX权限
+
+> **数据库架构和表结构说明** 请参考 [MIGRATIONS.md](./MIGRATIONS.md#数据库架构)
 
 ## 性能预期
 
@@ -131,6 +134,8 @@ psql -h localhost -U your_username -d stockaivo_db
 - 新数据插入时索引会自动更新
 - 定期运行 `ANALYZE us_stocks_name` 更新统计信息
 - 监控索引使用情况和查询性能
+
+> **更多最佳实践和规范** 请参考 [MIGRATIONS.md](./MIGRATIONS.md#最佳实践)
 
 ## 验证索引效果
 

@@ -5,6 +5,7 @@
 
 import logging
 import pandas as pd
+from time import perf_counter
 from typing import List, Tuple, Dict, Any, Optional, Type, Union
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
@@ -691,20 +692,25 @@ class DatabaseWriter:
             'processed_count': 0,
             'failed_count': 0,
             'details': [],
-            'errors': []
+            'errors': [],
+            'pending_count': 0,
         }
+        start_timer = perf_counter()
         
         try:
             # 1. 从Redis获取待处理数据
             logger.info("开始从Redis获取待处理数据...")
             pending_data = get_pending_data_from_redis()
+            pending_total = len(pending_data) if pending_data else 0
+            result['pending_count'] = pending_total
             
             if not pending_data:
                 logger.info("Redis中没有待处理数据")
                 result['message'] = "没有待处理的数据"
+                result['duration_seconds'] = round(perf_counter() - start_timer, 3)
                 return result
             
-            logger.info(f"从Redis获取到 {len(pending_data)} 个待处理数据条目")
+            logger.info(f"从Redis获取到 {pending_total} 个待处理数据条目")
             
             # 2. 按ticker分组处理数据
             processed_keys: List[Tuple[str, str]] = []
@@ -788,6 +794,8 @@ class DatabaseWriter:
             logger.info(f"清除了 {cleared_count} 个Redis缓存条目")
             
             result['message'] = f"成功处理 {result['processed_count']} 条记录，失败 {result['failed_count']} 条"
+            result['cleared_count'] = cleared_count
+            result['duration_seconds'] = round(perf_counter() - start_timer, 3)
             logger.info(result['message'])
             
         except Exception as e:
@@ -796,6 +804,7 @@ class DatabaseWriter:
             result['success'] = False
             result['message'] = f"持久化过程失败: {str(e)}"
             result['errors'].append({'general_error': str(e)})
+            result['duration_seconds'] = round(perf_counter() - start_timer, 3)
         
         return result
 
