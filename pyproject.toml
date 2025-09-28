@@ -1,8 +1,8 @@
 [project]
 name = "stockaivo"
-version = "3.0.0"
+version = "3.1.0"
 description = "基于AI的美股数据分析平台，集成多Agent并行分析、结构化预测和智能数据验证系统"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 
 dependencies = [
     "fastapi>=0.115.13",
@@ -44,7 +44,7 @@ packages = ["stockaivo"]
 
 # MyPy 类型检查配置
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false       # 渐进式类型检查，暂时允许未类型化的函数

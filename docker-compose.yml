@@ -1,22 +1,4 @@
 services:
-  # PostgreSQL 数据库
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: stock
-      POSTGRES_USER: stockaivo
-      POSTGRES_PASSWORD: StockAIvo_2025#Secure!
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./database_migrations:/docker-entrypoint-initdb.d
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U stockaivo -d stock"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # Redis 缓存
   redis:
     image: redis:8.2.1-alpine
@@ -37,7 +19,7 @@ services:
     ports:
       - "3224:3224"
     environment:
-      - DATABASE_URL=postgresql://stockaivo:StockAIvo_2025#Secure!@postgres:5432/stock
+      - DATABASE_URL=${DOCKER_DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -49,8 +31,6 @@ services:
       - AI_SYNTHESIS_MODEL=${AI_SYNTHESIS_MODEL:-gemini-2.5-pro}
       - RUN_DATABASE_MIGRATIONS=${RUN_DATABASE_MIGRATIONS:-true}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
@@ -76,7 +56,6 @@ services:
       - ./logs/nginx:/var/log/nginx
 
 volumes:
-  postgres_data:
   redis_data:
 
 networks:

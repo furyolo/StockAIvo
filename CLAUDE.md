@@ -35,7 +35,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 常用开发命令
 
-### 后端开发 (Python 3.12 + FastAPI)
+### 后端开发 (Python 3.13 + FastAPI)
 ```bash
 # 安装依赖
 uv sync --extra dev
@@ -138,8 +138,8 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 StockAIvo是一个现代化的全栈美股分析平台，采用前后端分离架构：
 
 - **前端**: React 19.1.0 + TypeScript 5.8.3 + Vite 7.0.0 + Mantine UI 8.3.1 + TradingView Lightweight Charts 5.0.8
-- **后端**: Python 3.12 + FastAPI 0.115.13+ + SQLAlchemy 2.0.41+ + LangGraph 0.4.8+
-- **数据库**: PostgreSQL (主存储) + Redis 6.2.0+ (三级缓存)
+- **后端**: Python 3.13 + FastAPI 0.115.13+ + SQLAlchemy 2.0.41+ + LangGraph 0.4.8+
+- **数据库**: PostgreSQL (主存储) + Redis 8.2.0+ (三级缓存)
 - **数据源**: AKShare 1.17.6+ (美股数据) + TickerTick (新闻数据)
 - **AI引擎**: Google Generative AI 0.8.5+ (Gemini模型)
 - **工具链**: uv (Python包管理) + pnpm 10.14.0 (前端包管理) + MyPy 1.8.0+ (类型检查)

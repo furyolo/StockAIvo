@@ -1,19 +1,18 @@
-# 多阶段构建，统一使用 Python 3.12 精简镜像
-FROM python:3.12-slim AS builder
+# 多阶段构建，统一使用 Python 3.13 Alpine Linux 精简镜像
+FROM python:3.13.7-alpine AS builder
 
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
-    UV_PYTHON=python3.12
+    UV_PYTHON=python3.13.7
 
 # 构建阶段仅安装编译所需依赖
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk update \
+    && apk add --no-cache \
+    build-base \
+    postgresql-dev
 
 # 安装 uv，负责创建虚拟环境并锁定依赖
 RUN pip install --no-cache-dir uv
@@ -30,7 +29,7 @@ RUN find .venv -name "__pycache__" -type d -prune -exec rm -rf {} + \
     && find .venv -name "*.pyc" -delete
 
 
-FROM python:3.12-slim AS runtime
+FROM python:3.13.7-alpine AS runtime
 
 WORKDIR /app
 
@@ -40,11 +39,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:${PATH}"
 
 # 运行阶段仅安装最小化运行时依赖
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libpq5 \
-        curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk update \
+    && apk add --no-cache \
+    postgresql-libs \
+    curl
 
 # 安装 uv CLI，保证启动命令可用
 RUN pip install --no-cache-dir uv
@@ -56,7 +54,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY . .
 
 # 创建应用用户并授予目录权限
-RUN useradd --create-home --shell /bin/bash app \
+RUN adduser -D -s /bin/sh app \
     && mkdir -p logs/frontend logs/backend \
     && chown -R app:app /app
 

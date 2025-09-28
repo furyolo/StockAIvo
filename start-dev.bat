@@ -68,7 +68,7 @@ if %errorlevel% neq 0 (
 :: Check Python
 where python >nul 2>nul
 if %errorlevel% neq 0 (
-    call :ColorEcho "RED" "Error: Python not found, please install Python 3.12+"
+    call :ColorEcho "RED" "Error: Python not found, please install Python 3.13+"
     echo Download: https://python.org/
     pause
     exit /b 1

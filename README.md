@@ -62,22 +62,22 @@
 
 ## 🛠️ 技术栈
 
-| 层级       | 技术                           | 版本                     | 特色                   |
-| ---------- | ------------------------------ | ------------------------ | ---------------------- |
-| **前端**   | React + TypeScript + Vite      | 19.1.0 + 5.8.3 + 7.0.0   | 现代化前端框架         |
-| **UI**     | Mantine UI                     | 8.3.1                    | 现代React组件库        |
-| **图表**   | TradingView Lightweight Charts | 5.0.8                    | 专业金融图表           |
-| **后端**   | Python + FastAPI + SQLAlchemy  | 3.12 + 0.115.13 + 2.0.41 | 高性能异步API          |
-| **数据库** | PostgreSQL + Redis             | 15+ + 7+                 | 主存储 + 高速缓存      |
-| **AI**     | LangGraph + LangChain + Gemini | 0.4.8 + 0.3.15 + 2.5     | 多Agent工作流          |
-| **数据源** | AKShare + 交易日历             | 1.15.0 + 5.1.1           | 美股数据 + 日历管理    |
-| **工具链** | uv + pnpm + MyPy + ESLint      | latest                   | 现代化开发工具         |
+| 层级       | 技术                           | 版本                     | 特色                |
+| ---------- | ------------------------------ | ------------------------ | ------------------- |
+| **前端**   | React + TypeScript + Vite      | 19.1.0 + 5.8.3 + 7.0.0   | 现代化前端框架      |
+| **UI**     | Mantine UI                     | 8.3.1                    | 现代React组件库     |
+| **图表**   | TradingView Lightweight Charts | 5.0.8                    | 专业金融图表        |
+| **后端**   | Python + FastAPI + SQLAlchemy  | 3.13 + 0.115.13 + 2.0.41 | 高性能异步API       |
+| **数据库** | PostgreSQL + Redis             | 17+ + 8+                 | 主存储 + 高速缓存   |
+| **AI**     | LangGraph + LangChain + Gemini | 0.4.8 + 0.3.15 + 2.5     | 多Agent工作流       |
+| **数据源** | AKShare + 交易日历             | 1.15.0 + 5.1.1           | 美股数据 + 日历管理 |
+| **工具链** | uv + pnpm + MyPy + ESLint      | latest                   | 现代化开发工具      |
 
 ## 🚀 快速开始
 
 ### 📋 环境要求
 ```
-Python 3.12+  •  Node.js 18+  •  PostgreSQL 12+  •  Redis 6+
+Python 3.13+  •  Node.js 18+  •  PostgreSQL 17+  •  Redis 8+
 ```
 
 ### ⚡ 一键部署
