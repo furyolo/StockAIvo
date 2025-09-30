@@ -10,11 +10,12 @@ from typing import List, Tuple, Dict, Any, Optional, Type, Union
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 
-from datetime import datetime, date, timezone
+from datetime import datetime, date
 
 from . import database
 from .models import StockPriceDaily, StockPriceWeekly, StockSymbols, UsStocksName
 from .cache_manager import get_pending_data_from_redis, clear_saved_data, delete_from_redis
+from .timezone_manager import get_current_time
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -69,8 +70,8 @@ class DatabaseWriter:
                     'price_change_percent': float(row.get('price_change_percent', 0.0)),
                     'price_change': float(row.get('price_change', 0.0)),
                     'turnover_rate': float(row.get('turnover_rate', 0.0)),
-                    'created_at': datetime.now(timezone.utc),
-                    'updated_at': datetime.now(timezone.utc)
+                    'created_at': get_current_time(),
+                    'updated_at': get_current_time()
                 }
                 
                 daily_data.append(price_data)
@@ -124,8 +125,8 @@ class DatabaseWriter:
                     'price_change_percent': float(row.get('price_change_percent', 0.0)),
                     'price_change': float(row.get('price_change', 0.0)),
                     'turnover_rate': float(row.get('turnover_rate', 0.0)),
-                    'created_at': datetime.now(timezone.utc),
-                    'updated_at': datetime.now(timezone.utc)
+                    'created_at': get_current_time(),
+                    'updated_at': get_current_time()
                 }
                 
                 weekly_data.append(price_data)
@@ -175,8 +176,8 @@ class DatabaseWriter:
                     'volume': int(row.get('volume', row.get('成交量', 0))),
                     'turnover': int(row.get('turnover', row.get('成交额', 0))),
                     'latest_price': float(row.get('latest_price', row.get('最新价', 0))),
-                    'created_at': datetime.now(timezone.utc),
-                    'updated_at': datetime.now(timezone.utc)
+                    'created_at': get_current_time(),
+                    'updated_at': get_current_time()
                 }
 
                 minute_data.append(price_data)
@@ -198,7 +199,7 @@ class DatabaseWriter:
             List[Dict]: 实时行情数据字典列表
         """
         quote_data = []
-        current_time = datetime.now(timezone.utc)
+        current_time = get_current_time()
 
         # 定义期望的字段列表，确保字段顺序和名称的一致性
         expected_fields = [
@@ -285,7 +286,7 @@ class DatabaseWriter:
             List[Dict]: 美股名称数据字典列表
         """
         name_data = []
-        current_time = datetime.now(timezone.utc)
+        current_time = get_current_time()
 
         # 定义期望的字段列表
         expected_fields = [
@@ -378,7 +379,7 @@ class DatabaseWriter:
                 'low': stmt.excluded.low,
                 'close': stmt.excluded.close,
                 'volume': stmt.excluded.volume,
-                'updated_at': datetime.now(timezone.utc)
+                'updated_at': get_current_time()
             }
 
             # 根据表类型添加特定字段

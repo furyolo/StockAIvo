@@ -42,7 +42,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apk update \
     && apk add --no-cache \
     postgresql-libs \
-    curl
+    curl \
+    tzdata
 
 # 安装 uv CLI，保证启动命令可用
 RUN pip install --no-cache-dir uv

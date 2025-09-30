@@ -9,12 +9,14 @@ StockAIvo - SQLAlchemy ORM Models
 - UsStocksName: 美股名称表
 """
 
-from datetime import datetime, date, timezone
+from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Column, String, DateTime, Date, Numeric, BigInteger, Text, ForeignKey, UniqueConstraint, Index, MetaData
+from sqlalchemy import Column, String, DateTime, Date, Numeric, BigInteger, Text, ForeignKey, UniqueConstraint, Index, MetaData, TIMESTAMP
 from sqlalchemy.orm import declarative_base, relationship
+
+from .timezone_manager import get_current_time
 
 # 定义元数据，并指定 schema
 metadata_obj = MetaData(schema="public")
@@ -59,8 +61,8 @@ class StockSymbols(Base):
     turnover_rate = Column(Numeric(10, 4), nullable=True, comment='换手率')
 
     # 时间戳字段
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
-    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
+    created_at = Column(DateTime, nullable=False, default=get_current_time, comment='记录创建时间')
+    updated_at = Column(DateTime, nullable=False, default=get_current_time, onupdate=get_current_time, comment='记录更新时间')
 
     # 创建索引以优化基于symbol的查询
     __table_args__ = (
@@ -97,8 +99,8 @@ class StockPriceDaily(Base):
     turnover_rate = Column(Numeric(10, 4), nullable=True, comment='换手率(%)')
     
     # 时间戳字段
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
+    created_at = Column(DateTime, default=get_current_time, comment='记录创建时间')
+    updated_at = Column(DateTime, default=get_current_time, onupdate=get_current_time, comment='记录更新时间')
     
     # 表约束和索引
     __table_args__ = (
@@ -139,8 +141,8 @@ class StockPriceWeekly(Base):
     turnover_rate = Column(Numeric(10, 4), nullable=True, comment='换手率(%)')
     
     # 时间戳字段
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
+    created_at = Column(DateTime, default=get_current_time, comment='记录创建时间')
+    updated_at = Column(DateTime, default=get_current_time, onupdate=get_current_time, comment='记录更新时间')
     
     # 表约束和索引
     __table_args__ = (
@@ -177,8 +179,8 @@ class UsStocksName(Base):
     cname = Column(String, nullable=True, comment='中文公司名称，如苹果公司、微软公司，可为空')
 
     # 时间戳字段
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), comment='记录创建时间，UTC时区')
-    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间，UTC时区')
+    created_at = Column(DateTime, nullable=False, default=get_current_time, comment='记录创建时间，使用环境变量时区')
+    updated_at = Column(DateTime, nullable=False, default=get_current_time, onupdate=get_current_time, comment='记录更新时间，使用环境变量时区')
 
     # 表约束和索引配置
     __table_args__ = (
@@ -233,8 +235,8 @@ class StockPrediction(Base):
     reasoning = Column(Text, nullable=True, comment='预测推理说明')
     
     # 时间戳字段
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), comment='记录创建时间')
-    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment='记录更新时间')
+    created_at = Column(DateTime, nullable=False, default=get_current_time, comment='记录创建时间')
+    updated_at = Column(DateTime, nullable=False, default=get_current_time, onupdate=get_current_time, comment='记录更新时间')
     
     # 表约束和索引
     __table_args__ = (

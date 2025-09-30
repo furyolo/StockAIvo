@@ -8,5 +8,9 @@ StockAIvo - 智能美股数据与分析平台
 - 实时数据流和缓存管理
 """
 
+# 在所有模块导入之前配置UTC日志，确保时区一致性
+from stockaivo.logging_config import configure_utc_logging
+configure_utc_logging()
+
 __version__ = "1.0.0"
 __author__ = "StockAIvo Team"

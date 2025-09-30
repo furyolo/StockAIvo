@@ -17,7 +17,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta, date, timezone
+from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Literal, Union, Any, Tuple, Deque
 from enum import Enum
 
@@ -32,7 +32,8 @@ from sqlalchemy.orm import Session
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from .database import get_fullsymbol_from_db  # type: ignore
-from .models import UsStocksName  # type: ignore
+from .models import UsStocksName
+from .timezone_manager import get_current_time  # type: ignore
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -1021,7 +1022,7 @@ class RealTimeQuoteProvider(BaseDataProvider):
             df = self._convert_data_types(df)
 
             # 添加时间戳字段
-            current_time = datetime.now(timezone.utc)
+            current_time = get_current_time()
             df['created_at'] = current_time
             df['updated_at'] = current_time
 
@@ -1778,7 +1779,7 @@ class UsStockNameProvider(BaseDataProvider):
             df = self._convert_data_types(df)
 
             # 添加时间戳字段
-            current_time = datetime.now(timezone.utc)
+            current_time = get_current_time()
             df['created_at'] = current_time
             df['updated_at'] = current_time
 

@@ -299,6 +299,7 @@ async def get_cache_statistics():
 # 应用入口点
 if __name__ == "__main__":
     import uvicorn
+    from stockaivo.logging_config import get_uvicorn_log_config
     
     # 开发环境运行配置
     uvicorn.run(
@@ -306,5 +307,6 @@ if __name__ == "__main__":
         host="127.0.0.1",
         port=8000,
         reload=True,
-        log_level="info"
+        log_level="info",
+        log_config=get_uvicorn_log_config()
     )

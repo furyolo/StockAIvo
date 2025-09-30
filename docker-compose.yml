@@ -30,6 +30,7 @@ services:
       - AI_TECHNICAL_ANALYSIS_MODEL=${AI_TECHNICAL_ANALYSIS_MODEL:-gemini-2.5-pro}
       - AI_SYNTHESIS_MODEL=${AI_SYNTHESIS_MODEL:-gemini-2.5-pro}
       - RUN_DATABASE_MIGRATIONS=${RUN_DATABASE_MIGRATIONS:-true}
+      - TZ=${TZ:-Etc/UTC}
     depends_on:
       redis:
         condition: service_healthy
