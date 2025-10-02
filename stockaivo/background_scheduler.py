@@ -42,7 +42,7 @@ def scheduled_persist_job():
 
     try:
         db_session = next(get_db())
-        logger.info(f"使用数据库会话 {db_session} 执行持久化任务。")
+        logger.info("执行持久化任务")
         result = persist_pending_data(db_session)
 
         if result.get("success"):
@@ -62,25 +62,16 @@ def scheduled_persist_job():
         logger.error(f"在预定的持久化任务中发生错误: {e}", exc_info=True)
     finally:
         if db_session:
-            logger.info(f"关闭数据库会话 {db_session}。")
             db_session.close()
 
         duration = perf_counter() - job_timer
-        summary_payload = {
-            "success": result.get("success"),
-            "processed_count": result.get("processed_count", 0),
-            "failed_count": result.get("failed_count", 0),
-            "pending_count": result.get("pending_count", 0),
-            "cleared_count": result.get("cleared_count", 0),
-            "duration_seconds": result.get("duration_seconds"),
-            "message": result.get("message"),
-        }
-        logger.info(
-            "预定任务结束 - 计划开始时间: %s UTC, 实际耗时: %.2f 秒, 摘要: %s",
-            job_start_utc.strftime("%Y-%m-%dT%H:%M:%S"),
-            duration,
-            summary_payload,
-        )
+        if result.get("success"):
+            logger.info(
+                "持久化任务完成 - 处理: %s 条, 失败: %s 条, 耗时: %.2f 秒",
+                result.get("processed_count", 0),
+                result.get("failed_count", 0),
+                duration,
+            )
 
 
 
