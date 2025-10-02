@@ -486,6 +486,31 @@ class LLMService:
                             # 跳过无法解析的行
                             continue
 
+    def _clean_json_response(self, content: str) -> str:
+        """
+        清理LLM响应中的markdown代码块和其他干扰内容
+        
+        Args:
+            content: 原始响应内容
+            
+        Returns:
+            清理后的JSON字符串
+        """
+        content = content.strip()
+        
+        # 移除 ```json 开头
+        if content.startswith('```json'):
+            content = content[7:].strip()
+        # 移除 ``` 开头
+        elif content.startswith('```'):
+            content = content[3:].strip()
+        
+        # 移除 ``` 结尾
+        if content.endswith('```'):
+            content = content[:-3].strip()
+        
+        return content
+
     async def _invoke_openai_structured(
         self, 
         prompt: str, 
@@ -493,7 +518,7 @@ class LLMService:
         agent_name: Optional[str] = None
     ) -> Union[BaseModel, str]:
         """
-        调用OpenAI兼容API进行结构化输出（带重试机制）
+        调用OpenAI兼容API进行结构化输出(带重试机制)
         """
         # 导入转换工具
         try:
@@ -527,14 +552,17 @@ class LLMService:
                 content = data['choices'][0]['message']['content']
                 logger.info(f"Received structured response from OpenAI API: content_length={len(content)}")
                 
+                # 清理响应内容中的markdown代码块
+                cleaned_content = self._clean_json_response(content)
+                
                 # 解析JSON并创建Pydantic模型实例
                 try:
-                    response_data = json.loads(content)
+                    response_data = json.loads(cleaned_content)
                     structured_response = response_model(**response_data)
                     logger.info(f"Successfully parsed structured response for model: {response_model.__name__}")
                     return structured_response
                 except (json.JSONDecodeError, ValueError) as parse_error:
-                    logger.error(f"解析结构化响应失败: {parse_error}, 原始内容: {content}")
+                    logger.error(f"解析结构化响应失败: {parse_error}, 原始内容: {content[:200]}..., 清理后: {cleaned_content[:200]}...")
                     return f"解析结构化响应失败: {str(parse_error)}"
 
             except httpx.HTTPStatusError as e:
@@ -594,14 +622,17 @@ class LLMService:
                 content = response.candidates[0].content.parts[0].text
                 logger.info(f"Received structured response from Gemini API: content_length={len(content)}")
                 
+                # 清理响应内容中的markdown代码块
+                cleaned_content = self._clean_json_response(content)
+                
                 # 解析JSON并创建Pydantic模型实例
                 try:
-                    response_data = json.loads(content)
+                    response_data = json.loads(cleaned_content)
                     structured_response = response_model(**response_data)
                     logger.info(f"Successfully parsed structured response for model: {response_model.__name__}")
                     return structured_response
                 except (json.JSONDecodeError, ValueError) as parse_error:
-                    logger.error(f"解析结构化响应失败: {parse_error}, 原始内容: {content}")
+                    logger.error(f"解析结构化响应失败: {parse_error}, 原始内容: {content[:200]}..., 清理后: {cleaned_content[:200]}...")
                     return f"解析结构化响应失败: {str(parse_error)}"
             else:
                 logger.warning(f"Gemini structured request returned no content for prompt: '{prompt[:50]}...'")
