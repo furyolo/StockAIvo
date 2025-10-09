@@ -9,9 +9,15 @@ import asyncio
 import logging
 import pandas as pd
 from typing import Dict, Any, Optional, AsyncGenerator, NamedTuple
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta, datetime, timezone
 from stockaivo.data_service import get_stock_data, get_stock_news, PeriodType, get_market_aware_current_date, get_market_aware_minute_date, MarketStateManager
-from stockaivo.cache_manager import _is_market_open
+from stockaivo.cache_manager import (
+    _is_market_open,
+    get_technical_analysis_cache,
+    save_technical_analysis_cache,
+    TechnicalAnalysisCacheEntry,
+    RedisConnectionError,
+)
 from sqlalchemy import select
 from stockaivo.database import get_db
 from stockaivo.models import UsStocksName
@@ -842,39 +848,135 @@ async def technical_analysis_agent(state: GraphState) -> Dict[str, Any]:
     - 分析价格和交易量数据以识别趋势和模式.
     """
     ticker = state.get("ticker", "UNKNOWN")
+    normalized_ticker = ticker.upper()
     print(f"\n=== Technical Analysis Agent: {ticker} ===")
 
     # 优先使用state中的market_analysis，避免重复计算
     market_analysis = state.get("market_analysis")
     if market_analysis is None:
-        # 回退机制：如果state中没有market_analysis，则调用get_market_analysis()
         market_analysis = get_market_analysis()
         print("Warning: Using fallback market analysis in technical_analysis_agent")
 
     market_aware_date = market_analysis.market_aware_date
+    market_aware_date_str = market_aware_date.strftime("%Y%m%d")
     print(f"Technical analysis using market date: {market_aware_date}")
 
-    # 检查是否有任何价格数据可用
+    # 缓存命中检查
+    cache_entry: Optional[TechnicalAnalysisCacheEntry] = None
+    try:
+        cache_entry = get_technical_analysis_cache(normalized_ticker, market_aware_date_str)
+    except RedisConnectionError as e:
+        logger.warning(f"技术分析缓存不可用，降级为直接调用LLM: {e}")
+    except Exception as e:
+        logger.warning(f"技术分析缓存命中检查异常，继续执行LLM: {e}")
+
+    if cache_entry and cache_entry.get("analysis_text"):
+        logger.info(
+            "技术分析缓存命中，直接返回: ticker=%s, market_date=%s",
+            normalized_ticker,
+            market_aware_date_str
+        )
+        metadata = {
+            "ticker": cache_entry.get("ticker", normalized_ticker),
+            "market_aware_date": cache_entry.get("market_aware_date", market_aware_date_str),
+            "generated_at": cache_entry.get("generated_at"),
+            "agent_version": cache_entry.get("agent_version"),
+            "metrics": cache_entry.get("metrics", {}),
+            "cache_status": "hit",
+        }
+        return {
+            "analysis_results": {
+                "technical_analyst": cache_entry["analysis_text"],
+                "technical_analyst_metadata": metadata,
+            }
+        }
+
+    # 缺少行情数据时直接跳过
     raw_data = state.get("raw_data", {})
-    has_any_price_data = any(key in raw_data and raw_data[key] for key in ['daily_prices', 'weekly_prices', 'tenmin_prices'])
-    
+    has_any_price_data = any(
+        key in raw_data and raw_data[key]
+        for key in ['daily_prices', 'weekly_prices', 'tenmin_prices']
+    )
+
     if not has_any_price_data:
         print("缺少所有价格数据（日线、周线、10分钟线），跳过技术分析")
-        return {"analysis_results": {"technical_analyst": None}}
+        metadata = {
+            "ticker": normalized_ticker,
+            "market_aware_date": market_aware_date_str,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "agent_version": "skipped-no-data",
+            "metrics": {"daily": [], "weekly": [], "tenmin": []},
+            "cache_status": "skipped-no-data",
+        }
+        return {"analysis_results": {"technical_analyst": None, "technical_analyst_metadata": metadata}}
 
     # 使用共用函数处理数据
     ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(state)
+    metrics_dict = {
+        "daily": daily_indicators,
+        "weekly": weekly_indicators,
+        "tenmin": tenmin_indicators,
+    }
 
     # 使用共享的prompt构建函数，传递market_aware_date
-    prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators, market_aware_date)
+    prompt = _build_technical_analysis_prompt(
+        ticker,
+        daily_price_str,
+        weekly_price_str,
+        tenmin_price_str,
+        daily_indicators,
+        weekly_indicators,
+        tenmin_indicators,
+        market_aware_date
+    )
+
+    agent_version = get_llm_service().get_model_name_for_agent("technical_analysis_agent")
     analysis_result = await llm_tool.ainvoke({"input_dict": {"prompt": prompt, "agent_name": "technical_analysis_agent"}})
 
     # 检查是否是错误结果
     if _is_llm_error_result(analysis_result):
         print(f"技术分析LLM调用失败: {analysis_result}")
-        return {"analysis_results": {"technical_analyst": analysis_result}}  # 技术分析失败时保留错误信息，因为它是必需的
+        metadata = {
+            "ticker": normalized_ticker,
+            "market_aware_date": market_aware_date_str,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "agent_version": agent_version,
+            "metrics": metrics_dict,
+            "cache_status": "llm_error",
+        }
+        return {"analysis_results": {"technical_analyst": analysis_result, "technical_analyst_metadata": metadata}}
 
-    return {"analysis_results": {"technical_analyst": analysis_result}}
+    generated_at = datetime.now(timezone.utc).isoformat()
+    cache_payload: TechnicalAnalysisCacheEntry = TechnicalAnalysisCacheEntry(
+        ticker=normalized_ticker,
+        market_aware_date=market_aware_date_str,
+        analysis_text=analysis_result,
+        metrics=metrics_dict,
+        generated_at=generated_at,
+        agent_version=agent_version,
+    )
+
+    cache_status = "miss"
+    try:
+        cache_key = save_technical_analysis_cache(cache_payload)
+        if cache_key:
+            cache_status = "miss-cached"
+            logger.info("技术分析结果已写入缓存: %s", cache_key)
+    except RedisConnectionError as e:
+        logger.warning(f"技术分析缓存写入失败（降级）: {e}")
+    except Exception as e:
+        logger.warning(f"技术分析缓存写入过程中出现异常: {e}")
+
+    metadata = {
+        "ticker": normalized_ticker,
+        "market_aware_date": market_aware_date_str,
+        "generated_at": generated_at,
+        "agent_version": agent_version,
+        "metrics": metrics_dict,
+        "cache_status": cache_status,
+    }
+
+    return {"analysis_results": {"technical_analyst": analysis_result, "technical_analyst_metadata": metadata}}
 
 
 async def fundamental_analysis_agent(state: GraphState) -> Dict[str, Any]:
@@ -990,39 +1092,135 @@ async def technical_analysis_agent_stream(state: GraphState) -> AsyncGenerator[D
     技术分析 Agent - 流式版本
     """
     ticker = state.get("ticker", "UNKNOWN")
+    normalized_ticker = ticker.upper()
     print(f"\n=== Technical Analysis Agent (Stream): {ticker} ===")
 
     # 优先使用state中的market_analysis，避免重复计算
     market_analysis = state.get("market_analysis")
     if market_analysis is None:
-        # 回退机制：如果state中没有market_analysis，则调用get_market_analysis()
         market_analysis = get_market_analysis()
         print("Warning: Using fallback market analysis in technical_analysis_agent_stream")
 
     market_aware_date = market_analysis.market_aware_date
+    market_aware_date_str = market_aware_date.strftime("%Y%m%d")
     print(f"Technical analysis (stream) using market date: {market_aware_date}")
+
+    analysis_results = state.setdefault("analysis_results", {})
+
+    # 缓存命中检查
+    cache_entry: Optional[TechnicalAnalysisCacheEntry] = None
+    try:
+        cache_entry = get_technical_analysis_cache(normalized_ticker, market_aware_date_str)
+    except RedisConnectionError as e:
+        logger.warning(f"技术分析流式缓存不可用，降级为直接调用LLM: {e}")
+    except Exception as e:
+        logger.warning(f"技术分析流式缓存命中检查异常: {e}")
+
+    if cache_entry and cache_entry.get("analysis_text"):
+        metadata = {
+            "ticker": cache_entry.get("ticker", normalized_ticker),
+            "market_aware_date": cache_entry.get("market_aware_date", market_aware_date_str),
+            "generated_at": cache_entry.get("generated_at"),
+            "agent_version": cache_entry.get("agent_version"),
+            "metrics": cache_entry.get("metrics", {}),
+            "cache_status": "hit",
+        }
+        analysis_results["technical_analyst"] = cache_entry["analysis_text"]
+        analysis_results["technical_analyst_metadata"] = metadata
+        yield {"analysis_results": {"technical_analyst": cache_entry["analysis_text"], "technical_analyst_metadata": metadata}}
+        return
 
     # 检查是否有任何价格数据可用
     raw_data = state.get("raw_data", {})
-    has_any_price_data = any(key in raw_data and raw_data[key] for key in ['daily_prices', 'weekly_prices', 'tenmin_prices'])
-    
+    has_any_price_data = any(
+        key in raw_data and raw_data[key]
+        for key in ['daily_prices', 'weekly_prices', 'tenmin_prices']
+    )
+
     if not has_any_price_data:
         print("缺少所有价格数据（日线、周线、10分钟线），跳过技术分析")
-        yield {"analysis_results": {"technical_analyst": None}}
+        metadata = {
+            "ticker": normalized_ticker,
+            "market_aware_date": market_aware_date_str,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "agent_version": "skipped-no-data",
+            "metrics": {"daily": [], "weekly": [], "tenmin": []},
+            "cache_status": "skipped-no-data",
+        }
+        analysis_results["technical_analyst"] = None
+        analysis_results["technical_analyst_metadata"] = metadata
+        yield {"analysis_results": {"technical_analyst": None, "technical_analyst_metadata": metadata}}
         return
 
     # 使用共用函数处理数据
     ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators = _process_technical_analysis_data(state)
+    metrics_dict = {
+        "daily": daily_indicators,
+        "weekly": weekly_indicators,
+        "tenmin": tenmin_indicators,
+    }
 
-    # 使用共享的prompt构建函数，传递market_aware_date
-    prompt = _build_technical_analysis_prompt(ticker, daily_price_str, weekly_price_str, tenmin_price_str, daily_indicators, weekly_indicators, tenmin_indicators, market_aware_date)
+    prompt = _build_technical_analysis_prompt(
+        ticker,
+        daily_price_str,
+        weekly_price_str,
+        tenmin_price_str,
+        daily_indicators,
+        weekly_indicators,
+        tenmin_indicators,
+        market_aware_date
+    )
 
-    # 流式生成分析结果
+    agent_version = get_llm_service().get_model_name_for_agent("technical_analysis_agent")
+
     accumulated_result = ""
     async for chunk in get_llm_service().invoke_stream(prompt, "technical_analysis_agent"):
         accumulated_result += chunk
-        # 实时返回累积的结果
+        analysis_results["technical_analyst"] = accumulated_result
         yield {"analysis_results": {"technical_analyst": accumulated_result}}
+
+    if not accumulated_result or _is_llm_error_result(accumulated_result):
+        metadata = {
+            "ticker": normalized_ticker,
+            "market_aware_date": market_aware_date_str,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "agent_version": agent_version,
+            "metrics": metrics_dict,
+            "cache_status": "llm_error" if accumulated_result else "empty",
+        }
+        analysis_results["technical_analyst_metadata"] = metadata
+        return
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    cache_payload: TechnicalAnalysisCacheEntry = TechnicalAnalysisCacheEntry(
+        ticker=normalized_ticker,
+        market_aware_date=market_aware_date_str,
+        analysis_text=accumulated_result,
+        metrics=metrics_dict,
+        generated_at=generated_at,
+        agent_version=agent_version,
+    )
+
+    cache_status = "miss"
+    try:
+        cache_key = save_technical_analysis_cache(cache_payload)
+        if cache_key:
+            cache_status = "miss-cached"
+            logger.info("流式技术分析结果已写入缓存: %s", cache_key)
+    except RedisConnectionError as e:
+        logger.warning(f"流式技术分析缓存写入失败: {e}")
+    except Exception as e:
+        logger.warning(f"流式技术分析缓存写入过程中出现异常: {e}")
+
+    metadata = {
+        "ticker": normalized_ticker,
+        "market_aware_date": market_aware_date_str,
+        "generated_at": generated_at,
+        "agent_version": agent_version,
+        "metrics": metrics_dict,
+        "cache_status": cache_status,
+    }
+    analysis_results["technical_analyst_metadata"] = metadata
 
 
 async def synthesis_agent_stream(state: GraphState) -> AsyncGenerator[Dict[str, Any], None]:

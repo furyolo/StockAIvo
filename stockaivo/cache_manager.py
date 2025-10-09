@@ -7,8 +7,8 @@ import json
 import logging
 import pandas as pd
 import redis
-from typing import Dict, List, Optional, Tuple, Union, Any
-from datetime import datetime, date, timedelta
+from typing import Dict, List, Optional, Tuple, Union, Any, TypedDict
+from datetime import datetime, date, timedelta, timezone
 import os
 import threading
 import hashlib
@@ -22,6 +22,7 @@ class CacheType(Enum):
     PENDING_SAVE = auto()  # 表示数据等待被持久化
     GENERAL_CACHE = auto()  # 表示通用的查询结果缓存
     SEARCH_CACHE = auto()  # 表示搜索结果缓存
+    TECHNICAL_ANALYSIS = auto()  # 表示技术分析结果缓存
 
 # 加载环境变量
 load_dotenv()
@@ -39,7 +40,102 @@ class RedisSerializationError(Exception):
     pass
 
 
-def _is_market_open() -> bool:
+class TechnicalAnalysisCacheEntry(TypedDict):
+    """技术分析缓存数据结构"""
+    ticker: str
+    market_aware_date: str
+    analysis_text: str
+    metrics: Dict[str, List[str]]
+    generated_at: str
+    agent_version: str
+
+
+_NYSE_CALENDAR = None
+
+
+def _get_nyse_calendar():
+    """获取NYSE日历实例，避免重复初始化"""
+    global _NYSE_CALENDAR
+    if _NYSE_CALENDAR is None:
+        _NYSE_CALENDAR = mcal.get_calendar('NYSE')
+    return _NYSE_CALENDAR
+
+
+def _convert_to_et(dt_obj: Any, et_tz) -> datetime:
+    """将任意时间戳转换为美东时区时间"""
+    if isinstance(dt_obj, datetime):
+        dt = dt_obj
+    elif hasattr(dt_obj, 'to_pydatetime'):
+        dt = dt_obj.to_pydatetime()
+    else:
+        dt = datetime.fromisoformat(str(dt_obj))
+
+    if dt.tzinfo is None:
+        return et_tz.localize(dt)
+    return dt.astimezone(et_tz)
+
+
+def _find_next_market_open(now_et: datetime) -> Optional[datetime]:
+    """查找下一次开盘时间，最多向前滚动6周"""
+    nyse = _get_nyse_calendar()
+    et_tz = nyse.tz
+    search_start = now_et.date()
+
+    for _ in range(6):
+        search_end = search_start + timedelta(days=7)
+        schedule = nyse.schedule(start_date=search_start, end_date=search_end)
+        if not schedule.empty:
+            for _, row in schedule.iterrows():
+                market_open = _convert_to_et(row['market_open'], et_tz)
+                if market_open > now_et:
+                    return market_open
+        search_start = search_end + timedelta(days=1)
+
+    return None
+
+
+def _calculate_market_aware_ttl(now_et: Optional[datetime] = None) -> int:
+    """
+    根据市场状态计算技术分析缓存TTL
+
+    - 交易时间内固定180秒
+    - 交易时间外设置为距离下一次开盘的秒数
+    """
+    try:
+        nyse = _get_nyse_calendar()
+        et_tz = nyse.tz
+        current_time = _convert_to_et(now_et, et_tz) if now_et else datetime.now(et_tz)
+        today = current_time.date()
+        schedule = nyse.schedule(start_date=today, end_date=today)
+
+        if not schedule.empty:
+            market_open = _convert_to_et(schedule.iloc[0]['market_open'], et_tz)
+            market_close = _convert_to_et(schedule.iloc[0]['market_close'], et_tz)
+
+            if market_open <= current_time <= market_close:
+                logger.debug("技术分析TTL计算：交易时间内，TTL设为180秒")
+                return 180
+
+            if current_time < market_open:
+                ttl = int((market_open - current_time).total_seconds())
+                logger.debug(f"技术分析TTL计算：开盘前缓存，TTL={ttl}秒")
+                return max(ttl, 1)
+
+        next_open = _find_next_market_open(current_time)
+        if next_open:
+            ttl = int((next_open - current_time).total_seconds())
+            logger.debug(f"技术分析TTL计算：交易时间外，距离下次开盘{ttl}秒")
+            return max(ttl, 1)
+
+        logger.warning("技术分析TTL计算失败，使用退化TTL 600 秒")
+        return 600
+
+    except Exception as e:
+        logger.warning(f"技术分析TTL计算异常: {e}，使用退化TTL 600 秒")
+        return 600
+
+
+def _is_market_open(now_et: Optional[datetime] = None) -> bool:
     """
     判断当前时间是否在美股交易时间内
 
@@ -47,43 +143,28 @@ def _is_market_open() -> bool:
         bool: True表示在交易时间内，False表示不在交易时间内
     """
     try:
-        # 获取NYSE日历和美东时区
-        nyse = mcal.get_calendar('NYSE')
+        nyse = _get_nyse_calendar()
         et_tz = nyse.tz  # 自动处理EST/EDT时区转换
 
-        # 获取当前美东时间
-        now_et = datetime.now(et_tz)
-        current_date_et = now_et.date()
+        current_time = _convert_to_et(now_et, et_tz) if now_et else datetime.now(et_tz)
+        current_date_et = current_time.date()
 
-        # 生成今日的交易时间表
         schedule = nyse.schedule(start_date=current_date_et, end_date=current_date_et)
-
         if schedule.empty:
-            # 今天不是交易日
             return False
 
-        # 获取今日的开盘和收盘时间
-        market_open = schedule.iloc[0]['market_open']
-        market_close = schedule.iloc[0]['market_close']
+        market_open = _convert_to_et(schedule.iloc[0]['market_open'], et_tz)
+        market_close = _convert_to_et(schedule.iloc[0]['market_close'], et_tz)
 
-        # 确保时间使用正确的美东时区
-        if hasattr(market_open, 'tz') and market_open.tz is not None:
-            market_open_et = market_open.tz_convert(et_tz)
-        else:
-            market_open_et = market_open
+        is_open = market_open <= current_time <= market_close
 
-        if hasattr(market_close, 'tz') and market_close.tz is not None:
-            market_close_et = market_close.tz_convert(et_tz)
-        else:
-            market_close_et = market_close
-
-        # 判断当前时间是否在交易时间内
-        is_open = market_open_et <= now_et <= market_close_et
-
-        logger.debug(f"Market status check: current={now_et.strftime('%H:%M:%S')}, "
-                    f"open={market_open_et.strftime('%H:%M:%S')}, "
-                    f"close={market_close_et.strftime('%H:%M:%S')}, "
-                    f"is_open={is_open}")
+        logger.debug(
+            "Market status check: current=%s, open=%s, close=%s, is_open=%s",
+            current_time.strftime('%H:%M:%S'),
+            market_open.strftime('%H:%M:%S'),
+            market_close.strftime('%H:%M:%S'),
+            is_open
+        )
 
         return is_open
 
@@ -216,7 +297,87 @@ class CacheManager:
             error_msg = f"DataFrame反序列化失败: {e}"
             logger.error(error_msg)
             raise RedisSerializationError(error_msg)
-    
+
+    @staticmethod
+    def _normalize_ticker(ticker: str) -> str:
+        """统一Ticker格式为大写"""
+        return ticker.strip().upper()
+
+    @staticmethod
+    def _normalize_market_aware_date(value: Union[str, date]) -> str:
+        """统一市场感知日期格式为YYYYMMDD"""
+        if isinstance(value, date):
+            return value.strftime('%Y%m%d')
+        normalized = value.strip()
+        if len(normalized) == 10 and '-' in normalized:
+            normalized = normalized.replace('-', '')
+        return normalized
+
+    @classmethod
+    def _build_technical_analysis_key(cls, ticker: str, market_aware_date: Union[str, date]) -> str:
+        """构造技术分析缓存键"""
+        normalized_ticker = cls._normalize_ticker(ticker)
+        normalized_date = cls._normalize_market_aware_date(market_aware_date)
+        return f"technical_analysis:{normalized_ticker}:{normalized_date}"
+
+    @staticmethod
+    def _format_generated_at(value: Any) -> str:
+        """将生成时间格式化为易读字符串"""
+        if not value:
+            return "未知"
+
+        try:
+            if isinstance(value, datetime):
+                dt_value = value
+            else:
+                dt_value = datetime.fromisoformat(str(value))
+
+            if dt_value.tzinfo is None:
+                dt_value = dt_value.replace(tzinfo=timezone.utc)
+
+            dt_utc = dt_value.astimezone(timezone.utc)
+            return dt_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+        except Exception:
+            return str(value)
+
+    @staticmethod
+    def _serialize_technical_analysis(payload: TechnicalAnalysisCacheEntry) -> str:
+        """序列化技术分析缓存数据"""
+        try:
+            return json.dumps(payload, ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as e:
+            error_msg = f"技术分析缓存序列化失败: {e}"
+            logger.error(error_msg)
+            raise RedisSerializationError(error_msg)
+
+    @staticmethod
+    def _deserialize_technical_analysis(json_str: str) -> TechnicalAnalysisCacheEntry:
+        """反序列化技术分析缓存数据"""
+        try:
+            data = json.loads(json_str)
+            if not isinstance(data, dict):
+                raise ValueError("技术分析缓存内容格式非法")
+
+            metrics = data.get('metrics') or {}
+            if not isinstance(metrics, dict):
+                metrics = {}
+
+            ticker_value = str(data.get('ticker', '')).strip()
+            market_date_value = str(data.get('market_aware_date', '')).strip()
+
+            return TechnicalAnalysisCacheEntry(
+                ticker=CacheManager._normalize_ticker(ticker_value),
+                market_aware_date=CacheManager._normalize_market_aware_date(market_date_value) if market_date_value else '',
+                analysis_text=str(data.get('analysis_text', '')),
+                metrics={k: list(v) if isinstance(v, (list, tuple)) else [] for k, v in metrics.items()},
+                generated_at=str(data.get('generated_at', '')),
+                agent_version=str(data.get('agent_version', '')),
+            )
+        except Exception as e:
+            error_msg = f"技术分析缓存反序列化失败: {e}"
+            logger.error(error_msg)
+            raise RedisSerializationError(error_msg)
+
     def save_to_redis(self, ticker: str, period: str, data: pd.DataFrame, cache_type: CacheType) -> Optional[str]:
         """
         将股票数据保存到Redis缓存，支持不同类型的缓存。
@@ -337,6 +498,100 @@ class CacheManager:
             return None
         except Exception as e:
             logger.error(f"从Redis获取数据时发生未知错误: {e}")
+            return None
+
+    def save_technical_analysis(self, payload: TechnicalAnalysisCacheEntry) -> Optional[str]:
+        """保存技术分析结果到Redis缓存"""
+        if self.redis_client is None:
+            logger.error("Redis连接未建立")
+            return None
+
+        try:
+            payload_dict = dict(payload)
+            metrics = payload_dict.get('metrics', {})
+            if not isinstance(metrics, dict):
+                metrics = {}
+
+            raw_ticker = payload_dict.get('ticker')
+            ticker_value = str(raw_ticker or '')
+
+            raw_market_aware_date = payload_dict.get('market_aware_date')
+            if isinstance(raw_market_aware_date, date):
+                market_aware_date_value: Union[str, date] = raw_market_aware_date
+            else:
+                market_aware_date_value = str(raw_market_aware_date or '')
+
+            normalized_payload: TechnicalAnalysisCacheEntry = TechnicalAnalysisCacheEntry(
+                ticker=self._normalize_ticker(ticker_value),
+                market_aware_date=self._normalize_market_aware_date(market_aware_date_value),
+                analysis_text=str(payload_dict.get('analysis_text', '')),
+                metrics={k: list(v) if isinstance(v, (list, tuple)) else [] for k, v in metrics.items()},
+                generated_at=str(payload_dict.get('generated_at') or datetime.now(timezone.utc).isoformat()),
+                agent_version=str(payload_dict.get('agent_version', 'unknown')),
+            )
+
+            if not normalized_payload['ticker'] or not normalized_payload['market_aware_date']:
+                logger.warning("技术分析缓存缺少必要字段，放弃缓存")
+                return None
+
+            cache_key = self._build_technical_analysis_key(
+                normalized_payload['ticker'],
+                normalized_payload['market_aware_date']
+            )
+            ttl = _calculate_market_aware_ttl()
+            serialized_value = self._serialize_technical_analysis(normalized_payload)
+
+            self.redis_client.setex(name=cache_key, time=ttl, value=serialized_value)
+            logger.info(
+                "技术分析结果已写入缓存: %s, TTL=%s秒, 模型=%s",
+                cache_key,
+                ttl,
+                normalized_payload['agent_version']
+            )
+            return cache_key
+
+        except RedisSerializationError:
+            return None
+        except redis.RedisError as e:
+            logger.error(f"写入技术分析缓存失败: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"写入技术分析缓存发生未知错误: {e}")
+            return None
+
+    def get_technical_analysis(self, ticker: str, market_aware_date: Union[str, date]) -> Optional[TechnicalAnalysisCacheEntry]:
+        """读取技术分析结果缓存"""
+        if self.redis_client is None:
+            logger.error("Redis连接未建立")
+            return None
+
+        cache_key = self._build_technical_analysis_key(ticker, market_aware_date)
+        try:
+            cached_value = self.redis_client.get(cache_key)
+            if not cached_value:
+                logger.info(f"技术分析缓存未命中: {cache_key}")
+                return None
+
+            entry = self._deserialize_technical_analysis(str(cached_value))
+            logger.info(
+                "技术分析缓存命中: %s, 生成时间=%s",
+                cache_key,
+                self._format_generated_at(entry.get('generated_at'))
+            )
+            return entry
+
+        except RedisSerializationError:
+            try:
+                self.redis_client.delete(cache_key)
+            except Exception:
+                pass
+            logger.warning(f"技术分析缓存内容损坏，已清理键: {cache_key}")
+            return None
+        except redis.RedisError as e:
+            logger.error(f"读取技术分析缓存失败: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"读取技术分析缓存发生未知错误: {e}")
             return None
     
     def get_pending_data_keys(self) -> List[str]:
@@ -739,6 +994,14 @@ def get_from_redis(ticker: str, period: str, cache_type: CacheType) -> Optional[
 def delete_from_redis(key: str) -> bool:
     """从Redis中删除指定的键"""
     return get_cache_manager().delete_from_redis(key)
+
+def save_technical_analysis_cache(payload: TechnicalAnalysisCacheEntry) -> Optional[str]:
+    """保存技术分析缓存（便捷方法）"""
+    return get_cache_manager().save_technical_analysis(payload)
+
+def get_technical_analysis_cache(ticker: str, market_aware_date: Union[str, date]) -> Optional[TechnicalAnalysisCacheEntry]:
+    """获取技术分析缓存（便捷方法）"""
+    return get_cache_manager().get_technical_analysis(ticker, market_aware_date)
 
 def save_search_results(query: str, results: List[Dict[str, Any]],
                        limit: int = 10, offset: int = 0) -> Optional[str]:

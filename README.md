@@ -19,6 +19,7 @@
 - ⚡ **并行分析**：技术分析、基本面分析、新闻情感分析同时执行，**速度提升2-3倍**
 - 🎯 **智能模型配置**：按Agent类型配置专用AI模型（Google Gemini）
 - 📊 **技术指标**：MA、RSI、MACD、布林带、ATR等完整技术分析
+- 🧠 **技术分析缓存**：`technical_analysis:{TICKER}:{marketAwareDate}` Redis 缓存键；交易时段内固定 180 秒 TTL，闭市后 TTL 自动对齐下一次开盘；缓存内容包含分析文本、按周期拆分的指标列表、生成时间戳与 Agent 模型版本；命中直接返回并写入命中日志，Redis 不可用时自动降级为实时 LLM 调用
 - 📈 **流式响应**：SSE 流式输出在本地与容器环境保持一致，Nginx 关闭缓冲确保长文本不被截断
 - 🗞️ **新闻情感**：基于实时新闻的市场情绪评估
 - 🏢 **公司信息增强**：自动获取公司名称，优化分析准确性
@@ -113,6 +114,12 @@ docker logs -f stockaivo-backend-1
 - **SSE 代理优化**：Nginx 上游统一代理 `/api/`，关闭请求/响应缓冲与 gzip，确保流式分析在容器环境不中断。
 - **LLM 服务地址**：容器内默认无法访问宿主 `localhost`，请在 `.env` 中将 `OPENAI_API_BASE` 指向 `http://host.docker.internal:3222/v1`（或对应的服务域名）。
 - **环境变量加载**：`docker-compose` 会自动读取 `.env`，更新后记得 `docker-compose up -d --build` 重新加载。
+
+## 🗂️ 文档与历史任务
+
+- `docs/task-history/`：归档所有已完成的阶段性 TODO 与实施记录，统一采用 `YYYY-MM-主题.md` 命名规范。当前包含 `2025-10-technical-analysis-cache.md`，记录技术分析缓存方案的决策与交付物。
+- 新的迭代仍在仓库根目录维护 `TODO.md`，任务完成后将其迁移至上述目录并按命名规范保存，便于持续追踪。
+- `docs/operations/data-initialization.md`：记录容器环境下的数据初始化流程（启动顺序、健康检查、首批数据导入脚本等），便于运维与新成员快速上手。
 
 ### 🔧 AI模型配置 (可选)
 ```bash
@@ -232,7 +239,7 @@ StockAIvo/
 │   │   ├── AIAnalysis.tsx          # AI分析界面
 │   │   └── ui/                     # shadcn/ui组件库
 │   └── package.json                # 前端依赖 (pnpm)
-├── 🚀 stockaivo/                   # Python 3.12 后端
+├── 🚀 stockaivo/                   # Python 3.13 后端
 │   ├── ai/                         # AI分析引擎
 │   │   ├── agents.py               # 多Agent定义 (含结构化预测Agent)
 │   │   ├── orchestrator.py         # LangGraph编排
