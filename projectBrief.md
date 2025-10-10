@@ -281,7 +281,7 @@ realtime_quotes:{symbol}                       # 实时行情缓存（交易时5
 ##### 技术分析结果缓存（2025年10月新增）
 - 键命名规范：`technical_analysis:{ticker}:{market_aware_date}`，其中日期统一为 `YYYYMMDD`，便于按交易日排序与批量扫描。
 - TTL 策略：交易时段固定 180 秒，闭市后延长至下一次开盘时间；若无法计算交易日历，则回退到 600 秒退化 TTL。
-- 数据内容：序列化保存 `ticker`、`market_aware_date`、`analysis_text`、`metrics`、`generated_at`、`agent_version` 等字段，读写时确保类型安全。
+- 数据内容：序列化保存 `ticker`、`market_aware_date`、`analysis_text`、`generated_at`、`agent_version` 等字段，读写时确保类型安全。
 - 故障降级：Redis 不可用或序列化失败时自动回退至直接调用 AI Agent，同时记录降级告警并跳过缓存写入。
 - 监控改进：命中日志格式化 UTC 时间（如 `2025-10-09 06:57:07 UTC`），便于跨时区比对与审计。
 

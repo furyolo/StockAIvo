@@ -18,19 +18,19 @@ services:
     build: .
     ports:
       - "3224:3224"
+    env_file:
+      - .env
+      - .env.docker
     environment:
-      - DATABASE_URL=${DOCKER_DATABASE_URL}
-      - REDIS_URL=redis://redis:6379/0
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
-      - OPENAI_API_BASE=${OPENAI_API_BASE}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - AI_DEFAULT_MODEL=${AI_DEFAULT_MODEL:-gemini-2.5-flash}
-      - AI_TECHNICAL_ANALYSIS_MODEL=${AI_TECHNICAL_ANALYSIS_MODEL:-gemini-2.5-pro}
-      - AI_SYNTHESIS_MODEL=${AI_SYNTHESIS_MODEL:-gemini-2.5-pro}
-      - RUN_DATABASE_MIGRATIONS=${RUN_DATABASE_MIGRATIONS:-true}
-      - TZ=${TZ:-Etc/UTC}
+      DATABASE_URL: ${DOCKER_DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      RUN_DATABASE_MIGRATIONS: ${RUN_DATABASE_MIGRATIONS:-true}
+      TZ: ${TZ:-Etc/UTC}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy
@@ -51,10 +51,15 @@ services:
       dockerfile: frontend/Dockerfile
     ports:
       - "3223:80"
+    env_file:
+      - frontend/.env.development
+      - frontend/.env.docker
     depends_on:
       - backend
     volumes:
       - ./logs/nginx:/var/log/nginx
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   redis_data:

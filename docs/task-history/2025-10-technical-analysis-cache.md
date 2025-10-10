@@ -19,7 +19,7 @@
 - 配套的开发文档更新（README）。
 
 ## 实施步骤
-- [x] 梳理技术分析 Agent 的输入输出字段，明确需要缓存的结构化内容与关联元数据；输出字段需要纳入 `ticker`、`market_aware_date`、`analysis_text`、`metrics`、`agent_version` 等信息。
+- [x] 梳理技术分析 Agent 的输入输出字段，明确需要缓存的结构化内容与关联元数据；输出字段需要纳入 `ticker`、`market_aware_date`、`analysis_text`、`agent_version` 等信息。
 - [x] 复用 `stockaivo/cache_manager.py` 中的 `_is_market_open` 逻辑，抽象出统一的市场时间窗口与 TTL 计算辅助函数 `_calculate_market_aware_ttl(now_et)`，并给出异常情况下的回退策略。
 - [x] 在 `CacheType` 中新增技术分析缓存枚举，约定 Redis 键格式为 `technical_analysis:{ticker}:{market_aware_date}`，并在实现中对 `ticker` 进行统一大小写处理。
 - [x] 为技术分析结果实现 JSON 序列化与反序列化方法，确保文本、指标字典、时间戳和版本信息可以正确恢复。

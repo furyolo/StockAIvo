@@ -45,7 +45,6 @@ class TechnicalAnalysisCacheEntry(TypedDict):
     ticker: str
     market_aware_date: str
     analysis_text: str
-    metrics: Dict[str, List[str]]
     generated_at: str
     agent_version: str
 
@@ -358,9 +357,9 @@ class CacheManager:
             if not isinstance(data, dict):
                 raise ValueError("技术分析缓存内容格式非法")
 
-            metrics = data.get('metrics') or {}
-            if not isinstance(metrics, dict):
-                metrics = {}
+            # 兼容旧版本缓存中的 metrics 字段，直接忽略
+            if 'metrics' in data:
+                data.pop('metrics', None)
 
             ticker_value = str(data.get('ticker', '')).strip()
             market_date_value = str(data.get('market_aware_date', '')).strip()
@@ -369,7 +368,6 @@ class CacheManager:
                 ticker=CacheManager._normalize_ticker(ticker_value),
                 market_aware_date=CacheManager._normalize_market_aware_date(market_date_value) if market_date_value else '',
                 analysis_text=str(data.get('analysis_text', '')),
-                metrics={k: list(v) if isinstance(v, (list, tuple)) else [] for k, v in metrics.items()},
                 generated_at=str(data.get('generated_at', '')),
                 agent_version=str(data.get('agent_version', '')),
             )
@@ -508,10 +506,7 @@ class CacheManager:
 
         try:
             payload_dict = dict(payload)
-            metrics = payload_dict.get('metrics', {})
-            if not isinstance(metrics, dict):
-                metrics = {}
-
+            payload_dict.pop('metrics', None)
             raw_ticker = payload_dict.get('ticker')
             ticker_value = str(raw_ticker or '')
 
@@ -525,7 +520,6 @@ class CacheManager:
                 ticker=self._normalize_ticker(ticker_value),
                 market_aware_date=self._normalize_market_aware_date(market_aware_date_value),
                 analysis_text=str(payload_dict.get('analysis_text', '')),
-                metrics={k: list(v) if isinstance(v, (list, tuple)) else [] for k, v in metrics.items()},
                 generated_at=str(payload_dict.get('generated_at') or datetime.now(timezone.utc).isoformat()),
                 agent_version=str(payload_dict.get('agent_version', 'unknown')),
             )
