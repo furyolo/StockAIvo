@@ -11,7 +11,7 @@ StockAIvo - SQLAlchemy ORM Models
 
 from datetime import datetime, date
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, cast
 
 from sqlalchemy import Column, String, DateTime, Date, Numeric, BigInteger, Text, ForeignKey, UniqueConstraint, Index, MetaData, TIMESTAMP
 from sqlalchemy.orm import declarative_base, relationship
@@ -211,6 +211,35 @@ class UsStocksName(Base):
 
 
 # StockNews模型已删除 - 新闻数据仅使用Redis缓存，不再持久化到数据库
+
+
+class WellKnownStockSymbol(Base):
+    """
+    常用美股符号字典表
+    存储人工维护的高关注股票代码及其名称，用于一次性静态导入
+
+    特点：
+    - 仅维护 symbol/name 两列，symbol 作为主键且不允许为空
+    - name 可为空，避免 Excel 缺失名称导致入库失败
+    - 通过导入脚本批量同步，更新频率极低
+    """
+    __tablename__ = 'well_known_stock_symbols'
+
+    symbol = Column(String, primary_key=True, nullable=False, comment='股票代码（主键，统一转大写）')
+    name = Column(String, nullable=True, comment='股票名称，可为空以兼容缺失数据')
+    created_at = Column(DateTime, nullable=False, default=get_current_time, comment='记录创建时间')
+    updated_at = Column(DateTime, nullable=False, default=get_current_time, onupdate=get_current_time, comment='记录更新时间')
+
+    __table_args__ = (
+        {'comment': '常用美股符号字典表，源自 well-known US stocks.xlsx，一次性静态导入'},
+    )
+
+    def __repr__(self) -> str:
+        name_value = cast(Optional[str], getattr(self, "name", None))
+        name_display = ""
+        if name_value is not None and name_value.strip():
+            name_display = f", name='{name_value}'"
+        return f"<WellKnownStockSymbol(symbol='{self.symbol}'{name_display})>"
 
 
 class StockPrediction(Base):
