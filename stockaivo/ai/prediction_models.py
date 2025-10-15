@@ -4,7 +4,7 @@
 """
 
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from datetime import date
 
 
@@ -42,17 +42,16 @@ class StockPredictionResult(BaseModel):
         description="预测推理说明，详细解释预测的主要依据，包括技术指标、市场趋势、基本面因素等关键分析要点"
     )
 
-    class Config:
-        """Pydantic配置"""
-        # 生成JSON Schema时包含字段描述
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "prediction_probability": 0.7500,
                 "direction": "UP",
                 "confidence_level": "HIGH",
-                "reasoning": "基于RSI超卖信号、MACD金叉形态和成交量放大，预测短期内股价有较大概率上涨超过3%"
+                "reasoning": "基于RSI超卖信号、MACD金叉形态和成交量放大，预测短期内股价有较大概率上涨超过3%",
             }
         }
+    )
 
 
 class StockPredictionContext(BaseModel):
@@ -68,14 +67,14 @@ class StockPredictionContext(BaseModel):
     trading_days_count: int = Field(..., description="预测时间范围内的交易日数量")
     current_close_price: float = Field(..., description="分析基准日的收盘价")
     
-    class Config:
-        """Pydantic配置"""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "ticker": "AAPL",
                 "market_aware_date": "2024-12-15",
                 "target_date": "2024-12-20",
                 "trading_days_count": 5,
-                "current_close_price": 150.25
+                "current_close_price": 150.25,
             }
         }
+    )

@@ -23,6 +23,7 @@ class CacheType(Enum):
     GENERAL_CACHE = auto()  # 表示通用的查询结果缓存
     SEARCH_CACHE = auto()  # 表示搜索结果缓存
     TECHNICAL_ANALYSIS = auto()  # 表示技术分析结果缓存
+    STRUCTURED_PREDICTION_PENDING = auto()  # 表示结构化预测待持久化
 
 # 加载环境变量
 load_dotenv()
@@ -30,6 +31,8 @@ load_dotenv()
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+PREDICTION_PENDING_TTL_SECONDS = int(os.getenv("PREDICTION_PENDING_TTL_SECONDS", "259200"))  # 默认3天
 
 class RedisConnectionError(Exception):
     """Redis连接异常"""
@@ -47,6 +50,20 @@ class TechnicalAnalysisCacheEntry(TypedDict):
     analysis_text: str
     generated_at: str
     agent_version: str
+
+
+class StructuredPredictionPendingEntry(TypedDict, total=False):
+    """结构化预测待持久化的数据结构"""
+    ticker: str
+    market_aware_date: str
+    target_date: str
+    trading_days_count: int
+    prediction_probability: Optional[float]
+    direction: str
+    confidence_level: str
+    reasoning: Optional[str]
+    prediction_timestamp: str
+    enqueued_at: str
 
 
 _NYSE_CALENDAR = None
@@ -312,12 +329,45 @@ class CacheManager:
             normalized = normalized.replace('-', '')
         return normalized
 
+    @staticmethod
+    def _normalize_iso_date(value: Union[str, date]) -> str:
+        """统一日期格式为 YYYY-MM-DD 字符串"""
+        if isinstance(value, date):
+            return value.strftime('%Y-%m-%d')
+        normalized = str(value).strip()
+        if len(normalized) == 8 and normalized.isdigit():
+            return f"{normalized[0:4]}-{normalized[4:6]}-{normalized[6:8]}"
+        return normalized
+
+    @staticmethod
+    def _normalize_date_compact(value: Union[str, date]) -> str:
+        """统一日期格式为紧凑的 YYYYMMDD 字符串"""
+        if isinstance(value, date):
+            return value.strftime('%Y%m%d')
+        normalized = str(value).strip()
+        if len(normalized) == 10 and '-' in normalized:
+            return normalized.replace('-', '')
+        return normalized
+
     @classmethod
     def _build_technical_analysis_key(cls, ticker: str, market_aware_date: Union[str, date]) -> str:
         """构造技术分析缓存键"""
         normalized_ticker = cls._normalize_ticker(ticker)
         normalized_date = cls._normalize_market_aware_date(market_aware_date)
         return f"technical_analysis:{normalized_ticker}:{normalized_date}"
+
+    @classmethod
+    def _build_prediction_pending_key(
+        cls,
+        ticker: str,
+        market_aware_date: Union[str, date],
+        target_date: Union[str, date],
+    ) -> str:
+        """构造结构化预测待持久化键"""
+        normalized_ticker = cls._normalize_ticker(ticker)
+        market_date_compact = cls._normalize_date_compact(market_aware_date)
+        target_date_compact = cls._normalize_date_compact(target_date)
+        return f"prediction:pending:{normalized_ticker}:{market_date_compact}:{target_date_compact}"
 
     @staticmethod
     def _format_generated_at(value: Any) -> str:
@@ -373,6 +423,39 @@ class CacheManager:
             )
         except Exception as e:
             error_msg = f"技术分析缓存反序列化失败: {e}"
+            logger.error(error_msg)
+            raise RedisSerializationError(error_msg)
+
+    @staticmethod
+    def _deserialize_prediction_pending(json_str: str) -> StructuredPredictionPendingEntry:
+        """反序列化结构化预测待持久化数据"""
+        try:
+            raw_data = json.loads(json_str)
+            if not isinstance(raw_data, dict):
+                raise ValueError("结构化预测待持久化缓存格式非法")
+
+            ticker = CacheManager._normalize_ticker(str(raw_data.get("ticker", "")))
+            market_date = CacheManager._normalize_iso_date(raw_data.get("market_aware_date", ""))
+            target_date = CacheManager._normalize_iso_date(raw_data.get("target_date", ""))
+
+            if not ticker or not market_date or not target_date:
+                raise ValueError("结构化预测待持久化数据缺少必要字段")
+
+            payload: StructuredPredictionPendingEntry = StructuredPredictionPendingEntry(
+                ticker=ticker,
+                market_aware_date=market_date,
+                target_date=target_date,
+                trading_days_count=int(raw_data.get("trading_days_count", 0)),
+                prediction_probability=raw_data.get("prediction_probability"),
+                direction=str(raw_data.get("direction", "")).upper(),
+                confidence_level=str(raw_data.get("confidence_level", "")).upper(),
+                reasoning=raw_data.get("reasoning"),
+                prediction_timestamp=str(raw_data.get("prediction_timestamp", "")),
+                enqueued_at=str(raw_data.get("enqueued_at", "")),
+            )
+            return payload
+        except Exception as e:
+            error_msg = f"结构化预测待持久化数据反序列化失败: {e}"
             logger.error(error_msg)
             raise RedisSerializationError(error_msg)
 
@@ -587,6 +670,128 @@ class CacheManager:
         except Exception as e:
             logger.error(f"读取技术分析缓存发生未知错误: {e}")
             return None
+
+    def save_structured_prediction_pending(self, payload: StructuredPredictionPendingEntry) -> Optional[str]:
+        """保存结构化预测待持久化数据到Redis"""
+        if self.redis_client is None:
+            logger.error("Redis连接未建立")
+            return None
+
+        try:
+            ticker = self._normalize_ticker(payload.get("ticker", ""))
+            market_date_raw = payload.get("market_aware_date")
+            target_date_raw = payload.get("target_date")
+
+            if not ticker or not market_date_raw or not target_date_raw:
+                logger.warning("结构化预测待持久化数据缺少必要字段，放弃写入")
+                return None
+
+            pending_key = self._build_prediction_pending_key(ticker, market_date_raw, target_date_raw)
+
+            normalized_payload: StructuredPredictionPendingEntry = StructuredPredictionPendingEntry(
+                ticker=ticker,
+                market_aware_date=self._normalize_iso_date(market_date_raw),
+                target_date=self._normalize_iso_date(target_date_raw),
+                trading_days_count=int(payload.get("trading_days_count", 0)),
+                prediction_probability=payload.get("prediction_probability"),
+                direction=str(payload.get("direction", "")).upper(),
+                confidence_level=str(payload.get("confidence_level", "")).upper(),
+                reasoning=payload.get("reasoning"),
+                prediction_timestamp=str(payload.get("prediction_timestamp") or datetime.now(timezone.utc).isoformat()),
+                enqueued_at=str(payload.get("enqueued_at") or datetime.now(timezone.utc).isoformat()),
+            )
+
+            serialized_value = json.dumps(normalized_payload, ensure_ascii=False, default=str)
+            previous_exists = bool(self.redis_client.exists(pending_key))
+
+            self.redis_client.setex(
+                name=pending_key,
+                time=PREDICTION_PENDING_TTL_SECONDS,
+                value=serialized_value,
+            )
+
+            logger.info(
+                "结构化预测待持久化已写入Redis: %s (覆盖=%s)",
+                pending_key,
+                previous_exists,
+            )
+            return pending_key
+
+        except redis.RedisError as e:
+            logger.error(f"写入结构化预测待持久化失败: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"保存结构化预测待持久化发生未知错误: {e}")
+            return None
+
+    def get_structured_prediction_pending(self) -> List[Tuple[str, StructuredPredictionPendingEntry]]:
+        """获取全部结构化预测待持久化数据"""
+        if self.redis_client is None:
+            logger.error("Redis连接未建立")
+            return []
+
+        try:
+            pattern = "prediction:pending:*"
+            keys_result = self.redis_client.keys(pattern)
+            pending_keys = keys_result if isinstance(keys_result, list) else list(keys_result) if keys_result else []  # type: ignore
+
+            if not pending_keys:
+                logger.debug("未发现结构化预测待持久化数据")
+                return []
+
+            results: List[Tuple[str, StructuredPredictionPendingEntry]] = []
+            broken_keys: List[str] = []
+
+            for key in pending_keys:
+                try:
+                    serialized = self.redis_client.get(key)
+                    if serialized is None:
+                        logger.debug("结构化预测待持久化键已过期: %s", key)
+                        continue
+                    payload = self._deserialize_prediction_pending(str(serialized))
+                    results.append((key, payload))
+                except RedisSerializationError as e:
+                    logger.error("结构化预测待持久化数据解析失败 %s: %s", key, e)
+                    broken_keys.append(key)
+                except Exception as e:
+                    logger.error("处理结构化预测待持久化键时发生错误 %s: %s", key, e)
+                    broken_keys.append(key)
+
+            if broken_keys:
+                try:
+                    self.redis_client.delete(*broken_keys)
+                    logger.info("清理了 %d 个损坏的结构化预测待持久化键", len(broken_keys))
+                except Exception as cleanup_error:
+                    logger.error("清理损坏的结构化预测待持久化键失败: %s", cleanup_error)
+
+            return results
+
+        except redis.RedisError as e:
+            logger.error(f"扫描结构化预测待持久化数据失败: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"获取结构化预测待持久化数据时发生未知错误: {e}")
+            return []
+
+    def delete_structured_prediction_pending(self, key: str) -> bool:
+        """删除指定的结构化预测待持久化键"""
+        if self.redis_client is None:
+            logger.error("Redis连接未建立")
+            return False
+
+        try:
+            result = self.redis_client.delete(key)
+            if result:
+                logger.info("已移除结构化预测待持久化键: %s", key)
+                return True
+            logger.warning("尝试删除不存在的结构化预测待持久化键: %s", key)
+            return False
+        except redis.RedisError as e:
+            logger.error(f"删除结构化预测待持久化键失败 {key}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"删除结构化预测待持久化键发生未知错误 {key}: {e}")
+            return False
     
     def get_pending_data_keys(self) -> List[str]:
         """
@@ -600,9 +805,21 @@ class CacheManager:
             return []
         
         try:
-            pattern = "pending_save:*"
-            keys_result = self.redis_client.keys(pattern)
-            return keys_result if isinstance(keys_result, list) else list(keys_result) if keys_result else [] # type: ignore
+            patterns = ["pending_save:*", "prediction:pending:*"]
+            all_keys: List[str] = []
+            for pattern in patterns:
+                keys_result = self.redis_client.keys(pattern)
+                if isinstance(keys_result, list):
+                    all_keys.extend(keys_result)
+                elif keys_result:
+                    all_keys.extend(list(keys_result))  # type: ignore
+
+            if not all_keys:
+                return []
+
+            # 去重并按照字典序排序，方便日志和调度
+            unique_keys = sorted(set(all_keys))
+            return unique_keys
         except redis.RedisError as e:
             logger.error(f"扫描Redis键时出错: {e}")
             return []
@@ -758,10 +975,15 @@ class CacheManager:
             return {"error": "Redis连接未建立"}
         
         try:
-            pattern = "pending_save:*"
-            keys_result = self.redis_client.keys(pattern)
-            pending_keys = keys_result if isinstance(keys_result, list) else list(keys_result) if keys_result else []  # type: ignore
-            
+            patterns = ["pending_save:*", "prediction:pending:*"]
+            pending_keys: List[str] = []
+            for pattern in patterns:
+                keys_result = self.redis_client.keys(pattern)
+                if isinstance(keys_result, list):
+                    pending_keys.extend(keys_result)
+                elif keys_result:
+                    pending_keys.extend(list(keys_result))  # type: ignore
+
             stats: Dict[str, Union[int, str]] = {
                 "total_pending": len(pending_keys),
                 "memory_usage": 0
@@ -996,6 +1218,18 @@ def save_technical_analysis_cache(payload: TechnicalAnalysisCacheEntry) -> Optio
 def get_technical_analysis_cache(ticker: str, market_aware_date: Union[str, date]) -> Optional[TechnicalAnalysisCacheEntry]:
     """获取技术分析缓存（便捷方法）"""
     return get_cache_manager().get_technical_analysis(ticker, market_aware_date)
+
+def save_structured_prediction_pending_cache(payload: StructuredPredictionPendingEntry) -> Optional[str]:
+    """保存结构化预测待持久化缓存"""
+    return get_cache_manager().save_structured_prediction_pending(payload)
+
+def get_structured_prediction_pending_cache() -> List[Tuple[str, StructuredPredictionPendingEntry]]:
+    """获取结构化预测待持久化缓存"""
+    return get_cache_manager().get_structured_prediction_pending()
+
+def delete_structured_prediction_pending_cache(key: str) -> bool:
+    """删除结构化预测待持久化缓存"""
+    return get_cache_manager().delete_structured_prediction_pending(key)
 
 def save_search_results(query: str, results: List[Dict[str, Any]],
                        limit: int = 10, offset: int = 0) -> Optional[str]:

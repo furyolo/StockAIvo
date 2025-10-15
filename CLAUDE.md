@@ -247,12 +247,16 @@ SQLAlchemy 2.0数据模型定义：
 - `/stocks/{ticker}/news`: 股票新闻数据获取 (Redis缓存)
 - `/ai/analyze-parallel`: 并行AI分析 (推荐，速度提升2-3倍)
 - `/ai/analyze-sequential`: 顺序AI分析
+- `/ai/predict-structured`: 单票结构化概率预测
+- `/ai/predict-structured/batch`: 批量结构化预测（并发控制 + 多源限流）
 - `/search/stocks?q=keyword`: 股票搜索和建议
 - `/search/stocks/suggestions?q=keyword`: 实时搜索建议
 - `/stocks/realtime-quotes/update`: 更新实时行情数据
 - `/stocks/us-stock-names/update`: 更新美股名称数据
 - `/health`: 系统健康检查
 - `/cache-stats`: 缓存统计信息
+
+> 批量结构化预测端点会在路由层创建 `asyncio.Semaphore` 并通过 `stockaivo.dependencies.get_batch_prediction_rate_limiter()` 获取令牌桶限流器，同步控制 Tickertick、AKShare 与 AI 请求频率；成功结果写入 Redis `prediction:pending:{ticker}:{marketDate}:{targetDate}`，再由 `persist_pending_data` 定时入库。详细流程请参考 `docs/operations/batch-prediction-guide.md`。
 
 #### 数据管理API示例
 ```bash
@@ -271,6 +275,22 @@ curl -X POST "http://127.0.0.1:8000/ai/analyze-parallel" \
 curl -X POST "http://127.0.0.1:8000/ai/analyze-parallel" \
   -H "Content-Type: application/json" \
   -d '{"summary": "分析股票 AAPL", "value": {"ticker": "AAPL", "end_date": "2024-12-31"}}'
+
+# 单票结构化预测
+curl -X POST "http://127.0.0.1:8000/ai/predict-structured" \
+  -H "Content-Type: application/json" \
+  -d '{"ticker": "AAPL", "end_date": "2025-01-10"}'
+
+# 批量结构化预测（含限流控制）
+curl -X POST "http://127.0.0.1:8000/ai/predict-structured/batch" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "tickers": ["AAPL", "MSFT", "TSLA"],
+        "save_to_db": true,
+        "max_concurrency": 3,
+        "max_retries": 1,
+        "retry_delay_seconds": 5.0
+      }'
 ```
 
 #### 统一响应格式

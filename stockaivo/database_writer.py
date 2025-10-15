@@ -13,8 +13,15 @@ from sqlalchemy.dialects.postgresql import insert
 from datetime import datetime, date
 
 from . import database
-from .models import StockPriceDaily, StockPriceWeekly, StockSymbols, UsStocksName
-from .cache_manager import get_pending_data_from_redis, clear_saved_data, delete_from_redis
+from .models import StockPrediction, StockPriceDaily, StockPriceWeekly, StockSymbols, UsStocksName
+from .cache_manager import (
+    get_pending_data_from_redis,
+    clear_saved_data,
+    delete_from_redis,
+    get_structured_prediction_pending_cache,
+    delete_structured_prediction_pending_cache,
+    StructuredPredictionPendingEntry,
+)
 from .timezone_manager import get_current_time
 
 # 配置日志
@@ -332,6 +339,56 @@ class DatabaseWriter:
 
         logger.info(f"准备美股名称数据完成，有效记录数: {len(name_data)}")
         return name_data
+
+    def _parse_iso_to_date(self, value: Union[str, date]) -> date:
+        """将任意字符串或日期转换为日期对象"""
+        if isinstance(value, date):
+            return value
+
+        value_str = str(value).strip()
+        if not value_str:
+            raise ValueError("日期字段不能为空")
+
+        if len(value_str) == 8 and value_str.isdigit():
+            return datetime.strptime(value_str, "%Y%m%d").date()
+
+        return datetime.fromisoformat(value_str).date()
+
+    def _prepare_prediction_record(
+        self,
+        payload: StructuredPredictionPendingEntry,
+    ) -> StockPrediction:
+        """根据待持久化结构化预测数据构建 ORM 实体"""
+        market_date_raw = payload.get("market_aware_date")
+        target_date_raw = payload.get("target_date")
+        ticker = payload.get("ticker")
+
+        if market_date_raw is None:
+            raise ValueError("结构化预测待持久化数据缺少 market_aware_date 字段")
+        if target_date_raw is None:
+            raise ValueError("结构化预测待持久化数据缺少 target_date 字段")
+        if not ticker:
+            raise ValueError("结构化预测待持久化数据缺少 ticker 字段")
+
+        market_date = self._parse_iso_to_date(market_date_raw)
+        target_date = self._parse_iso_to_date(target_date_raw)
+
+        probability_value = payload.get("prediction_probability")
+        if probability_value is not None:
+            probability_value = float(probability_value)
+
+        record = StockPrediction(
+            ticker=ticker,
+            market_aware_date=market_date,
+            target_date=target_date,
+            trading_days_count=int(payload.get("trading_days_count", 0)),
+            prediction_probability=probability_value,
+            direction=payload.get("direction") or "UNKNOWN",
+            confidence_level=payload.get("confidence_level") or "UNKNOWN",
+            reasoning=payload.get("reasoning") or "",
+        )
+
+        return record
 
     def _safe_convert_to_decimal(self, value) -> Optional[float]:
         """安全转换为decimal类型"""
@@ -695,6 +752,8 @@ class DatabaseWriter:
             'details': [],
             'errors': [],
             'pending_count': 0,
+            'pending_prediction_count': 0,
+            'prediction_processed_count': 0,
         }
         start_timer = perf_counter()
         
@@ -704,17 +763,23 @@ class DatabaseWriter:
             pending_data = get_pending_data_from_redis()
             pending_total = len(pending_data) if pending_data else 0
             result['pending_count'] = pending_total
+            prediction_entries = get_structured_prediction_pending_cache()
+            result['pending_prediction_count'] = len(prediction_entries)
             
-            if not pending_data:
-                logger.info("Redis中没有待处理数据")
+            if not pending_data and not prediction_entries:
+                logger.info("Redis中没有任何待持久化数据")
                 result['message'] = "没有待处理的数据"
                 result['duration_seconds'] = round(perf_counter() - start_timer, 3)
                 return result
             
-            logger.info(f"从Redis获取到 {pending_total} 个待处理数据条目")
+            if pending_data:
+                logger.info(f"从Redis获取到 {pending_total} 个待处理数据条目")
+            if prediction_entries:
+                logger.info("结构化预测待持久化条目数: %d", len(prediction_entries))
             
             # 2. 按ticker分组处理数据
             processed_keys: List[Tuple[str, str]] = []
+            processed_prediction_keys: List[str] = []
 
             for ticker, period, dataframe in pending_data:
                 try:
@@ -769,14 +834,49 @@ class DatabaseWriter:
                         logger.info(f"成功处理数据: {ticker}_{period}, 处理行数: {processed_rows}")
                 
                 except Exception as e:
-                    logger.error(f"处理数据失败 {ticker}_{period}: {e}")
+                        logger.error(f"处理数据失败 {ticker}_{period}: {e}")
+                        result['failed_count'] += 1
+                        result['errors'].append({
+                            'ticker': ticker,
+                            'period': period,
+                            'error': str(e)
+                        })
+                        # 发生错误时回滚当前事务
+                        db.rollback()
+                        continue
+            
+            for key, payload in prediction_entries:
+                try:
+                    with db.begin():
+                        prediction_record = self._prepare_prediction_record(payload)
+                        db.merge(prediction_record)
+
+                        result['prediction_processed_count'] += 1
+                        result['details'].append({
+                            'ticker': prediction_record.ticker,
+                            'period': 'structured_prediction',
+                            'rows_processed': 1,
+                            'status': 'success',
+                            'market_aware_date': prediction_record.market_aware_date.isoformat(),
+                            'target_date': prediction_record.target_date.isoformat(),
+                        })
+                        processed_prediction_keys.append(key)
+
+                        logger.info(
+                            "成功处理结构化预测数据: %s (%s -> %s)",
+                            prediction_record.ticker,
+                            prediction_record.market_aware_date.isoformat(),
+                            prediction_record.target_date.isoformat(),
+                        )
+                except Exception as e:
+                    logger.error("处理结构化预测数据失败 %s: %s", key, e)
                     result['failed_count'] += 1
                     result['errors'].append({
-                        'ticker': ticker,
-                        'period': period,
-                        'error': str(e)
+                        'ticker': payload.get('ticker', 'unknown'),
+                        'period': 'structured_prediction',
+                        'error': str(e),
+                        'redis_key': key,
                     })
-                    # 发生错误时回滚当前事务
                     db.rollback()
                     continue
             
@@ -791,10 +891,18 @@ class DatabaseWriter:
                         cleared_count += 1
                 except Exception as e:
                     logger.error(f"清除Redis数据失败 {ticker}_{period}: {e}")
+
+            for key in processed_prediction_keys:
+                try:
+                    if delete_structured_prediction_pending_cache(key):
+                        cleared_count += 1
+                except Exception as e:
+                    logger.error("清除结构化预测待持久化键失败 %s: %s", key, e)
             
             logger.info(f"清除了 {cleared_count} 个Redis缓存条目")
             
-            result['message'] = f"成功处理 {result['processed_count']} 条记录，失败 {result['failed_count']} 条"
+            total_processed = result['processed_count'] + result['prediction_processed_count']
+            result['message'] = f"成功处理 {total_processed} 条记录，失败 {result['failed_count']} 条"
             result['cleared_count'] = cleared_count
             result['duration_seconds'] = round(perf_counter() - start_timer, 3)
             logger.info(result['message'])

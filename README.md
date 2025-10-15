@@ -145,6 +145,7 @@ AI_SYNTHESIS_MODEL="gemini-2.5-pro"             # 综合分析专用
 | **AI分析**   | `POST /ai/analyze-parallel`            | **并行AI分析（推荐）** |
 |              | `POST /ai/analyze-sequential`          | 顺序AI分析             |
 |              | `POST /ai/predict-structured`          | **结构化概率预测**     |
+|              | `POST /ai/predict-structured/batch`    | 批量结构化预测（并发控制） |
 | **数据管理** | `POST /stocks/realtime-quotes/update`  | 更新实时行情数据       |
 |              | `POST /stocks/us-stock-names/update`   | 更新美股名称数据       |
 | **系统监控** | `GET /health`                          | 健康检查               |
@@ -193,6 +194,29 @@ curl -X POST "http://127.0.0.1:8000/ai/predict-structured" \
 - **direction**: 预测方向（UP/DOWN），基于多Agent分析综合判断
 - **confidence_level**: 置信度等级（HIGH/MEDIUM/LOW），反映预测可靠性
 - **reasoning**: 详细推理过程，解释概率计算依据和关键信号
+
+### 🧵 批量结构化预测 API
+
+- **端点**：`POST /ai/predict-structured/batch`
+- **适用场景**：需要一次性处理多只股票的结构化预测，同时自动控制 Tickertick、AKShare 与 LLM 调用速率。
+- **关键特性**：
+  - 请求体支持 `tickers`、`max_concurrency`、`max_retries`、`retry_delay_seconds` 等控制参数；
+  - 后端使用 `asyncio.Semaphore` 与 `RateLimiter` 组件串联多源限流，并输出每只股票的耗时、重试与错误原因；
+  - 成功结果会写入 Redis `prediction:pending:*`，随后由定时任务落库。
+
+```bash
+curl -X POST "http://127.0.0.1:8000/ai/predict-structured/batch" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "tickers": ["AAPL", "MSFT", "TSLA"],
+        "save_to_db": true,
+        "max_concurrency": 3,
+        "max_retries": 1,
+        "retry_delay_seconds": 5.0
+      }'
+```
+
+> 📘 完整操作流程、环境变量说明与故障排查请参考 `docs/operations/batch-prediction-guide.md`。
 
 #### ⚡ 智能特性
 - **多维度分析**：整合技术分析、基本面分析、新闻情感的综合信号
@@ -291,6 +315,23 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 
 ## 📋 版本历史
 
+### 🚀 v3.1.1 (2025-10) - 批量结构化预测与限流控制系统
+**批量异步调用系统完整实现**
+- 🔄 **结构化预测核心服务抽象**：将单票流程下沉为可复用协程，支持独立调用和测试
+- ⚡ **批量结构化预测 API**：新增 `POST /ai/predict-structured/batch` 端点，支持多股票并发处理，内置并发控制与失败重试机制
+- 📦 **Redis 待持久化机制**：实现 `prediction:pending:*` 缓存键结构，支持批量入库和去重逻辑
+- 🛡️ **多源限流组件**：令牌桶限流器，支持 Tickertick/AKShare/AI 多桶控制与全局并发管理
+- 🧪 **完整测试覆盖**：新增批量预测、限流器、CLI 脚本等相关单元测试和集成测试
+- 📋 **CLI 批量预测工具**：提供 `bulk_predict_from_db.py` 脚本，支持从 well_known_stock_symbols 表批量读取和预测
+- 📚 **操作文档完善**：新增 `docs/operations/batch-prediction-guide.md` 操作指南，包含本地与 Docker 运行说明
+
+### 🎲 v3.1.0 (2025-10) - Well-known Stock Symbols 数据导入与批量预测任务规划
+**知名股票符号数据库导入系统**
+- 📊 **Well-known Stock Symbols 数据导入**：建立完整的知名美股符号数据库，支持批量导入和管理
+- 🎯 **批量预测任务规划**：制定详细的批量结构化预测异步调用系统实施计划
+- 📋 **任务拆解与规划**：将复杂的批量系统拆分为 6 个独立任务，每个任务 1-2 日粒度
+- 🏗️ **系统架构设计**：设计多源限流、并发控制、Redis 持久化等核心组件架构
+- 📚 **文档体系完善**：建立完整的操作指南和任务历史记录体系
 ### 🎲 v3.0.0 (2025-09) - 结构化预测与UI架构升级
 **AI分析系统增强**
 - 🚀 **结构化预测Agent**：基于多维分析生成概率化股价预测，支持量化投资决策

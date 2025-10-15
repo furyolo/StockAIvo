@@ -7,7 +7,7 @@ from datetime import datetime
 from datetime import date as DateType
 from decimal import Decimal
 from typing import List, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class StockPriceBase(BaseModel):
@@ -25,20 +25,17 @@ class StockPriceBase(BaseModel):
     price_change: Optional[Decimal] = Field(None, description="涨跌额")
     turnover_rate: Optional[Decimal] = Field(None, description="换手率(%)")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StockPriceDaily(StockPriceBase):
     """日线数据模型"""
     date: DateType = Field(..., description="日期")
-    model_config = {"json_encoders": {DateType: lambda d: d.strftime('%Y-%m-%d')}}
 
 
 class StockPriceWeekly(StockPriceBase):
     """周线数据模型"""
     date: DateType = Field(..., description="周开始日期")
-    model_config = {"json_encoders": {DateType: lambda d: d.strftime('%Y-%m-%d')}}
 
 
 class StockPrice10Min(StockPriceBase):
@@ -60,8 +57,7 @@ class StockDataResponse(BaseModel):
     data: List[Union[StockPriceDaily, StockPriceWeekly, StockPrice10Min, StockPriceMinute]] = Field(..., description="股票数据列表")
     timestamp: datetime = Field(..., description="响应时间戳")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ErrorResponse(BaseModel):
@@ -77,8 +73,7 @@ class SearchResult(BaseModel):
     cname: Optional[str] = Field(None, description="中文公司名称", max_length=200)
     relevance_score: float = Field(..., description="相关性评分", ge=0.0, le=1.0)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SearchResponse(BaseModel):
@@ -89,8 +84,7 @@ class SearchResponse(BaseModel):
     has_more: bool = Field(..., description="是否还有更多结果")
     timestamp: datetime = Field(..., description="响应时间戳")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StockNewsItem(BaseModel):
@@ -100,8 +94,7 @@ class StockNewsItem(BaseModel):
     publish_time: datetime = Field(..., description="发布时间（美国东部时间）")
     content: Optional[str] = Field(None, description="新闻内容摘要")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StockNewsResponse(BaseModel):
@@ -113,5 +106,127 @@ class StockNewsResponse(BaseModel):
     timestamp: datetime = Field(..., description="响应时间戳")
     message: Optional[str] = Field(None, description="响应消息")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StructuredPredictionBatchRequest(BaseModel):
+    """批量结构化预测请求模型"""
+    tickers: List[str] = Field(
+        ...,
+        min_length=1,
+        description="待预测的股票代码列表，至少包含1个元素",
+    )
+    end_date: Optional[DateType] = Field(
+        None,
+        description="可选的统一结束日期 (YYYY-MM-DD)，为空时按系统日期自动推算",
+    )
+    save_to_db: bool = Field(True, description="是否将每只股票的预测结果保存到数据库")
+    max_concurrency: int = Field(
+        3,
+        ge=1,
+        le=10,
+        description="处理并发度上限，建议范围 1-5，用于控制 AI/数据源请求并发",
+    )
+    max_retries: int = Field(
+        0,
+        ge=0,
+        le=5,
+        description="单只股票失败后的最大重试次数（不含首次尝试）",
+    )
+    retry_delay_seconds: float = Field(
+        5.0,
+        ge=0.0,
+        le=120.0,
+        description="重试前的等待时间（秒），用于指数退避基础值",
+    )
+
+
+class StructuredPredictionRequest(BaseModel):
+    """结构化预测请求模型"""
+    ticker: str = Field(..., description="股票代码，例如 'AAPL'")
+    end_date: Optional[DateType] = Field(
+        None,
+        description="自定义结束日期 (YYYY-MM-DD)，开始日期由系统自动推算",
+    )
+    save_to_db: bool = Field(True, description="是否将预测结果保存到数据库")
+
+
+class StructuredPredictionResponse(BaseModel):
+    """结构化预测响应模型"""
+    success: bool = Field(..., description="预测是否成功")
+    prediction_probability: Optional[float] = Field(
+        None,
+        description="预测概率值，范围 0.0-1.0",
+        ge=0.0,
+        le=1.0,
+    )
+    direction: Optional[str] = Field(None, description="预测方向：UP 或 DOWN")
+    confidence_level: Optional[str] = Field(
+        None,
+        description="预测置信度：HIGH、MEDIUM 或 LOW",
+    )
+    reasoning: Optional[str] = Field(None, description="预测推理说明")
+    ticker: str = Field(..., description="股票代码")
+    timestamp: str = Field(..., description="预测生成时间（ISO8601）")
+    market_aware_date: Optional[str] = Field(
+        None,
+        description="市场感知日期（ISO8601）",
+    )
+    error: Optional[str] = Field(None, description="错误信息（若失败）")
+
+
+class NestedStructuredPredictionRequest(BaseModel):
+    """嵌套结构化预测请求模型（兼容表单/前端配置）"""
+    summary: str = Field(..., description="请求摘要说明")
+    value: StructuredPredictionRequest = Field(
+        ...,
+        description="结构化预测请求明细",
+    )
+
+
+class StructuredPredictionBatchItem(BaseModel):
+    """批量结构化预测结果单项"""
+    ticker: str = Field(..., description="股票代码")
+    success: bool = Field(..., description="该股票预测是否成功")
+    latency_seconds: float = Field(
+        ...,
+        ge=0.0,
+        description="完成预测耗时（秒，包括重试等待）",
+    )
+    retries: int = Field(..., ge=0, description="实际重试次数")
+    response: Optional[StructuredPredictionResponse] = Field(
+        None,
+        description="成功时的结构化预测结果载荷",
+    )
+    error: Optional[str] = Field(
+        None,
+        description="失败原因说明，成功时为空",
+    )
+
+
+class StructuredPredictionBatchSummary(BaseModel):
+    """批量结构化预测汇总信息"""
+    total: int = Field(..., ge=0, description="请求处理的股票总数")
+    success: int = Field(..., ge=0, description="成功的股票数量")
+    failed: int = Field(..., ge=0, description="失败的股票数量")
+    duration_seconds: float = Field(
+        ...,
+        ge=0.0,
+        description="批量处理总耗时（秒）",
+    )
+
+
+class StructuredPredictionBatchResponse(BaseModel):
+    """批量结构化预测响应模型"""
+    results: List[StructuredPredictionBatchItem] = Field(
+        ...,
+        description="每只股票的结构化预测结果明细",
+    )
+    summary: StructuredPredictionBatchSummary = Field(
+        ...,
+        description="批量任务的整体汇总信息",
+    )
+    failed_tickers: List[str] = Field(
+        ...,
+        description="预测失败的股票代码列表（无失败时为空）",
+    )

@@ -136,15 +136,18 @@ POST /stocks/us-stock-names/update  # 更新美股名称数据
 POST /ai/analyze-parallel          # 并行AI分析（推荐，速度提升2-3倍）
 POST /ai/analyze-sequential        # 顺序AI分析（兼容模式）
 POST /ai/predict-structured        # 结构化概率预测
+POST /ai/predict-structured/batch  # 批量结构化预测（并发控制 + 多源限流）
 ```
 
 **特性**：
 - **并行分析模式**：技术分析、基本面分析、新闻情感分析同时执行
 - **执行依赖控制**：综合分析仅在技术分析成功时执行，确保分析质量
 - **结构化预测**：基于多维分析生成概率化股价预测，包含方向、概率值、置信度
+- **批量处理链路**：批量端点使用 `asyncio.Semaphore` + `RateLimiter` 控制 Tickertick、AKShare 与 LLM 速率，将成功结果写入 Redis `prediction:pending:*` 队列，并由 `persist_pending_data` 定时落库；支持 `max_concurrency`、`max_retries`、`retry_delay_seconds` 等参数调优
 - **类型安全异常处理**：防止Exception对象调用.items()方法的运行时错误
 - **流式响应支持**：Server-Sent Events实现实时进度显示
 - **专用模型配置**：按Agent类型配置不同的Gemini模型
+- **文档参考**：运维细节与故障排查见 `docs/operations/batch-prediction-guide.md`
 
 #### 4.1.3 搜索API (`routers/search.py`)
 ```python

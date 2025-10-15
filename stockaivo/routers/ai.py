@@ -2,30 +2,133 @@
 AI分析路由器 - 提供AI投资决策分析的API端点
 """
 
-import logging
 import asyncio
-from datetime import date, datetime
+import logging
+from datetime import date
+from time import perf_counter
+from types import TracebackType
+from typing import Any, AsyncContextManager, List, Optional, Protocol, Set
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional
+from pydantic import BaseModel, Field
 
-from stockaivo.ai.orchestrator import run_ai_analysis, run_ai_analysis_stream, run_ai_analysis_parallel_stream
+from stockaivo import schemas
+from stockaivo.ai.orchestrator import (
+    run_ai_analysis,
+    run_ai_analysis_parallel_stream,
+    run_ai_analysis_stream,
+)
+from stockaivo.ai.structured_prediction_service import run_structured_prediction
+from stockaivo.database import SessionLocal
+from stockaivo.dependencies import DatabaseDep, get_batch_prediction_rate_limiter
 from stockaivo.exceptions import AIServiceException, ValidationException, create_error_response
-from stockaivo.ai.agents import structured_prediction_agent, _is_llm_error_result
-from stockaivo.ai.agents import data_collection_agent, technical_analysis_agent, fundamental_analysis_agent, news_sentiment_analysis_agent
-from stockaivo.data_service import get_market_aware_current_date
-from stockaivo.ai.state import GraphState
-from stockaivo.models import StockPrediction
-from stockaivo.dependencies import DatabaseDep
 
 logger = logging.getLogger(__name__)
 
 # 创建路由器
+StructuredPredictionBatchRequest = schemas.StructuredPredictionBatchRequest
+StructuredPredictionBatchResponse = schemas.StructuredPredictionBatchResponse
+StructuredPredictionResponse = schemas.StructuredPredictionResponse
+StructuredPredictionBatchItem = schemas.StructuredPredictionBatchItem
+StructuredPredictionBatchSummary = schemas.StructuredPredictionBatchSummary
+StructuredPredictionRequest = schemas.StructuredPredictionRequest
+NestedStructuredPredictionRequest = schemas.NestedStructuredPredictionRequest
+
+
 router = APIRouter(prefix="/ai", tags=["AI分析"])
 
 # 移除全局状态管理，改为直接流式响应
+
+
+class BatchPredictionRateLimiter(Protocol):
+    """批量预测限流器协议占位，用于后续 Task D 接入"""
+
+    async def acquire(self, bucket: str) -> None:  # pragma: no cover - 协议定义
+        ...
+
+    def guard(self, bucket: str) -> AsyncContextManager[None]:  # pragma: no cover - 协议定义
+        ...
+
+    def compute_backoff(self, attempt: int) -> float:  # pragma: no cover - 协议定义
+        ...
+
+    @property
+    def max_retry_attempts(self) -> int:  # pragma: no cover - 协议定义
+        ...
+
+
+class _NullAsyncContext:
+    """空实现的异步上下文管理器，用于无限流场景"""
+
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[type],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> bool:
+        return False
+
+
+class _AcquireReleaseContext:
+    """包装具有 acquire/release 方法的限流器"""
+
+    def __init__(self, limiter: Any, bucket: str) -> None:
+        self._limiter = limiter
+        self._bucket = bucket
+
+    async def __aenter__(self) -> None:
+        await self._limiter.acquire(self._bucket)  # type: ignore[attr-defined]
+        return None
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[type],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> bool:
+        release = getattr(self._limiter, "release", None)
+        if callable(release):
+            await release(self._bucket, exc_type, exc, tb)  # type: ignore[arg-type]
+        return False
+
+
+def _rate_limit_guard(
+    limiter: Optional[BatchPredictionRateLimiter],
+    bucket: str,
+) -> AsyncContextManager[None]:
+    """根据限流器实现动态生成上下文管理器"""
+    if limiter is None:
+        return _NullAsyncContext()
+
+    guard_callable = getattr(limiter, "guard", None)
+    if callable(guard_callable):
+        try:
+            context = guard_callable(bucket)
+            if context is not None:
+                return context
+        except Exception as exc:  # pragma: no cover - 记录日志并降级
+            logger.warning("创建限流 guard 时发生异常，将回退到 acquire 模式: %s", exc)
+
+    if hasattr(limiter, "acquire"):
+        return _AcquireReleaseContext(limiter, bucket)  # type: ignore[arg-type]
+
+    logger.debug("限流器缺少 guard/acquire 接口，回退到无操作模式")
+    return _NullAsyncContext()
+
+
+__all__ = [
+    "StructuredPredictionBatchRequest",
+    "StructuredPredictionBatchResponse",
+    "StructuredPredictionRequest",
+    "StructuredPredictionResponse",
+    "StructuredPredictionBatchItem",
+    "StructuredPredictionBatchSummary",
+    "NestedStructuredPredictionRequest",
+]
 
 
 class AnalysisRequest(BaseModel):
@@ -140,28 +243,12 @@ async def analyze_stock_parallel_stream(request: AnalysisRequest) -> StreamingRe
         raise AIServiceException(f"启动AI并行分析失败: {str(e)}")
 
 
-class StructuredPredictionRequest(BaseModel):
-    """结构化预测请求模型"""
-    ticker: str = Field(..., description="股票代码，例如 'AAPL'")
-    end_date: Optional[date] = Field(None, description="自定义结束日期 (YYYY-MM-DD)，开始日期由系统根据数据周期自动计算")
-    save_to_db: bool = Field(True, description="是否保存预测结果到数据库")
-
-
-class StructuredPredictionResponse(BaseModel):
-    """结构化预测响应模型"""
-    success: bool = Field(..., description="预测是否成功")
-    prediction_probability: Optional[float] = Field(None, description="预测概率值，范围0.0-1.0")
-    direction: Optional[str] = Field(None, description="预测方向：UP或DOWN")
-    confidence_level: Optional[str] = Field(None, description="置信度：HIGH、MEDIUM或LOW")
-    reasoning: Optional[str] = Field(None, description="预测推理说明")
-    ticker: str = Field(..., description="股票代码")
-    timestamp: str = Field(..., description="预测生成时间")
-    market_aware_date: Optional[str] = Field(None, description="市场感知日期")
-    error: Optional[str] = Field(None, description="错误信息（如果失败）")
-
-
 @router.post("/predict-structured", response_model=StructuredPredictionResponse)
-async def analyze_stock_structured_prediction(request: StructuredPredictionRequest, db: DatabaseDep) -> StructuredPredictionResponse:
+async def analyze_stock_structured_prediction(
+    request: StructuredPredictionRequest,
+    db: DatabaseDep,
+    rate_limiter: Optional[BatchPredictionRateLimiter] = Depends(get_batch_prediction_rate_limiter),
+) -> schemas.StructuredPredictionResponse:
     """
     生成股票结构化预测。
     
@@ -175,221 +262,15 @@ async def analyze_stock_structured_prediction(request: StructuredPredictionReque
     """
     
     try:
-        logger.info(f"收到结构化预测请求: {request.ticker}, 结束日期: {request.end_date}")
-        
-        # 1. 构建完整的AI分析状态，集成多Agent并行分析流程
-        # 包含数据收集、技术分析、基本面分析、新闻情感分析的完整工作流
-        
-        logger.info(f"开始构建分析状态为结构化预测做准备: {request.ticker}")
-        
-        # 初始化状态
-        analysis_state = GraphState(
-            ticker=request.ticker,
-            custom_date_range=None,
-            raw_data={},
-            analysis_results={},
-            final_report="",
-            market_analysis=None
-        )
-        
-        # 添加自定义日期范围
-        if request.end_date:
-            analysis_state["custom_date_range"] = {
-                "end_date": request.end_date.isoformat()
-            }
-        
-        # 2. 并行运行分析agents（优化性能）
-        try:
-            # 数据收集（必须先完成）
-            data_result = await data_collection_agent(analysis_state)
-            for key, value in data_result.items():
-                if key in analysis_state:
-                    analysis_state[key] = value  # type: ignore
-            
-            # 并行执行三个分析agents
-            logger.info(f"开始并行执行分析agents: {request.ticker}")
-            analysis_tasks = [
-                technical_analysis_agent(analysis_state),  # 技术分析（必需）
-                fundamental_analysis_agent(analysis_state),  # 基本面分析（可选）
-                news_sentiment_analysis_agent(analysis_state)  # 新闻情感分析（可选）
-            ]
-            
-            # 并行执行，允许部分失败
-            analysis_results = await asyncio.gather(*analysis_tasks, return_exceptions=True)
-            
-            # 处理技术分析结果（必需，必须成功）
-            tech_result = analysis_results[0]
-            if isinstance(tech_result, Exception):
-                logger.error(f"技术分析失败: {tech_result}")
-                raise AIServiceException(f"技术分析失败，无法生成结构化预测: {str(tech_result)}")
-            
-            # 应用技术分析结果 - 使用合并而不是替换
-            if isinstance(tech_result, dict):
-                for key, value in tech_result.items():
-                    if key == 'analysis_results':
-                        # 合并analysis_results，保留data_collector信息
-                        current_analysis = analysis_state.get("analysis_results", {})
-                        if isinstance(value, dict):
-                            current_analysis.update(value)
-                        analysis_state[key] = current_analysis  # type: ignore
-                    elif key in analysis_state:
-                        analysis_state[key] = value  # type: ignore
-                
-                # 检查技术分析是否真的成功了
-                technical_analysis = analysis_state.get("analysis_results", {}).get("technical_analyst")
-                if technical_analysis and not _is_llm_error_result(technical_analysis):
-                    logger.info("技术分析完成")
-                elif technical_analysis and _is_llm_error_result(technical_analysis):
-                    logger.error(f"技术分析LLM调用失败: {technical_analysis}")
-                else:
-                    logger.error("技术分析未返回结果")
-            
-            # 验证技术分析是否成功
-            technical_analysis = analysis_state.get("analysis_results", {}).get("technical_analyst")
-            if not technical_analysis or _is_llm_error_result(technical_analysis):
-                error_msg = f"技术分析失败，无法生成结构化预测: {technical_analysis}" if technical_analysis else "技术分析未返回有效结果，无法生成结构化预测"
-                logger.error(error_msg)
-                raise AIServiceException(error_msg)
-            
-            # 处理基本面分析结果（可选）
-            fundamental_result = analysis_results[1]
-            if isinstance(fundamental_result, Exception):
-                logger.warning(f"基本面分析失败，继续执行: {fundamental_result}")
-            else:
-                # 确保结果是字典类型才调用items()
-                if isinstance(fundamental_result, dict):
-                    # 检查是否真的有基本面分析结果
-                    fundamental_analysis = fundamental_result.get("analysis_results", {}).get("fundamental_analyst")
-                    if fundamental_analysis is not None and not _is_llm_error_result(fundamental_analysis):
-                        for key, value in fundamental_result.items():
-                            if key == 'analysis_results':
-                                # 合并analysis_results，保留已有信息
-                                current_analysis = analysis_state.get("analysis_results", {})
-                                if isinstance(value, dict):
-                                    current_analysis.update(value)
-                                analysis_state[key] = current_analysis  # type: ignore
-                            elif key in analysis_state:
-                                analysis_state[key] = value  # type: ignore
-                        logger.info("基本面分析完成")
-                    elif fundamental_analysis is not None and _is_llm_error_result(fundamental_analysis):
-                        logger.warning(f"基本面分析LLM调用失败: {fundamental_analysis}")
-                    else:
-                        logger.info("基本面分析跳过")
-                else:
-                    logger.info("基本面分析跳过")
-            
-            # 处理新闻情感分析结果（可选）
-            news_result = analysis_results[2]
-            if isinstance(news_result, Exception):
-                logger.warning(f"新闻情感分析失败，继续执行: {news_result}")
-            else:
-                # 确保结果是字典类型才调用items()
-                if isinstance(news_result, dict):
-                    # 检查是否真的有新闻情感分析结果
-                    news_analysis = news_result.get("analysis_results", {}).get("news_sentiment_analyst")
-                    if news_analysis is not None and not _is_llm_error_result(news_analysis):
-                        for key, value in news_result.items():
-                            if key == 'analysis_results':
-                                # 合并analysis_results，保留已有信息
-                                current_analysis = analysis_state.get("analysis_results", {})
-                                if isinstance(value, dict):
-                                    current_analysis.update(value)
-                                analysis_state[key] = current_analysis  # type: ignore
-                            elif key in analysis_state:
-                                analysis_state[key] = value  # type: ignore
-                        logger.info("新闻情感分析完成")
-                    elif news_analysis is not None and _is_llm_error_result(news_analysis):
-                        logger.warning(f"新闻情感分析LLM调用失败: {news_analysis}")
-                    else:
-                        logger.info("新闻情感分析跳过")
-                else:
-                    logger.info("新闻情感分析跳过")
-            
-            logger.info(f"并行分析完成: {request.ticker}")
-                
-        except Exception as e:
-            logger.error(f"分析阶段失败: {e}")
-            raise AIServiceException(f"分析阶段失败: {str(e)}")
-        
-        # 3. 运行结构化预测Agent
-        logger.info(f"开始生成结构化预测: {request.ticker}")
-        prediction_result = await structured_prediction_agent(analysis_state)
-        
-        # 4. 处理预测结果
-        prediction_data = prediction_result.get("structured_prediction", {})
-        
-        if not prediction_data.get("success", False):
-            # 预测失败
-            error_msg = prediction_data.get("error", "结构化预测失败")
-            logger.warning(f"结构化预测失败: {request.ticker}, 错误: {error_msg}")
-            
-            return StructuredPredictionResponse(
-                success=False,
-                prediction_probability=None,
-                direction=None,
-                confidence_level=None,
-                reasoning=None,
-                ticker=request.ticker,
-                timestamp=prediction_data.get("timestamp", datetime.now().isoformat()),
-                market_aware_date=None,
-                error=error_msg
-            )
-        
-        # 5. 预测成功，准备响应数据
-        response_data = {
-            "success": True,
-            "prediction_probability": prediction_data.get("prediction_probability"),
-            "direction": prediction_data.get("direction"),
-            "confidence_level": prediction_data.get("confidence_level"),
-            "reasoning": prediction_data.get("reasoning"),
-            "ticker": request.ticker,
-            "timestamp": prediction_data.get("timestamp")
-        }
-        
-        # 6. 保存到数据库（如果请求）
-        if request.save_to_db:
-            try:
-                # 从market_analysis获取正确的市场日期信息
-                market_analysis = analysis_state.get("market_analysis")
-                if market_analysis:
-                    market_aware_date = market_analysis.market_aware_date
-                    end_date = market_analysis.target_friday_date
-                    trading_days = market_analysis.trading_days_count
-                else:
-                    # 如果没有获取到market_analysis，使用默认方法
-                    market_aware_date = get_market_aware_current_date()
-                    end_date = request.end_date or date.today()
-                    trading_days = 5
-                
-                response_data["market_aware_date"] = market_aware_date.isoformat()
-                
-                # 创建StockPrediction实例
-                prediction_record = StockPrediction(
-                    ticker=request.ticker,
-                    market_aware_date=market_aware_date,
-                    target_date=end_date,
-                    trading_days_count=trading_days,
-                    prediction_probability=prediction_data.get("prediction_probability"),
-                    direction=prediction_data.get("direction"),
-                    confidence_level=prediction_data.get("confidence_level"),
-                    reasoning=prediction_data.get("reasoning", "")
-                )
-                
-                # 使用merge处理主键冲突（相同ticker和market_aware_date的记录）
-                db.merge(prediction_record)
-                db.commit()
-                
-                logger.info(f"成功保存结构化预测到数据库: {request.ticker}, 市场日期: {market_aware_date}, 目标日期: {end_date}")
-                
-            except Exception as db_error:
-                logger.error(f"保存结构化预测到数据库失败: {db_error}")
-                db.rollback()
-                # 不影响API响应，只是记录错误
-        
-        logger.info(f"结构化预测成功: {request.ticker}, 方向={prediction_data.get('direction')}, 概率={prediction_data.get('prediction_probability'):.2f}")
-        
-        return StructuredPredictionResponse(**response_data)
-        
+        logger.info("收到结构化预测请求: %s, 结束日期: %s", request.ticker, request.end_date)
+
+        if rate_limiter is not None:
+            await rate_limiter.acquire("tickertick")
+            await rate_limiter.acquire("akshare")
+
+        async with _rate_limit_guard(rate_limiter, "ai_predict"):
+            return await run_structured_prediction(request, db)
+
     except ValueError as e:
         logger.error(f"结构化预测请求验证失败: {e}")
         raise ValidationException(f"请求参数验证失败: {str(e)}")
@@ -399,3 +280,183 @@ async def analyze_stock_structured_prediction(request: StructuredPredictionReque
     except Exception as e:
         logger.error(f"结构化预测失败: {e}")
         raise AIServiceException(f"结构化预测失败: {str(e)}")
+
+
+@router.post(
+    "/predict-structured/batch",
+    response_model=StructuredPredictionBatchResponse,
+    summary="批量生成结构化预测结果",
+)
+async def analyze_stock_structured_prediction_batch(
+    request: StructuredPredictionBatchRequest,
+    db: DatabaseDep,
+    rate_limiter: Optional[BatchPredictionRateLimiter] = Depends(get_batch_prediction_rate_limiter),
+) -> schemas.StructuredPredictionBatchResponse:
+    """
+    批量生成多只股票的结构化预测。
+
+    - 使用 `max_concurrency` 控制并发度，避免击穿外部数据源与LLM限流。
+    - 对失败任务可按 `max_retries` 与退避间隔进行自动重试。
+    - 汇总输出每只股票的执行结果、耗时与失败原因，便于外部系统重试。
+    """
+
+    # 1. 预处理与参数校验
+    normalized_tickers: List[str] = []
+    seen: Set[str] = set()
+    for ticker in request.tickers:
+        normalized = ticker.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_tickers.append(normalized)
+
+    if not normalized_tickers:
+        raise ValidationException("tickers 列表不能为空。")
+
+    if request.max_concurrency < 1:
+        raise ValidationException("max_concurrency 必须至少为 1。")
+
+    if request.save_to_db and SessionLocal is None and request.max_concurrency > 1:
+        logger.warning(
+            "SessionLocal 未初始化，批量结构化预测降级为串行执行以避免共享会话冲突。"
+        )
+
+    effective_concurrency = min(
+        request.max_concurrency if SessionLocal or not request.save_to_db else 1,
+        len(normalized_tickers),
+    )
+    semaphore = asyncio.Semaphore(effective_concurrency)
+
+    batch_start = perf_counter()
+
+    async def process_ticker(ticker: str) -> StructuredPredictionBatchItem:
+        single_request = StructuredPredictionRequest(
+            ticker=ticker,
+            end_date=request.end_date,
+            save_to_db=request.save_to_db,
+        )
+        limiter_retry_cap = (
+            rate_limiter.max_retry_attempts if rate_limiter is not None else request.max_retries
+        )
+        attempts_allowed = min(request.max_retries, limiter_retry_cap) + 1
+        attempt_start = perf_counter()
+        last_error: Optional[str] = None
+        latest_response: Optional[StructuredPredictionResponse] = None
+
+        for attempt in range(1, attempts_allowed + 1):
+            session_to_use = None
+            try:
+                async with semaphore:
+                    if request.save_to_db:
+                        if SessionLocal is not None:
+                            session_to_use = SessionLocal()
+                        else:
+                            session_to_use = db
+                    if rate_limiter is not None:
+                        await rate_limiter.acquire("tickertick")
+                        await rate_limiter.acquire("akshare")
+
+                    async with _rate_limit_guard(rate_limiter, "ai_predict"):
+                        latest_response = await run_structured_prediction(
+                            single_request,
+                            session_to_use,
+                        )
+
+                if latest_response.success:
+                    latency = perf_counter() - attempt_start
+                    return StructuredPredictionBatchItem(
+                        ticker=ticker,
+                        success=True,
+                        latency_seconds=latency,
+                        retries=attempt - 1,
+                        response=latest_response,
+                        error=None,
+                    )
+
+                last_error = latest_response.error or "结构化预测失败"
+                logger.warning(
+                    "结构化预测失败（待重试）: ticker=%s, attempt=%d/%d, error=%s",
+                    ticker,
+                    attempt,
+                    attempts_allowed,
+                    last_error,
+                )
+            except Exception as exc:  # 捕获服务层抛出的异常
+                last_error = str(exc)
+                logger.error(
+                    "结构化预测执行异常: ticker=%s, attempt=%d/%d, error=%s",
+                    ticker,
+                    attempt,
+                    attempts_allowed,
+                    last_error,
+                )
+            finally:
+                if session_to_use is not None and session_to_use is not db:
+                    try:
+                        session_to_use.close()
+                    except Exception:  # pragma: no cover - 记录即可
+                        logger.debug("关闭临时数据库会话时发生异常", exc_info=True)
+
+            if attempt < attempts_allowed:
+                base_backoff = request.retry_delay_seconds * (2 ** (attempt - 1))
+                limiter_backoff = (
+                    rate_limiter.compute_backoff(attempt)
+                    if rate_limiter is not None
+                    else 0.0
+                )
+                backoff_seconds = max(base_backoff, limiter_backoff)
+                if backoff_seconds > 0:
+                    logger.info(
+                        "批量结构化预测退避等待 %.2f 秒: ticker=%s, attempt=%d/%d",
+                        backoff_seconds,
+                        ticker,
+                        attempt,
+                        attempts_allowed,
+                    )
+                    await asyncio.sleep(backoff_seconds)
+
+        latency = perf_counter() - attempt_start
+        return StructuredPredictionBatchItem(
+            ticker=ticker,
+            success=False,
+            latency_seconds=latency,
+            retries=attempts_allowed - 1,
+            response=None,
+            error=last_error,
+        )
+
+    # 2. 并发执行批量任务
+    tasks = [asyncio.create_task(process_ticker(ticker)) for ticker in normalized_tickers]
+    results = await asyncio.gather(*tasks)
+
+    # 3. 汇总统计与日志
+    total_duration = perf_counter() - batch_start
+    success_count = sum(1 for item in results if item.success)
+    failed_items = [item for item in results if not item.success]
+
+    logger.info(
+        "批量结构化预测完成: 总数=%d, 成功=%d, 失败=%d, 总耗时=%.2fs",
+        len(results),
+        success_count,
+        len(failed_items),
+        total_duration,
+    )
+
+    if failed_items:
+        logger.warning(
+            "批量结构化预测失败列表: %s",
+            ", ".join(item.ticker for item in failed_items),
+        )
+
+    response_summary = StructuredPredictionBatchSummary(
+        total=len(results),
+        success=success_count,
+        failed=len(failed_items),
+        duration_seconds=total_duration,
+    )
+
+    return StructuredPredictionBatchResponse(
+        results=results,
+        summary=response_summary,
+        failed_tickers=[item.ticker for item in failed_items],
+    )
