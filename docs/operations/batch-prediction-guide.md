@@ -13,13 +13,13 @@
 
 ## 2. 关键模块
 
-| 模块 | 作用 | 路径 |
-| ---- | ---- | ---- |
-| 路由入口 | 参数清洗、并发控制、重试调度 | `stockaivo/routers/ai.py` |
-| 核心预测服务 | 单只股票结构化预测协程 | `stockaivo/ai/structured_prediction_service.py` |
-| 限流器 | 令牌桶 + 全局并发控制 + 指数退避 | `stockaivo/utils/rate_limiter.py` |
-| Redis 管理 | 写入 `prediction:pending:{ticker}:{marketDate}:{targetDate}` | `stockaivo/cache_manager.py` |
-| 定时持久化 | 将 Redis 待持久化数据写入数据库 | `stockaivo/database_writer.py` + `stockaivo/background_scheduler.py` |
+| 模块         | 作用                                                         | 路径                                                                 |
+| ------------ | ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| 路由入口     | 参数清洗、并发控制、重试调度                                 | `stockaivo/routers/ai.py`                                            |
+| 核心预测服务 | 单只股票结构化预测协程                                       | `stockaivo/ai/structured_prediction_service.py`                      |
+| 限流器       | 令牌桶 + 全局并发控制 + 指数退避                             | `stockaivo/utils/rate_limiter.py`                                    |
+| Redis 管理   | 写入 `prediction:pending:{ticker}:{marketDate}:{targetDate}` | `stockaivo/cache_manager.py`                                         |
+| 定时持久化   | 将 Redis 待持久化数据写入数据库                              | `stockaivo/database_writer.py` + `stockaivo/background_scheduler.py` |
 
 ## 3. 请求前准备
 
@@ -47,14 +47,14 @@
 
 字段说明：
 
-| 字段 | 类型 | 默认值 | 说明 |
-| ---- | ---- | ---- | ---- |
-| `tickers` | `List[str]` | 无 | 待处理股票列表，自动去重与裁剪空值 |
-| `end_date` | `date` | `null` | 可选统一结束日期；为空时使用系统日期推算 |
-| `save_to_db` | `bool` | `true` | 是否将结果持久化至 PostgreSQL |
-| `max_concurrency` | `int` | `3` | 并发协程上限，取值 1-10，建议 1-5 |
-| `max_retries` | `int` | `0` | 单票失败后允许的最大重试次数（不含首次） |
-| `retry_delay_seconds` | `float` | `5.0` | 重试前等待秒数，用作指数退避基础值 |
+| 字段                  | 类型        | 默认值 | 说明                                     |
+| --------------------- | ----------- | ------ | ---------------------------------------- |
+| `tickers`             | `List[str]` | 无     | 待处理股票列表，自动去重与裁剪空值       |
+| `end_date`            | `date`      | `null` | 可选统一结束日期；为空时使用系统日期推算 |
+| `save_to_db`          | `bool`      | `true` | 是否将结果持久化至 PostgreSQL            |
+| `max_concurrency`     | `int`       | `3`    | 并发协程上限，取值 1-10，建议 1-5        |
+| `max_retries`         | `int`       | `0`    | 单票失败后允许的最大重试次数（不含首次） |
+| `retry_delay_seconds` | `float`     | `5.0`  | 重试前等待秒数，用作指数退避基础值       |
 
 ### 4.2 响应体结构
 
@@ -130,12 +130,17 @@ uv run python stockaivo/scripts/bulk_predict_from_db.py \
 
 常见参数：
 
-| 参数 | 默认值 | 说明 |
-| ---- | ---- | ---- |
-| `--api-base-url` | 无 | 指定 FastAPI 服务地址，避免脚本与应用共用事件循环 |
-| `--batch-size` | 20 | 可在本地调试时下调以缩短单批耗时 |
-| `--output` | `bulk_predict_failures.json` | 失败列表输出路径，建议指定到 `./logs/` 方便 diff |
-| `--limit` | 无 | 仅取前 N 个 symbol，方便局部验证 |
+| 参数                     | 默认值                                           | 说明                                                                |
+| ------------------------ | ------------------------------------------------ | ------------------------------------------------------------------- |
+| `--api-base-url`         | 无                                               | 指定 FastAPI 服务地址，避免脚本与应用共用事件循环                   |
+| `--batch-size`           | 20                                               | 可在本地调试时下调以缩短单批耗时                                    |
+| `--output`               | `logs/batch_failures/bulk_predict_failures.json` | 失败列表输出路径，建议固定到可持久化目录，便于 diff 和归档          |
+| `--limit`                | 无                                               | 仅取前 N 个 symbol，便于局部验证                                    |
+| `--include-symbols-file` | 无                                               | 指定 manifest/JSON/CSV 清单后按文件内顺序执行，忽略数据库全量读取   |
+| `--exclude-symbols-file` | 无                                               | 提供需跳过的股票清单，常用于暂时排除故障股票                        |
+| `--progress-file`        | `logs/batch_progress/bulk_progress.json`        | 进度文件路径，记录已成功的股票，便于断点续跑                        |
+| `--resume/--no-resume`   | `--resume`                                       | 是否根据进度文件跳过已完成股票，默认开启，可通过 `--no-resume` 关闭 |
+| `--reset-progress`       | 关闭                                             | 运行前清空进度文件，适合重新跑批或验证                              |
 
 ### 5.4 Docker 生产环境 CLI
 
@@ -147,48 +152,153 @@ docker compose exec stockaivo-backend-1 \
     --batch-size 20 \
     --max-concurrency 5 \
     --max-retries 1 \
-    --output /logs/bulk_cli_failures.json
+    --output /logs/batch_failures/bulk_cli_failures.json
 ```
 
 > ⚙️ 前置条件：
 > - `stockaivo-backend-1` 容器正在运行且已完成 `.env` 配置；
 > - Redis / PostgreSQL 均可写；`logs/` 已绑定为持久化卷（便于收集失败列表）。
+> - 如果容器内尚未存在 `/logs/batch_failures/` 目录，请先执行 `mkdir -p /logs/batch_failures`。
 
 命令参数说明：
 
-| 参数 | 默认值 | 说明 |
-| ---- | ---- | ---- |
-| `--batch-size` | 20 | 每批处理的股票数量，可根据限流配置下调 |
-| `--max-concurrency` | 5 | 分发到 `/ai/predict-structured/batch` 的并发上限 |
-| `--max-retries` | 1 | 单票失败后的重试次数（不含首次） |
-| `--output` | `bulk_predict_failures.json` | 失败列表输出路径，建议映射到宿主机便于重试 |
-| `--dry-run` | 关闭 | 开启后仅打印批次数量，不发起调用 |
-| `--api-base-url` | 未设置 | 如需走 HTTP，可设为 `http://localhost:3224` 或反向代理地址 |
+| 参数                     | 默认值                                            | 说明                                                       |
+| ------------------------ | ------------------------------------------------- | ---------------------------------------------------------- |
+| `--batch-size`           | 20                                                | 每批处理的股票数量，可根据限流配置下调                     |
+| `--max-concurrency`      | 5                                                 | 分发到 `/ai/predict-structured/batch` 的并发上限           |
+| `--max-retries`          | 1                                                 | 单票失败后的重试次数（不含首次）                           |
+| `--output`               | `/logs/batch_failures/bulk_predict_failures.json` | 失败列表输出路径，建议映射到宿主机便于重试；若使用示例命令将自动生成 `bulk_cli_failures.json` |
+| `--dry-run`              | 关闭                                              | 开启后仅打印批次数量，不发起调用                           |
+| `--api-base-url`         | 未设置                                            | 如需走 HTTP，可设为 `http://localhost:3224` 或反向代理地址 |
+| `--include-symbols-file` | 无                                                | 指定容器内 manifest 或挂载清单，实现分批执行               |
+| `--progress-file`        | `/logs/batch_progress/bulk_progress.json`        | 建议指向持久化卷，记录断点信息                             |
+| `--resume/--no-resume`   | `--resume`                                        | 控制是否根据进度文件跳过已完成股票                         |
+| `--reset-progress`       | 关闭                                              | 运行前清空进度文件；清空后若未限制范围，本轮将全量执行     |
 
 执行完成后脚本会输出总成功/失败统计，若存在失败，将在 `--output` 指定路径生成 JSON，包含失败的 ticker、错误信息与批次索引，便于后续 `--dry-run` 验证或二次重试。
+
+### 5.5 失败补跑脚本
+
+批量预测完成后，如 `--output` 生成的 `bulk_predict_failures.json` 中仍有失败股票，可使用 `stockaivo/scripts/retry_failed_predictions.py` 自动补跑。该脚本会读取失败列表 JSON，按参数重新分批调用批量接口，并将最新失败结果写入新的文件，确保多轮重试具备可追溯性。
+
+```bash
+uv run python stockaivo/scripts/retry_failed_predictions.py \
+  --input logs/bulk_predict_failures.json \
+  --output logs/bulk_predict_failures_retry.json \
+  --batch-size 10 \
+  --max-concurrency 3 \
+  --max-retries 2 \
+  --api-base-url http://127.0.0.1:8000
+```
+
+参数说明：
+
+| 参数                | 默认值                                                 | 说明                                                                                                         |
+| ------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `--input`           | `logs/bulk_predict_failures.json`                      | 首次批量任务生成的失败列表路径，支持手动放入任意 JSON（需包含 `failures[].ticker` 或 `failed_tickers` 字段） |
+| `--output`          | `logs/batch_failures/bulk_predict_failures_retry.json` | 补跑后的失败列表输出位置，可用于下一轮重试或审计                                                             |
+| `--batch-size`      | `10`                                                   | 每批提交的股票数量，建议结合上一轮失败原因适当调小                                                           |
+| `--max-concurrency` | `3`                                                    | 补跑时的并发度，可在受限环境下调低避免触发限流                                                               |
+| `--max-retries`     | `2`                                                    | 单票补跑的最大重试次数，默认比初次任务稍高                                                                   |
+| `--retry-delay`     | `5.0`                                                  | 指数退避基础值，与批量接口参数一致                                                                           |
+| `--save-to-db`      | `true`                                                 | 是否将补跑成功的结果写入数据库，可通过 `--no-save-to-db` 关闭                                                |
+| `--end-date`        | `null`                                                 | 可选统一结束日期，如需覆盖请传入 `YYYY-MM-DD`                                                                |
+| `--api-base-url`    | `null`                                                 | 指定 FastAPI 服务地址；未设置时脚本会复用应用内部路由                                                        |
+| `--api-key`         | `null`                                                 | HTTP 调用时附加的 `Authorization` 头部                                                                       |
+| `--limit`           | `null`                                                 | 仅补跑失败列表前 N 支股票，其余股票会原样保留在输出文件中，便于分批处理                                      |
+
+> 建议补跑前先检查失败原因是否为限流或外部数据源故障。如多次补跑仍失败，可结合日志排查异常并考虑暂时移除问题股票。
+
+> 📌 当使用 `--limit` 分批补跑时，脚本会自动将本轮成功的股票从输出 JSON 中移除，同时保留未处理与仍失败的股票，方便下一轮继续执行。
+
+> 🔁 最佳实践：首轮补跑建议保持默认输出路径 `logs/batch_failures/bulk_predict_failures_retry.json`，下一轮可直接把该文件作为新的 `--input`，脚本会在此基础上继续补跑并写回同一路径。若希望“就地更新”原始 `bulk_predict_failures.json`，需要同时将 `--input` 与 `--output` 指向同一文件，执行前务必备份以便审计。
+
+### 5.6 批次清单与断点续跑流程
+
+> 自 2025-10-15 起，CLI 支持批次 manifest 生成与进度断点功能，可将 292 支股票拆分为多个小批次执行。
+
+1. **生成批次清单**
+
+   ```bash
+   uv run python stockaivo/scripts/bulk_predict_from_db.py \
+     --generate-manifests \
+     --manifest-output-dir data/batch_manifests \
+     --manifest-batch-size 30 \
+     --manifest-shuffle \
+     --manifest-concurrency 3
+   ```
+
+   - 默认会输出 `batch_001.json`、`batch_002.json`... 以及 `manifest_index.json`；
+   - 每个清单包含 `batch_id`、`tickers`、`suggested_max_concurrency` 字段，可据此安排运行批次；
+   - `--manifest-seed` 支持固定乱序顺序，便于团队之间复现批次划分。
+
+   Manifest 相关参数补充：
+
+   | 参数                     | 默认值                 | 说明                                                                           |
+   | ------------------------ | ---------------------- | ------------------------------------------------------------------------------ |
+   | `--manifest-output-dir`  | `data/batch_manifests` | 清单输出目录，建议纳入版本控制忽略列表；容器场景可指向 `/data/batch_manifests` |
+   | `--manifest-batch-size`  | 30                     | 单个清单的股票量，可根据限流策略调整                                           |
+   | `--manifest-concurrency` | 3                      | 推荐的最大并发值，将写入每个清单文件                                           |
+   | `--manifest-prefix`      | `batch_`               | 清单文件名前缀（例如 `batch_001.json`）                                        |
+   | `--manifest-shuffle`     | 关闭                   | 是否随机乱序股票列表，避免始终同一顺序                                         |
+   | `--manifest-seed`        | 无                     | 与 `--manifest-shuffle` 配合使用，确保乱序可重现                               |
+
+2. **选择清单执行**
+
+   ```bash
+   uv run python stockaivo/scripts/bulk_predict_from_db.py \
+     --include-symbols-file data/batch_manifests/batch_001.json \
+     --progress-file logs/batch_progress/bulk_progress.json \
+     --max-concurrency 3 \
+     --max-retries 1
+   ```
+
+   - `--include-symbols-file` 会按清单顺序执行，绕过数据库全量读取；
+   - `--exclude-symbols-file` 可用于跳过已知问题股票，支持 JSON/CSV/纯文本格式；
+   - 进度默认写入 `logs/batch_progress/bulk_progress.json`，便于随时暂停并恢复剩余批次。
+
+3. **断点续跑与重置**
+
+   - `--resume/--no-resume` 控制是否根据进度文件自动跳过已完成股票（默认开启）；
+   - `--reset-progress` 可在正式跑批前清空进度文件；清空后若未限制处理范围，会把当前批次选中的全部股票视为待执行；
+   - 进度文件结构示例：
+
+     ```json
+     {
+       "updated_at": "2025-10-15T01:23:45.678901",
+       "processed_count": 120,
+       "processed_tickers": ["AAPL", "MSFT", "..."]
+     }
+     ```
+
+   - 当批次执行失败时，失败股票仍会写入 `--output` 指定的 JSON，可与 `retry_failed_predictions.py` 搭配补跑。
+
+> 推荐流程：先使用 `--generate-manifests` 拆分批次 → 基于清单挨个跑批（搭配进度、排除清单）→ 若遇到失败则使用失败文件补跑或在下一批次前调整清单。
+
+> ⚠️ 提醒：`--reset-progress` 仅清除历史记录，不会自动缩减本轮股票集合。若希望清空后只执行子集，请结合 `--include-symbols-file`、`--limit` 或手动裁剪清单。
 
 ## 6. 限流与重试配置
 
 限流器通过 `stockaivo.dependencies.get_batch_prediction_rate_limiter` 懒加载，可用环境变量覆盖默认值：
 
-| 环境变量 | 默认值 | 说明 |
-| -------- | ------ | ---- |
-| `BATCH_RATE_LIMITER_DISABLED` | `false` | 置为 `true/1` 可完全关闭限流器（不推荐） |
-| `AI_PREDICT_REQUESTS_PER_WINDOW` | `5` | AI 调用窗口内允许次数 |
-| `AI_PREDICT_WINDOW_SECONDS` | `60.0` | AI 调用时间窗口（秒） |
-| `AI_PREDICT_JITTER_SECONDS` | `0.5` | AI 调用附加抖动 |
-| `TICKERTICK_REQUESTS_PER_WINDOW` | `10` | Tickertick 新闻接口窗口内次数 |
-| `TICKERTICK_WINDOW_SECONDS` | `60.0` | Tickertick 时间窗口（秒） |
-| `TICKERTICK_JITTER_SECONDS` | `1.0` | Tickertick 抖动 |
-| `AKSHARE_REQUESTS_PER_WINDOW` | `20` | AKShare 调用窗口内次数 |
-| `AKSHARE_WINDOW_SECONDS` | `60.0` | AKShare 时间窗口（秒） |
-| `AKSHARE_JITTER_SECONDS` | `0.5` | AKShare 抖动 |
-| `BATCH_RATE_LIMITER_DEFAULT_JITTER` | `0.5` | 默认抖动，应用于未单独配置的桶 |
-| `BATCH_RATE_LIMITER_ERROR_BASE` | `2.0` | 重试退避基础间隔（秒） |
-| `BATCH_RATE_LIMITER_ERROR_MAX` | `45.0` | 重试退避最大值（秒） |
-| `BATCH_RATE_LIMITER_ERROR_JITTER` | `1.0` | 重试退避抖动 |
-| `BATCH_RATE_LIMITER_MAX_RETRIES` | `3` | 限流器内部允许的最大重试次数 |
-| `BATCH_RATE_LIMITER_GLOBAL_CONCURRENCY` | `6` | 全局并发上限，所有桶共享 |
+| 环境变量                                | 默认值  | 说明                                     |
+| --------------------------------------- | ------- | ---------------------------------------- |
+| `BATCH_RATE_LIMITER_DISABLED`           | `false` | 置为 `true/1` 可完全关闭限流器（不推荐） |
+| `AI_PREDICT_REQUESTS_PER_WINDOW`        | `5`     | AI 调用窗口内允许次数                    |
+| `AI_PREDICT_WINDOW_SECONDS`             | `60.0`  | AI 调用时间窗口（秒）                    |
+| `AI_PREDICT_JITTER_SECONDS`             | `0.5`   | AI 调用附加抖动                          |
+| `TICKERTICK_REQUESTS_PER_WINDOW`        | `10`    | Tickertick 新闻接口窗口内次数            |
+| `TICKERTICK_WINDOW_SECONDS`             | `60.0`  | Tickertick 时间窗口（秒）                |
+| `TICKERTICK_JITTER_SECONDS`             | `1.0`   | Tickertick 抖动                          |
+| `AKSHARE_REQUESTS_PER_WINDOW`           | `10`    | AKShare 调用窗口内次数                   |
+| `AKSHARE_WINDOW_SECONDS`                | `60.0`  | AKShare 时间窗口（秒）                   |
+| `AKSHARE_JITTER_SECONDS`                | `0.5`   | AKShare 抖动                             |
+| `BATCH_RATE_LIMITER_DEFAULT_JITTER`     | `0.5`   | 默认抖动，应用于未单独配置的桶           |
+| `BATCH_RATE_LIMITER_ERROR_BASE`         | `2.0`   | 重试退避基础间隔（秒）                   |
+| `BATCH_RATE_LIMITER_ERROR_MAX`          | `45.0`  | 重试退避最大值（秒）                     |
+| `BATCH_RATE_LIMITER_ERROR_JITTER`       | `1.0`   | 重试退避抖动                             |
+| `BATCH_RATE_LIMITER_MAX_RETRIES`        | `3`     | 限流器内部允许的最大重试次数             |
+| `BATCH_RATE_LIMITER_GLOBAL_CONCURRENCY` | `6`     | 全局并发上限，所有桶共享                 |
 
 > 提示：API 请求中的 `max_retries` 会与限流器的 `max_retry_attempts` 取最小值；若需更多重试次数，应同步调大两侧配置。
 

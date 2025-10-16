@@ -95,9 +95,11 @@
 - [x] Redis 待持久化通道与数据库写入流程（Task C）
 - [x] 限流/退避组件与监控日志（Task D）
 - [x] 更新后的文档、示例脚本（如 CLI）与 CI 报告（Task E）
+- [x] 批次清单与进度断点机制（Task G）
 
 ## 🔭 后续可选工作
 
+- [x] **Task G：批次清单 + 进度断点机制**：已提供 manifest 生成模式与 CLI 新增参数，支持按清单执行、进度断点恢复与排除清单，详见 `docs/operations/batch-prediction-guide.md` 第 5.6 节。
 - [ ] **CLI 批量执行工具增强**：在 Task F 基础 CLI 完成后，可继续扩展读取 `symbols.txt`、自定义调度策略或提供前端触发入口。
 - [ ] **请求队列扩展**：若需离线大批量处理，可在 Redis/数据库中实现优先级队列与断点续传，再由 APScheduler 消费。
 - [ ] **实时监控与仪表盘**：在 `/cache-stats` 基础上扩展 API 或 Prometheus 指标，展示成功率、耗时、限流命中次数。

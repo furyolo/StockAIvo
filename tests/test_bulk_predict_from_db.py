@@ -41,6 +41,32 @@ def _build_config(
     )
 
 
+def _build_success_response(tickers: List[str]) -> StructuredPredictionBatchResponse:
+    """构造全部成功的批量响应"""
+    items = [
+        StructuredPredictionBatchItem(
+            ticker=ticker,
+            success=True,
+            latency_seconds=0.05,
+            retries=0,
+            response=None,
+            error=None,
+        )
+        for ticker in tickers
+    ]
+    summary = StructuredPredictionBatchSummary(
+        total=len(items),
+        success=len(items),
+        failed=0,
+        duration_seconds=0.1,
+    )
+    return StructuredPredictionBatchResponse(
+        results=items,
+        summary=summary,
+        failed_tickers=[],
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_bulk_prediction_dry_run():
     """dry-run 模式仅统计批次数"""
@@ -149,3 +175,85 @@ async def test_run_bulk_prediction_handles_dispatch_error(monkeypatch: pytest.Mo
     assert len(stats.failed_details) == 2
     assert {item["ticker"] for item in stats.failed_details} == {"AAPL", "MSFT"}
     assert all("网络异常" in (item["error"] or "") for item in stats.failed_details)
+
+
+@pytest.mark.asyncio
+async def test_run_bulk_prediction_exclude_symbols(monkeypatch: pytest.MonkeyPatch):
+    """排除清单应在执行前过滤"""
+    config = _build_config(batch_size=2, output_path=None)
+
+    def fake_provider(limit: Optional[int]) -> List[str]:
+        return ["AAA", "BBB", "CCC"]
+
+    calls: List[List[str]] = []
+
+    async def success_dispatch(request, config_obj, limiter):
+        calls.append(list(request.tickers))
+        return _build_success_response(request.tickers)
+
+    monkeypatch.setattr(cli, "dispatch_batch_request", success_dispatch)
+    monkeypatch.setattr(cli, "get_batch_prediction_rate_limiter", lambda: None)
+
+    stats = await cli.run_bulk_prediction(
+        config,
+        symbol_provider=fake_provider,
+        exclude_symbols=["BBB"],
+    )
+
+    # 只有 AAA 与 CCC 被提交
+    assert stats.total_tickers == 2
+    assert stats.success == 2
+    assert stats.failed == 0
+    assert calls == [["AAA", "CCC"]]
+
+
+@pytest.mark.asyncio
+async def test_run_bulk_prediction_progress_resume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """进度文件结合 resume 参数应正确跳过已完成股票"""
+    config = _build_config(batch_size=2, output_path=None)
+
+    def fake_provider(limit: Optional[int]) -> List[str]:
+        return ["AAPL", "MSFT", "TSLA"]
+
+    progress_path = tmp_path / "progress.json"
+    tracker = cli.ProgressTracker(progress_path)
+    tracker.record_success(["AAPL"])
+
+    async def success_dispatch(request, config_obj, limiter):
+        return _build_success_response(request.tickers)
+
+    monkeypatch.setattr(cli, "dispatch_batch_request", success_dispatch)
+    monkeypatch.setattr(cli, "get_batch_prediction_rate_limiter", lambda: None)
+
+    # 第一次运行应仅处理 MSFT、TSLA
+    stats_first = await cli.run_bulk_prediction(
+        config,
+        symbol_provider=fake_provider,
+        progress_tracker=tracker,
+        resume=True,
+    )
+    assert stats_first.total_tickers == 2
+    assert stats_first.success == 2
+    data = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert data["processed_count"] == 3
+    assert set(data["processed_tickers"]) == {"AAPL", "MSFT", "TSLA"}
+
+    # 第二次运行 resume=True，应直接跳过所有股票
+    stats_second = await cli.run_bulk_prediction(
+        config,
+        symbol_provider=fake_provider,
+        progress_tracker=tracker,
+        resume=True,
+    )
+    assert stats_second.total_tickers == 0
+    assert stats_second.batch_count == 0
+
+    # resume=False 时，应重新执行全部股票
+    stats_third = await cli.run_bulk_prediction(
+        config,
+        symbol_provider=fake_provider,
+        progress_tracker=tracker,
+        resume=False,
+    )
+    assert stats_third.total_tickers == 3
+    assert stats_third.success == 3

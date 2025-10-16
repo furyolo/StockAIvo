@@ -50,6 +50,7 @@ dist/
 *.log
 pnpm-debug.log*
 logs/
+data/
 
 # Backup files
 *~
