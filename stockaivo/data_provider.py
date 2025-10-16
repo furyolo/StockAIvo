@@ -13,6 +13,7 @@
 
 import asyncio
 import logging
+import random
 import time
 from abc import ABC, abstractmethod
 from collections import deque
@@ -41,6 +42,9 @@ logger = logging.getLogger(__name__)
 # 类型定义
 PeriodType = Literal["daily", "weekly", "minute"]
 DataSourceType = Literal["akshare", "tickertick"]
+
+_AKSHARE_RATE_LOCK: Optional[asyncio.Lock] = None
+_AKSHARE_REQUEST_TIMES: Deque[float] = deque()
 
 
 class StoryType(Enum):
@@ -85,6 +89,9 @@ class DataProviderConfig:
     AKSHARE_RETRY_ATTEMPTS = 3
     AKSHARE_RETRY_MIN_WAIT = 1
     AKSHARE_RETRY_MAX_WAIT = 10
+    AKSHARE_RATE_LIMIT = 10  # 每分钟请求上限
+    AKSHARE_RATE_LIMIT_WINDOW = 60  # 速率限制窗口（秒）
+    AKSHARE_RATE_LIMIT_JITTER = 0.5  # 等待抖动（秒）
 
     # TickerTick 配置
     TICKERTICK_RATE_LIMIT = 10  # 每分钟请求数
@@ -511,6 +518,41 @@ def _log_before_retry(retry_state: Any) -> None:
     )
 
 
+# --- AKShare 速率限制辅助函数 ---
+async def _respect_akshare_rate_limit(config: DataProviderConfig) -> None:
+    """
+    控制 AKShare 请求速率，避免触发对端限流。
+    """
+    if config.AKSHARE_RATE_LIMIT <= 0 or config.AKSHARE_RATE_LIMIT_WINDOW <= 0:
+        return
+
+    global _AKSHARE_RATE_LOCK
+    if _AKSHARE_RATE_LOCK is None:
+        _AKSHARE_RATE_LOCK = asyncio.Lock()
+
+    async with _AKSHARE_RATE_LOCK:
+        now = time.time()
+        window = config.AKSHARE_RATE_LIMIT_WINDOW
+        deque_ref = _AKSHARE_REQUEST_TIMES
+
+        while deque_ref and now - deque_ref[0] >= window:
+            deque_ref.popleft()
+
+        if len(deque_ref) >= config.AKSHARE_RATE_LIMIT:
+            wait_time = window - (now - deque_ref[0])
+            if wait_time > 0:
+                jitter = max(0.0, config.AKSHARE_RATE_LIMIT_JITTER)
+                if jitter > 0:
+                    wait_time += random.uniform(0, jitter)
+                logger.info("遵守 AKShare 速率限制，等待 %.2f 秒...", wait_time)
+                await asyncio.sleep(wait_time)
+            now = time.time()
+            while deque_ref and now - deque_ref[0] >= window:
+                deque_ref.popleft()
+
+        deque_ref.append(time.time())
+
+
 # --- 新的带重试的内部辅助函数 ---
 @retry(
     stop=stop_after_attempt(DataProviderConfig.AKSHARE_RETRY_ATTEMPTS),
@@ -522,10 +564,17 @@ def _log_before_retry(retry_state: Any) -> None:
     retry=retry_if_exception_type((requests.exceptions.RequestException, IOError)),
     before_sleep=_log_before_retry
 )
-async def _fetch_data_with_retry(fullsymbol: str, period: str, ak_start_date: str, ak_end_date: str) -> Optional[pd.DataFrame]:
+async def _fetch_data_with_retry(
+    fullsymbol: str,
+    period: str,
+    ak_start_date: str,
+    ak_end_date: str,
+    config: DataProviderConfig,
+) -> Optional[pd.DataFrame]:
     """
     使用 tenacity 重试逻辑调用 AKShare API
     """
+    await _respect_akshare_rate_limit(config)
     logger.info(f"Calling AKShare for {fullsymbol} ({period}) from {ak_start_date} to {ak_end_date}")
 
     def sync_akshare_call():
@@ -679,7 +728,7 @@ class StockDataProvider(BaseDataProvider):
             ak_end_date = end_date.replace('-', '') if end_date else (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
 
             # 调用带重试逻辑的辅助函数
-            df = await _fetch_data_with_retry(fullsymbol, period, ak_start_date, ak_end_date)
+            df = await _fetch_data_with_retry(fullsymbol, period, ak_start_date, ak_end_date, self.config)
 
             if df is None or df.empty:
                 self.logger.warning(f"获取到的数据为空，股票代码: {ticker}, 周期: {period}")
