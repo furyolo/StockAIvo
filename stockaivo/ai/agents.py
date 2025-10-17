@@ -25,6 +25,7 @@ from stockaivo.ai.state import GraphState
 from stockaivo.ai.llm_service import get_llm_service
 from stockaivo.ai.tools import llm_tool
 from stockaivo.ai.technical_indicator import TechnicalIndicator
+from stockaivo.exceptions import AIServiceException
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -97,7 +98,12 @@ def _get_trading_days_set(start_date: date, end_date: date) -> set[date]:
 
 
 
-async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
+async def data_collection_agent(
+    state: GraphState,
+    *,
+    include_news: bool = True,
+    include_intraday: bool = True,
+) -> Dict[str, Any]:
     """
     Data Collection Agent
     - Fetches raw data (e.g., stock prices, financial statements, news) from various sources.
@@ -136,16 +142,19 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
         # 只有用户没有指定日期且在交易时间内才获取10分钟线数据
         user_specified_end_date_str = custom_date_range and custom_date_range.get('end_date')
 
-        if not user_specified_end_date_str:
-            # 用户没有指定日期，检查市场状态
-            is_trading_time = _is_market_open()
-            if is_trading_time:
-                periods_to_fetch.append("10min")
-                print("⏰ Market is open - including 10min data")
+        if include_intraday:
+            if not user_specified_end_date_str:
+                # 用户没有指定日期，检查市场状态
+                is_trading_time = _is_market_open()
+                if is_trading_time:
+                    periods_to_fetch.append("10min")
+                    print("⏰ Market is open - including 10min data")
+                else:
+                    print("🔒 Market is closed - skipping 10min data")
             else:
-                print("🔒 Market is closed - skipping 10min data")
+                print("📈 Historical date specified - skipping 10min data")
         else:
-            print("📈 Historical date specified - skipping 10min data")
+            print("⏭️  Intraday collection disabled - skipping 10min data")
 
         # 1. 获取股票价格数据
         print(f"📈 Fetching price data: {', '.join(periods_to_fetch)}")
@@ -166,23 +175,30 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
             )
             price_tasks.append(task)
 
-        # 2. 获取新闻数据
-        print("📰 Fetching news data")
-        news_task = get_stock_news(
-            ticker=ticker,
-            background_tasks=None,  # No background tasks needed for agent context
-            end_date=end_date  # 使用与股票数据相同的截止日期
-        )
+        # 2. 获取新闻数据（可选）
+        news_task = None
+        if include_news:
+            print("📰 Fetching news data")
+            news_task = get_stock_news(
+                ticker=ticker,
+                background_tasks=None,  # No background tasks needed for agent context
+                end_date=end_date  # 使用与股票数据相同的截止日期
+            )
+        else:
+            print("📰 News collection disabled - skipping news data")
 
         # 3. 并行执行所有数据获取任务
-        all_tasks = price_tasks + [news_task]
+        all_tasks = price_tasks if news_task is None else price_tasks + [news_task]
         results = await asyncio.gather(*all_tasks, return_exceptions=True)
 
         # 4. 处理价格数据结果
         price_results = results[:len(periods_to_fetch)]
+        critical_periods = {"daily", "weekly"}
         for period, result in zip(periods_to_fetch, price_results):
             if isinstance(result, Exception):
                 print(f"❌ Error collecting {period} data: {result}")
+                if period in critical_periods:
+                    raise AIServiceException(f"无法获取{ticker}的{period}数据: {result}")
             elif isinstance(result, pd.DataFrame) and not result.empty:
                 # 特殊处理10分钟线数据的键名
                 if period == "10min":
@@ -192,16 +208,19 @@ async def data_collection_agent(state: GraphState) -> Dict[str, Any]:
                 print(f"✅ {period} data: {len(result)} records")
             else:
                 print(f"⚠️  No {period} data available")
+                if period in critical_periods:
+                    raise AIServiceException(f"{ticker} 的 {period} 数据为空，无法完成数据采集")
 
         # 5. 处理新闻数据结果
-        news_result = results[-1]
-        if isinstance(news_result, Exception):
-            print(f"❌ Error collecting news data: {news_result}")
-        elif isinstance(news_result, pd.DataFrame) and not news_result.empty:
-            collected_data['news'] = news_result.to_dict(orient='records')
-            print(f"✅ News data: {len(news_result)} articles")
-        else:
-            print("⚠️  No news data available")
+        if news_task is not None:
+            news_result = results[-1]
+            if isinstance(news_result, Exception):
+                print(f"❌ Error collecting news data: {news_result}")
+            elif isinstance(news_result, pd.DataFrame) and not news_result.empty:
+                collected_data['news'] = news_result.to_dict(orient='records')
+                print(f"✅ News data: {len(news_result)} articles")
+            else:
+                print("⚠️  No news data available")
 
     finally:
         db.close()

@@ -202,7 +202,8 @@ curl -X POST "http://127.0.0.1:8000/ai/predict-structured" \
 - **关键特性**：
   - 请求体支持 `tickers`、`max_concurrency`、`max_retries`、`retry_delay_seconds` 等控制参数；
   - 后端使用 `asyncio.Semaphore` 与 `RateLimiter` 组件串联多源限流，并输出每只股票的耗时、重试与错误原因；
-  - 成功结果会写入 Redis `prediction:pending:*`，随后由定时任务落库。
+  - `execution_mode` 支持在完整预测（`full`）与仅数据采集（`data_collection_only`）之间切换，后者仅获取日/周线数据并忽略新闻与持久化；
+  - 成功结果会写入 Redis `prediction:pending:*`，随后由定时任务落库（仅 `full` 模式生效）。
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/ai/predict-structured/batch" \
@@ -212,9 +213,12 @@ curl -X POST "http://127.0.0.1:8000/ai/predict-structured/batch" \
         "save_to_db": true,
         "max_concurrency": 3,
         "max_retries": 1,
-        "retry_delay_seconds": 5.0
+        "retry_delay_seconds": 5.0,
+        "execution_mode": "full"
       }'
 ```
+
+> 💡 若仅需采集日线/周线数据，可将 `execution_mode` 设为 `data_collection_only`，请求将跳过新闻抓取、分析环节与持久化写入。
 
 > 📘 完整操作流程、环境变量说明与故障排查请参考 `docs/operations/batch-prediction-guide.md`。
 

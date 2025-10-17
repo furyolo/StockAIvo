@@ -26,7 +26,11 @@ from stockaivo.cache_manager import StructuredPredictionPendingEntry, save_struc
 from stockaivo.data_service import get_market_aware_current_date
 from stockaivo.exceptions import AIServiceException
 from stockaivo.models import StockPrediction
-from stockaivo.schemas import StructuredPredictionRequest, StructuredPredictionResponse
+from stockaivo.schemas import (
+    StructuredPredictionExecutionMode,
+    StructuredPredictionRequest,
+    StructuredPredictionResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,19 +40,67 @@ async def run_structured_prediction(
     db: Optional[Session] = None,
 ) -> StructuredPredictionResponse:
     """运行结构化预测主流程"""
-    logger.info("开始处理结构化预测请求: %s", request.ticker)
+    execution_mode: StructuredPredictionExecutionMode = request.execution_mode
+    logger.info(
+        "开始处理结构化预测请求: %s | 模式: %s",
+        request.ticker,
+        execution_mode,
+    )
 
     analysis_state = _initialize_graph_state(request)
 
-    await _prepare_analysis_state(analysis_state)
+    await _prepare_analysis_state(analysis_state, execution_mode)
+
+    if execution_mode == "data_collection_only":
+        data_summary = _summarize_data_collection(analysis_state)
+        timestamp = datetime.now().isoformat()
+        reasoning = _format_data_collection_reasoning(request.ticker, data_summary)
+        required_datasets = ("daily_prices", "weekly_prices")
+        missing_datasets = [
+            dataset for dataset in required_datasets if data_summary.get(dataset, 0) <= 0
+        ]
+        success_flag = len(missing_datasets) == 0
+        error_message: Optional[str] = None
+        if not success_flag:
+            joined_missing = ", ".join(missing_datasets)
+            error_message = f"缺少关键数据集: {joined_missing}"
+            logger.error("数据采集模式缺失关键数据: %s -> %s", request.ticker, joined_missing)
+            reasoning = f"{reasoning}\n⚠️ 注意：{error_message}"
+
+        prediction_payload = {
+            "success": success_flag,
+            "timestamp": timestamp,
+            "reasoning": reasoning,
+        }
+        if error_message:
+            prediction_payload["error"] = error_message
+        response = _build_response(
+            request,
+            analysis_state,
+            prediction_payload,
+            execution_mode=execution_mode,
+            data_summary=data_summary,
+        )
+        if request.save_to_db:
+            logger.debug(
+                "数据采集模式不会将结构化预测结果写入 Redis 待持久化队列或数据库，已忽略 save_to_db 标志: %s",
+                request.ticker,
+            )
+        logger.info("数据采集模式完成: %s, 摘要=%s", request.ticker, data_summary)
+        return response
 
     prediction_payload = await structured_prediction_agent(analysis_state)
     prediction_data = prediction_payload.get("structured_prediction", {})
 
     success = bool(prediction_data.get("success"))
-    response = _build_response(request, analysis_state, prediction_data)
+    response = _build_response(
+        request,
+        analysis_state,
+        prediction_data,
+        execution_mode=execution_mode,
+    )
 
-    if success and request.save_to_db:
+    if success and request.save_to_db and execution_mode == "full":
         _persist_prediction_if_needed(db, request, analysis_state, prediction_data)
 
     return response
@@ -71,17 +123,25 @@ def _initialize_graph_state(request: StructuredPredictionRequest) -> GraphState:
     return state
 
 
-async def _prepare_analysis_state(state: GraphState) -> None:
+async def _prepare_analysis_state(
+    state: GraphState,
+    execution_mode: StructuredPredictionExecutionMode,
+) -> None:
     """执行数据收集与多 Agent 分析，准备结构化预测所需状态"""
     try:
-        data_result = await data_collection_agent(state)
+        data_result = await data_collection_agent(
+            state,
+            include_news=execution_mode == "full",
+            include_intraday=execution_mode == "full",
+        )
     except Exception as exc:  # pragma: no cover - 兜底日志
         logger.error("数据收集阶段失败: %s", exc)
         raise AIServiceException(f"数据收集阶段失败: {exc}") from exc
 
     _merge_state(state, data_result)
 
-    await _run_parallel_analysis(state)
+    if execution_mode == "full":
+        await _run_parallel_analysis(state)
 
 
 async def _run_parallel_analysis(state: GraphState) -> None:
@@ -183,10 +243,46 @@ def _merge_state(state: GraphState, updates: Dict[str, Any]) -> None:
             state_dict[key] = value
 
 
+def _summarize_data_collection(state: GraphState) -> Dict[str, int]:
+    """生成数据采集模式下的记录数摘要"""
+    raw_data = cast(Dict[str, Any], state.get("raw_data") or {})
+    summary: Dict[str, int] = {}
+
+    for key, value in raw_data.items():
+        if isinstance(value, dict):
+            data_records = value.get("data")
+            if isinstance(data_records, list):
+                summary[key] = len(data_records)
+            else:
+                summary[key] = len(value)
+        elif isinstance(value, list):
+            summary[key] = len(value)
+        else:
+            summary[key] = 0
+
+    return summary
+
+
+def _format_data_collection_reasoning(
+    ticker: str,
+    summary: Dict[str, int],
+) -> str:
+    """构造数据采集模式下的推理说明"""
+    if not summary:
+        return f"数据采集模式已执行，但未获取到 {ticker} 的有效数据。"
+
+    parts = [f"{dataset}: {count} 条" for dataset, count in summary.items()]
+    joined = "，".join(parts)
+    return f"数据采集模式已完成，采集 {ticker} 的数据摘要：{joined}。"
+
+
 def _build_response(
     request: StructuredPredictionRequest,
     state: GraphState,
     prediction_data: Dict[str, Any],
+    *,
+    execution_mode: StructuredPredictionExecutionMode,
+    data_summary: Optional[Dict[str, int]] = None,
 ) -> StructuredPredictionResponse:
     """根据预测结果构建响应模型"""
     timestamp = prediction_data.get("timestamp") or datetime.now().isoformat()
@@ -203,6 +299,8 @@ def _build_response(
         "market_aware_date": market_context[0],
         "error": prediction_data.get("error"),
     }
+    response_kwargs["execution_mode"] = execution_mode
+    response_kwargs["data_collection_summary"] = data_summary
 
     # market_context[0] 可能为日期，也可能为空
     market_date = market_context[0]
@@ -212,6 +310,19 @@ def _build_response(
         response_kwargs["market_aware_date"] = None
     else:
         response_kwargs["market_aware_date"] = str(market_date)
+
+    if execution_mode == "data_collection_only":
+        # 数据采集模式不返回预测结果相关字段
+        response_kwargs["prediction_probability"] = None
+        response_kwargs["direction"] = None
+        response_kwargs["confidence_level"] = None
+        response_kwargs["error"] = None if response_kwargs["success"] else response_kwargs["error"]
+        logger.debug(
+            "数据采集模式响应构建完成: %s, 摘要=%s",
+            request.ticker,
+            data_summary,
+        )
+        return StructuredPredictionResponse(**response_kwargs)
 
     if not response_kwargs["success"]:
         return StructuredPredictionResponse(**response_kwargs)

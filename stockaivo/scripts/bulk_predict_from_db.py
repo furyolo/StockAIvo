@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Awaitable, Callable, Iterable, List, Optional, Sequence, Set, cast
+from typing import Awaitable, Callable, Dict, Iterable, List, Optional, Sequence, Set, cast
 
 import httpx
 from dotenv import load_dotenv
@@ -41,6 +41,7 @@ from stockaivo.routers.ai import (
     StructuredPredictionBatchSummary,
     analyze_stock_structured_prediction_batch,
 )
+from stockaivo.schemas import StructuredPredictionExecutionMode
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ class BulkPredictConfig:
     api_base_url: Optional[str]
     api_key: Optional[str]
     request_timeout: float
+    execution_mode: StructuredPredictionExecutionMode
 
 
 @dataclass(slots=True)
@@ -94,6 +96,7 @@ class ProgressTracker:
         self.path = path
         self._processed_list: List[str] = []
         self._processed_set: Set[str] = set()
+        self._execution_mode: Optional[str] = None
         self._load()
 
     def _load(self) -> None:
@@ -103,6 +106,10 @@ class ProgressTracker:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception as exc:
             raise RuntimeError(f"读取进度文件失败：{self.path}: {exc}") from exc
+
+        mode_value = data.get("execution_mode")
+        if isinstance(mode_value, str):
+            self._execution_mode = mode_value
 
         raw_entries = data.get("processed_tickers") or data.get("tickers") or []
         if not isinstance(raw_entries, list):
@@ -123,16 +130,42 @@ class ProgressTracker:
                 raise RuntimeError(f"删除进度文件失败：{self.path}: {exc}") from exc
         self._processed_list.clear()
         self._processed_set.clear()
+        self._execution_mode = None
 
     def processed_count(self) -> int:
         return len(self._processed_list)
 
-    def filter_pending(self, tickers: Sequence[str], *, resume: bool) -> List[str]:
+    def filter_pending(
+        self,
+        tickers: Sequence[str],
+        *,
+        resume: bool,
+        execution_mode: StructuredPredictionExecutionMode,
+    ) -> List[str]:
         if not resume:
             return list(tickers)
+
+        if self._execution_mode and self._execution_mode != execution_mode:
+            logger.info(
+                "进度文件 %s 记录的执行模式为 %s，本次执行模式为 %s，将自动重置进度。",
+                self.path,
+                self._execution_mode,
+                execution_mode,
+            )
+            self.reset()
+            return list(tickers)
+
+        if self._execution_mode is None:
+            self._execution_mode = execution_mode
+
         return [ticker for ticker in tickers if ticker not in self._processed_set]
 
-    def record_success(self, tickers: Iterable[str]) -> None:
+    def record_success(
+        self,
+        tickers: Iterable[str],
+        *,
+        execution_mode: StructuredPredictionExecutionMode,
+    ) -> None:
         updated = False
         for ticker in tickers:
             normalized = _normalize_symbol(ticker)
@@ -141,7 +174,13 @@ class ProgressTracker:
             self._processed_set.add(normalized)
             self._processed_list.append(normalized)
             updated = True
-        if updated:
+
+        mode_updated = False
+        if self._execution_mode != execution_mode:
+            self._execution_mode = execution_mode
+            mode_updated = True
+
+        if updated or mode_updated:
             self._save()
 
     def _save(self) -> None:
@@ -149,6 +188,7 @@ class ProgressTracker:
             "updated_at": datetime.now().isoformat(),
             "processed_count": len(self._processed_list),
             "processed_tickers": self._processed_list,
+            "execution_mode": self._execution_mode,
         }
         _write_json_atomic(self.path, payload)
 
@@ -272,6 +312,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=300.0,
         help="HTTP 调用超时时间（秒），默认 300 秒",
+    )
+    parser.add_argument(
+        "--execution-mode",
+        type=str,
+        default="full",
+        choices=["full", "data_collection_only"],
+        help="执行模式：full 运行完整预测，data_collection_only 仅采集日线/周线数据（默认 full）",
     )
     parser.add_argument(
         "--dry-run",
@@ -403,6 +450,22 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
         raise
 
 
+def _safe_int(value: object) -> int:
+    """将任意对象安全转换为整数，不可转换时返回 0"""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
 def generate_manifests(config: ManifestGenerationConfig) -> None:
     """生成批次清单 manifest 文件"""
     tickers = fetch_well_known_symbols(config.limit)
@@ -525,6 +588,7 @@ async def _dispatch_internal(
 def _build_failure_response(
     tickers: Sequence[str],
     error_message: str,
+    execution_mode: StructuredPredictionExecutionMode,
 ) -> StructuredPredictionBatchResponse:
     """将批次整体失败转换为结构化响应"""
     items = [
@@ -535,6 +599,7 @@ def _build_failure_response(
             retries=0,
             response=None,
             error=error_message,
+            execution_mode=execution_mode,
         )
         for ticker in tickers
     ]
@@ -543,6 +608,7 @@ def _build_failure_response(
         success=0,
         failed=len(items),
         duration_seconds=0.0,
+        execution_mode_counts={execution_mode: len(items)},
     )
     return StructuredPredictionBatchResponse(
         results=items,
@@ -561,6 +627,7 @@ async def run_bulk_prediction(
     exclude_symbols: Optional[Sequence[str]] = None,
     progress_tracker: Optional[ProgressTracker] = None,
     resume: bool = True,
+    failure_context: Optional[str] = None,
 ) -> BatchRunStats:
     """批量执行主流程"""
     provider = symbol_provider or fetch_well_known_symbols
@@ -576,6 +643,7 @@ async def run_bulk_prediction(
         len(normalized_tickers),
         config.batch_size,
     )
+    logger.info("当前执行模式：%s", config.execution_mode)
 
     exclude_set: Set[str] = set()
     if exclude_symbols:
@@ -595,7 +663,11 @@ async def run_bulk_prediction(
 
     pending_tickers = filtered_tickers
     if progress_tracker:
-        pending_tickers = progress_tracker.filter_pending(filtered_tickers, resume=resume)
+        pending_tickers = progress_tracker.filter_pending(
+            filtered_tickers,
+            resume=resume,
+            execution_mode=config.execution_mode,
+        )
         skipped_by_progress = len(filtered_tickers) - len(pending_tickers)
         if resume and skipped_by_progress:
             logger.info("根据进度文件跳过 %d 支已完成股票。", skipped_by_progress)
@@ -628,7 +700,7 @@ async def run_bulk_prediction(
             return await dispatch_batch_request(request, config, limiter)
         except Exception as exc:
             logger.error("批次调用失败，所有股票标记失败: %s", exc)
-            return _build_failure_response(request.tickers, str(exc))
+            return _build_failure_response(request.tickers, str(exc), config.execution_mode)
 
     dispatch = dispatcher or default_dispatch
 
@@ -646,6 +718,7 @@ async def run_bulk_prediction(
             max_concurrency=config.max_concurrency,
             max_retries=config.max_retries,
             retry_delay_seconds=config.retry_delay,
+            execution_mode=config.execution_mode,
         )
 
         batch_start = perf_counter()
@@ -677,10 +750,14 @@ async def run_bulk_prediction(
                     "retries": item.retries,
                     "latency_seconds": item.latency_seconds,
                     "batch_index": batch_index,
+                    "execution_mode": item.execution_mode,
                 }
             )
         if progress_tracker and batch_success_tickers:
-            progress_tracker.record_success(batch_success_tickers)
+            progress_tracker.record_success(
+                batch_success_tickers,
+                execution_mode=config.execution_mode,
+            )
 
     if progress_tracker:
         logger.info("进度文件已更新，累计成功股票数=%d。", progress_tracker.processed_count())
@@ -696,7 +773,15 @@ async def run_bulk_prediction(
     )
 
     if config.output_path and config.output_path != Path("-"):
-        _write_failures(config.output_path, total, total_success, total_failed, failure_details)
+        _write_failures(
+            config.output_path,
+            total,
+            total_success,
+            total_failed,
+            failure_details,
+            config.execution_mode,
+            context_label=failure_context,
+        )
 
     return BatchRunStats(total, batch_counter, total_success, total_failed, failure_details)
 
@@ -707,19 +792,74 @@ def _write_failures(
     success: int,
     failed: int,
     failures: List[dict],
+    execution_mode: StructuredPredictionExecutionMode,
+    *,
+    context_label: Optional[str] = None,
 ) -> None:
     """将失败列表写入 JSON 文件"""
     try:
-        payload = {
+        existing_runs: List[Dict[str, object]] = []
+        if output_path.exists():
+            try:
+                existing_text = output_path.read_text(encoding="utf-8")
+                if existing_text.strip():
+                    existing_data = json.loads(existing_text)
+                    if isinstance(existing_data, dict) and "runs" in existing_data:
+                        maybe_runs = existing_data.get("runs", [])
+                        if isinstance(maybe_runs, list):
+                            existing_runs = [entry for entry in maybe_runs if isinstance(entry, dict)]
+                    elif isinstance(existing_data, dict):
+                        existing_runs = [existing_data]
+                    elif isinstance(existing_data, list):
+                        existing_runs = [entry for entry in existing_data if isinstance(entry, dict)]
+            except Exception as exc:  # pragma: no cover - 容错处理
+                logger.warning("读取历史失败文件 %s 时解析异常，将创建新文件: %s", output_path, exc)
+                existing_runs = []
+
+        if context_label:
+            existing_runs = [entry for entry in existing_runs if entry.get("context") != context_label]
+
+        entry: Dict[str, object] = {
             "generated_at": datetime.now().isoformat(),
-            "total": total,
-            "success": success,
-            "failed": failed,
+            "total": int(total),
+            "success": int(success),
+            "failed": int(failed),
+            "execution_mode": str(execution_mode),
             "failures": failures,
         }
+        if context_label:
+            entry["context"] = context_label
+
+        existing_runs.append(entry)
+
+        aggregate_total = sum(_safe_int(entry.get("total", 0)) for entry in existing_runs)
+        aggregate_success = sum(_safe_int(entry.get("success", 0)) for entry in existing_runs)
+        aggregate_failed = sum(_safe_int(entry.get("failed", 0)) for entry in existing_runs)
+
+        mode_stats: Dict[str, Dict[str, int]] = {}
+        for entry in existing_runs:
+            mode = str(entry.get("execution_mode") or "unknown")
+            stats = mode_stats.setdefault(
+                mode,
+                {"runs": 0, "total": 0, "success": 0, "failed": 0},
+            )
+            stats["runs"] += 1
+            stats["total"] += _safe_int(entry.get("total", 0))
+            stats["success"] += _safe_int(entry.get("success", 0))
+            stats["failed"] += _safe_int(entry.get("failed", 0))
+
+        payload: Dict[str, object] = {
+            "updated_at": datetime.now().isoformat(),
+            "aggregate_total": aggregate_total,
+            "aggregate_success": aggregate_success,
+            "aggregate_failed": aggregate_failed,
+            "runs": existing_runs,
+            "execution_mode_stats": mode_stats,
+        }
+
         _write_json_atomic(output_path, payload)
         if failed > 0:
-            logger.warning("失败列表已写入 %s，共 %d 条。", output_path, failed)
+            logger.warning("失败列表已写入 %s，本次失败 %d 条。", output_path, failed)
         else:
             logger.info("无失败记录，仍写入空文件 %s 以供审计。", output_path)
     except Exception as exc:  # pragma: no cover - 记录即可
@@ -755,7 +895,13 @@ def main() -> None:
         api_base_url=args.api_base_url,
         api_key=args.api_key,
         request_timeout=args.request_timeout,
+        execution_mode=cast(StructuredPredictionExecutionMode, args.execution_mode),
     )
+
+    if config.execution_mode == "data_collection_only" and config.save_to_db:
+        logger.info(
+            "数据采集模式下不会写入数据库，save_to_db 参数将被忽略。"
+        )
 
     if args.generate_manifests:
         manifest_config = ManifestGenerationConfig(
@@ -775,6 +921,7 @@ def main() -> None:
         return
 
     include_symbols: Optional[List[str]] = None
+    failure_context: Optional[str] = None
     symbol_provider_override: Optional[Callable[[Optional[int]], List[str]]] = None
     if args.include_symbols_file:
         try:
@@ -792,6 +939,7 @@ def main() -> None:
             args.include_symbols_file,
             len(include_symbols),
         )
+        failure_context = args.include_symbols_file.stem
 
         def provide_from_manifest(limit_override: Optional[int]) -> List[str]:
             if limit_override and limit_override > 0:
@@ -846,6 +994,7 @@ def main() -> None:
                 exclude_symbols=exclude_symbols,
                 progress_tracker=progress_tracker,
                 resume=args.resume,
+                failure_context=failure_context,
             )
         )
     except KeyboardInterrupt:

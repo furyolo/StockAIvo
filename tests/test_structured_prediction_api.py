@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from stockaivo.schemas import (
+    StructuredPredictionExecutionMode,
     StructuredPredictionBatchItem,
     StructuredPredictionBatchRequest,
     StructuredPredictionBatchResponse,
@@ -32,6 +33,7 @@ def build_structured_prediction_request(
     *,
     end_date: Optional[date] = None,
     save_to_db: bool = True,
+    execution_mode: StructuredPredictionExecutionMode = "full",
 ) -> "StructuredPredictionRequestType":
     from stockaivo.routers.ai import StructuredPredictionRequest
 
@@ -39,6 +41,7 @@ def build_structured_prediction_request(
         ticker=ticker,
         end_date=end_date,
         save_to_db=save_to_db,
+        execution_mode=execution_mode,
     )
 
 
@@ -53,6 +56,8 @@ def build_structured_prediction_response(
     reasoning: Optional[str] = None,
     market_aware_date: Optional[str] = None,
     error: Optional[str] = None,
+    execution_mode: StructuredPredictionExecutionMode = "full",
+    data_collection_summary: Optional[dict[str, int]] = None,
 ) -> "StructuredPredictionResponseType":
     from stockaivo.routers.ai import StructuredPredictionResponse
 
@@ -66,6 +71,8 @@ def build_structured_prediction_response(
         timestamp=timestamp,
         market_aware_date=market_aware_date,
         error=error,
+        execution_mode=execution_mode,
+        data_collection_summary=data_collection_summary,
     )
 
 
@@ -77,6 +84,7 @@ def build_batch_request(
     max_concurrency: int = 3,
     max_retries: int = 0,
     retry_delay_seconds: float = 5.0,
+    execution_mode: StructuredPredictionExecutionMode = "full",
 ) -> StructuredPredictionBatchRequest:
     return StructuredPredictionBatchRequest(
         tickers=list(tickers),
@@ -85,6 +93,7 @@ def build_batch_request(
         max_concurrency=max_concurrency,
         max_retries=max_retries,
         retry_delay_seconds=retry_delay_seconds,
+        execution_mode=execution_mode,
     )
 
 
@@ -94,16 +103,19 @@ def test_structured_prediction_request_model() -> None:
     assert request.ticker == "AAPL"
     assert request.end_date is None
     assert request.save_to_db is True
+    assert request.execution_mode == "full"
 
     test_date = date(2024, 12, 31)
     request_with_date = build_structured_prediction_request(
         "TSLA",
         end_date=test_date,
         save_to_db=False,
+        execution_mode="data_collection_only",
     )
     assert request_with_date.ticker == "TSLA"
     assert request_with_date.end_date == test_date
     assert request_with_date.save_to_db is False
+    assert request_with_date.execution_mode == "data_collection_only"
 
 
 def test_structured_prediction_response_model() -> None:
@@ -125,6 +137,8 @@ def test_structured_prediction_response_model() -> None:
     assert success_response.confidence_level == "HIGH"
     assert success_response.ticker == "AAPL"
     assert success_response.error is None
+    assert success_response.execution_mode == "full"
+    assert success_response.data_collection_summary is None
 
     error_response = build_structured_prediction_response(
         success=False,
@@ -137,6 +151,24 @@ def test_structured_prediction_response_model() -> None:
     assert error_response.ticker == "NVDA"
     assert error_response.error == "技术分析失败"
     assert error_response.prediction_probability is None
+    assert error_response.execution_mode == "full"
+
+    data_collection_response = build_structured_prediction_response(
+        success=True,
+        ticker="BABA",
+        timestamp=datetime.now().isoformat(),
+        execution_mode="data_collection_only",
+        reasoning="数据采集模式已完成",
+        data_collection_summary={"daily_prices": 2, "weekly_prices": 1},
+    )
+
+    assert data_collection_response.execution_mode == "data_collection_only"
+    assert data_collection_response.data_collection_summary == {
+        "daily_prices": 2,
+        "weekly_prices": 1,
+    }
+    assert data_collection_response.direction is None
+    assert data_collection_response.prediction_probability is None
 
 
 def test_nested_structured_prediction_request() -> None:
@@ -200,6 +232,8 @@ def test_response_model_optional_fields() -> None:
     assert minimal_response.reasoning is None
     assert minimal_response.market_aware_date is None
     assert minimal_response.error is None
+    assert minimal_response.execution_mode == "full"
+    assert minimal_response.data_collection_summary is None
 
 
 def test_structured_prediction_batch_request_model_defaults() -> None:
@@ -210,6 +244,13 @@ def test_structured_prediction_batch_request_model_defaults() -> None:
     assert request.max_concurrency == 3
     assert request.max_retries == 0
     assert request.retry_delay_seconds == pytest.approx(5.0)
+    assert request.execution_mode == "full"
+
+    collection_request = build_batch_request(
+        ["AAPL"],
+        execution_mode="data_collection_only",
+    )
+    assert collection_request.execution_mode == "data_collection_only"
 
 
 def test_structured_prediction_batch_response_model() -> None:
@@ -232,6 +273,7 @@ def test_structured_prediction_batch_response_model() -> None:
         retries=0,
         response=single_response,
         error=None,
+        execution_mode="full",
     )
 
     batch_response = StructuredPredictionBatchResponse(
@@ -241,6 +283,7 @@ def test_structured_prediction_batch_response_model() -> None:
             success=1,
             failed=0,
             duration_seconds=1.2,
+            execution_mode_counts={"full": 1},
         ),
         failed_tickers=[],
     )
@@ -248,6 +291,8 @@ def test_structured_prediction_batch_response_model() -> None:
     assert batch_response.summary.success == 1
     assert batch_response.results[0].response is not None
     assert batch_response.results[0].response.direction == "UP"
+    assert batch_response.results[0].execution_mode == "full"
+    assert batch_response.summary.execution_mode_counts == {"full": 1}
 
 
 @pytest.fixture
@@ -302,6 +347,7 @@ def test_batch_prediction_endpoint_success(
             timestamp="2024-01-05T10:00:00",
             market_aware_date="2024-01-05",
             error=None,
+            execution_mode=request.execution_mode,
         )
 
     monkeypatch.setattr(ai_router, "run_structured_prediction", fake_run)
@@ -318,6 +364,11 @@ def test_batch_prediction_endpoint_success(
     assert response.status_code == 200
     data = response.json()
     assert data["summary"]["total"] == 2
+    assert data["summary"]["execution_mode_counts"]["full"] == 2
+    assert all(item["execution_mode"] == "full" for item in data["results"])
+    assert all(
+        item["response"]["execution_mode"] == "full" for item in data["results"]
+    )
     assert data["summary"]["success"] == 2
     assert data["failed_tickers"] == []
     assert all(item["success"] for item in data["results"])

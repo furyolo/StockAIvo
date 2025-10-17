@@ -6,8 +6,11 @@ StockAIvo - Pydantic数据模型
 from datetime import datetime
 from datetime import date as DateType
 from decimal import Decimal
-from typing import List, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict
+
+
+StructuredPredictionExecutionMode = Literal["full", "data_collection_only"]
 
 
 class StockPriceBase(BaseModel):
@@ -139,6 +142,10 @@ class StructuredPredictionBatchRequest(BaseModel):
         le=120.0,
         description="重试前的等待时间（秒），用于指数退避基础值",
     )
+    execution_mode: StructuredPredictionExecutionMode = Field(
+        "full",
+        description="执行模式：full 为完整预测，data_collection_only 仅执行日线/周线数据采集",
+    )
 
 
 class StructuredPredictionRequest(BaseModel):
@@ -149,6 +156,10 @@ class StructuredPredictionRequest(BaseModel):
         description="自定义结束日期 (YYYY-MM-DD)，开始日期由系统自动推算",
     )
     save_to_db: bool = Field(True, description="是否将预测结果保存到数据库")
+    execution_mode: StructuredPredictionExecutionMode = Field(
+        "full",
+        description="执行模式：full 为完整预测，data_collection_only 仅执行日线/周线数据采集",
+    )
 
 
 class StructuredPredictionResponse(BaseModel):
@@ -173,6 +184,14 @@ class StructuredPredictionResponse(BaseModel):
         description="市场感知日期（ISO8601）",
     )
     error: Optional[str] = Field(None, description="错误信息（若失败）")
+    execution_mode: StructuredPredictionExecutionMode = Field(
+        "full",
+        description="执行模式：full 为完整预测，data_collection_only 仅执行日线/周线数据采集",
+    )
+    data_collection_summary: Optional[Dict[str, int]] = Field(
+        None,
+        description="数据采集模式下返回的数据集条数摘要，键为数据集名称，值为记录数量",
+    )
 
 
 class NestedStructuredPredictionRequest(BaseModel):
@@ -202,6 +221,10 @@ class StructuredPredictionBatchItem(BaseModel):
         None,
         description="失败原因说明，成功时为空",
     )
+    execution_mode: StructuredPredictionExecutionMode = Field(
+        "full",
+        description="该股票实际执行的预测模式",
+    )
 
 
 class StructuredPredictionBatchSummary(BaseModel):
@@ -213,6 +236,10 @@ class StructuredPredictionBatchSummary(BaseModel):
         ...,
         ge=0.0,
         description="批量处理总耗时（秒）",
+    )
+    execution_mode_counts: Dict[str, int] = Field(
+        default_factory=dict,
+        description="按执行模式统计的股票数量，例如 {'full': 10, 'data_collection_only': 5}",
     )
 
 

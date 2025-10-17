@@ -15,6 +15,7 @@ from stockaivo.routers.ai import (
     StructuredPredictionBatchResponse,
     StructuredPredictionBatchSummary,
 )
+from stockaivo.schemas import StructuredPredictionExecutionMode
 from stockaivo.scripts import bulk_predict_from_db as cli
 
 
@@ -23,6 +24,7 @@ def _build_config(
     batch_size: int = 2,
     dry_run: bool = False,
     output_path: Optional[Path] = None,
+    execution_mode: StructuredPredictionExecutionMode = "full",
 ) -> cli.BulkPredictConfig:
     """快捷构建配置对象"""
     return cli.BulkPredictConfig(
@@ -38,10 +40,15 @@ def _build_config(
         api_base_url=None,
         api_key=None,
         request_timeout=300.0,
+        execution_mode=execution_mode,  
     )
 
 
-def _build_success_response(tickers: List[str]) -> StructuredPredictionBatchResponse:
+def _build_success_response(
+    tickers: List[str],
+    *,
+    execution_mode: StructuredPredictionExecutionMode = "full",
+) -> StructuredPredictionBatchResponse:
     """构造全部成功的批量响应"""
     items = [
         StructuredPredictionBatchItem(
@@ -51,6 +58,7 @@ def _build_success_response(tickers: List[str]) -> StructuredPredictionBatchResp
             retries=0,
             response=None,
             error=None,
+            execution_mode=execution_mode,  
         )
         for ticker in tickers
     ]
@@ -59,6 +67,7 @@ def _build_success_response(tickers: List[str]) -> StructuredPredictionBatchResp
         success=len(items),
         failed=0,
         duration_seconds=0.1,
+        execution_mode_counts={execution_mode: len(items)},  # type: ignore[arg-type]
     )
     return StructuredPredictionBatchResponse(
         results=items,
@@ -111,6 +120,7 @@ async def test_run_bulk_prediction_batches_and_failures(tmp_path: Path, monkeypa
                         retries=1,
                         response=None,
                         error="LLM 服务不可用",
+                        execution_mode="full",
                     )
                 )
             else:
@@ -122,6 +132,7 @@ async def test_run_bulk_prediction_batches_and_failures(tmp_path: Path, monkeypa
                         retries=0,
                         response=None,
                         error=None,
+                        execution_mode="full",
                     )
                 )
         summary = StructuredPredictionBatchSummary(
@@ -129,6 +140,7 @@ async def test_run_bulk_prediction_batches_and_failures(tmp_path: Path, monkeypa
             success=len(items) - len(failed),
             failed=len(failed),
             duration_seconds=0.2,
+            execution_mode_counts={"full": len(items)},
         )
         return StructuredPredictionBatchResponse(
             results=items,
@@ -148,11 +160,14 @@ async def test_run_bulk_prediction_batches_and_failures(tmp_path: Path, monkeypa
     assert len(stats.failed_details) == 1
     assert stats.failed_details[0]["ticker"] == "DDD"
     assert stats.failed_details[0]["batch_index"] == 2
+    assert stats.failed_details[0]["execution_mode"] == "full"
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["total"] == 4
     assert payload["failed"] == 1
     assert payload["failures"][0]["ticker"] == "DDD"
+    assert payload["execution_mode"] == "full"
+    assert payload["failures"][0]["execution_mode"] == "full"
 
 
 @pytest.mark.asyncio
@@ -175,6 +190,7 @@ async def test_run_bulk_prediction_handles_dispatch_error(monkeypatch: pytest.Mo
     assert len(stats.failed_details) == 2
     assert {item["ticker"] for item in stats.failed_details} == {"AAPL", "MSFT"}
     assert all("网络异常" in (item["error"] or "") for item in stats.failed_details)
+    assert all(item["execution_mode"] == "full" for item in stats.failed_details)
 
 
 @pytest.mark.asyncio
@@ -217,7 +233,7 @@ async def test_run_bulk_prediction_progress_resume(tmp_path: Path, monkeypatch: 
 
     progress_path = tmp_path / "progress.json"
     tracker = cli.ProgressTracker(progress_path)
-    tracker.record_success(["AAPL"])
+    tracker.record_success(["AAPL"], execution_mode="full")
 
     async def success_dispatch(request, config_obj, limiter):
         return _build_success_response(request.tickers)
@@ -237,6 +253,7 @@ async def test_run_bulk_prediction_progress_resume(tmp_path: Path, monkeypatch: 
     data = json.loads(progress_path.read_text(encoding="utf-8"))
     assert data["processed_count"] == 3
     assert set(data["processed_tickers"]) == {"AAPL", "MSFT", "TSLA"}
+    assert data["execution_mode"] == "full"
 
     # 第二次运行 resume=True，应直接跳过所有股票
     stats_second = await cli.run_bulk_prediction(
@@ -257,3 +274,32 @@ async def test_run_bulk_prediction_progress_resume(tmp_path: Path, monkeypatch: 
     )
     assert stats_third.total_tickers == 3
     assert stats_third.success == 3
+
+
+@pytest.mark.asyncio
+async def test_run_bulk_prediction_data_collection_mode(monkeypatch: pytest.MonkeyPatch):
+    """data_collection_only 模式应透传到批量请求与汇总"""
+    config = _build_config(batch_size=2, execution_mode="data_collection_only", output_path=None)
+
+    def fake_provider(limit: Optional[int]) -> List[str]:
+        return ["AAA", "BBB"]
+
+    recorded_modes: List[str] = []
+
+    async def success_dispatch(request, config_obj, limiter):
+        recorded_modes.append(request.execution_mode)
+        return _build_success_response(
+            request.tickers,
+            execution_mode=request.execution_mode,
+        )
+
+    monkeypatch.setattr(cli, "dispatch_batch_request", success_dispatch)
+    monkeypatch.setattr(cli, "get_batch_prediction_rate_limiter", lambda: None)
+
+    stats = await cli.run_bulk_prediction(config, symbol_provider=fake_provider)
+
+    assert recorded_modes == ["data_collection_only"]
+    assert stats.total_tickers == 2
+    assert stats.success == 2
+    assert stats.failed == 0
+    assert stats.failed_details == []

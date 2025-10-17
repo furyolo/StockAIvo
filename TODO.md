@@ -103,7 +103,7 @@
 - [ ] **CLI 批量执行工具增强**：在 Task F 基础 CLI 完成后，可继续扩展读取 `symbols.txt`、自定义调度策略或提供前端触发入口。
 - [ ] **请求队列扩展**：若需离线大批量处理，可在 Redis/数据库中实现优先级队列与断点续传，再由 APScheduler 消费。
 - [ ] **实时监控与仪表盘**：在 `/cache-stats` 基础上扩展 API 或 Prometheus 指标，展示成功率、耗时、限流命中次数。
-- [ ] **结果导出模板**：可选支持 JSON/CSV 批量导出与执行报告生成，满足运营或报表需求。
+- [x] **数据采集模式支持**：为 `bulk_predict_from_db.py` 与批量 API 增加 `execution_mode=data_collection_only`，仅执行日线/周线数据抓取跳过新闻与预测，防止新闻数据过期；需在 `StructuredPredictionRequest` 中新增模式字段、为 `data_collection_agent` 提供禁用新闻参数，并更新响应与进度文件、文档和测试覆盖该新模式。
 
 ## 📚 数据字典来源更新
 

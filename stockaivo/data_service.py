@@ -630,14 +630,19 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, end_date:
             # --- 3. 合并数据并更新缓存 ---
             if all_newly_fetched_data:
                 new_data_df = pd.concat(all_newly_fetched_data, ignore_index=True)
-                
+
                 # 确保日期列类型一致以便合并
                 redis_data[date_col] = pd.to_datetime(redis_data[date_col])
                 new_data_df[date_col] = pd.to_datetime(new_data_df[date_col])
 
                 # 合并、去重、排序
-                combined_data = pd.concat([redis_data, new_data_df]).drop_duplicates(subset=[date_col]).sort_values(by=date_col).reset_index(drop=True)
-                
+                combined_data = (
+                    pd.concat([redis_data, new_data_df])
+                    .drop_duplicates(subset=[date_col])
+                    .sort_values(by=date_col)
+                    .reset_index(drop=True)
+                )
+
                 # 更新通用缓存
                 cache_manager.save_to_redis(ticker, period, combined_data, CacheType.GENERAL_CACHE)
                 logger.info(f"成功合并并更新了 {ticker} 的 {period} 通用缓存，总条数: {len(combined_data)}")
@@ -646,13 +651,21 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, end_date:
                 if data_from_remote_only:
                     remote_data_df = pd.concat(data_from_remote_only, ignore_index=True)
                     _append_to_pending_save(ticker, period, remote_data_df)
-
-                filtered_data = _filter_dataframe_by_date(combined_data, period, start_date, end_date)
-                return _clean_dataframe(filtered_data)
             else:
                 logger.warning(f"无法获取任何缺失的数据，仅返回当前缓存的数据")
-                filtered_data = _filter_dataframe_by_date(redis_data, period, start_date, end_date)
-                return _clean_dataframe(filtered_data)
+                combined_data = redis_data
+
+            if required_dates:
+                combined_dates = pd.to_datetime(combined_data[date_col]).dt.date.tolist()
+                remaining_missing = _find_missing_date_ranges(required_dates, combined_dates, market_aware_date)
+                if remaining_missing:
+                    logger.error(
+                        f"{ticker} 的 {period} 数据在关键范围内仍然缺失: {remaining_missing}"
+                    )
+                    return None
+
+            filtered_data = _filter_dataframe_by_date(combined_data, period, start_date, end_date)
+            return _clean_dataframe(filtered_data)
 
     except Exception as e:
         logger.error(f"处理缓存或获取缺失数据时出错: {e}", exc_info=True)
@@ -716,13 +729,18 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, end_date:
             combined_data = db_data
             if all_newly_fetched_data:
                 new_data_df = pd.concat(all_newly_fetched_data)
-                
+
                 if not new_data_df.empty:
                     # 确保列类型一致
                     db_data[date_col] = pd.to_datetime(db_data[date_col])
                     new_data_df[date_col] = pd.to_datetime(new_data_df[date_col])
-                    
-                    combined_data = pd.concat([db_data, new_data_df]).drop_duplicates(subset=[date_col]).sort_values(by=date_col).reset_index(drop=True)
+
+                    combined_data = (
+                        pd.concat([db_data, new_data_df])
+                        .drop_duplicates(subset=[date_col])
+                        .sort_values(by=date_col)
+                        .reset_index(drop=True)
+                    )
 
                     # 4. (可选但推荐) 将新数据保存到数据库
                     _append_to_pending_save(ticker, period, new_data_df)
@@ -730,6 +748,15 @@ async def get_stock_data(db: Session, ticker: str, period: PeriodType, end_date:
                     if period != "minute":
                         logger.info(f"检测到新的远程数据 (ticker: {ticker}, period: {period})，已存入待持久化缓存。")
                     # The background scheduler will pick this up.
+
+            if required_dates:
+                combined_dates = pd.to_datetime(combined_data[date_col]).dt.date.tolist()
+                remaining_missing = _find_missing_date_ranges(required_dates, combined_dates, market_aware_date)
+                if remaining_missing:
+                    logger.error(
+                        f"{ticker} 的 {period} 数据在关键范围内仍存在缺口: {remaining_missing}"
+                    )
+                    return None
 
             # 将合并后的完整数据更新到 Redis 通用缓存
             cache_manager.save_to_redis(ticker, period, combined_data, CacheType.GENERAL_CACHE)

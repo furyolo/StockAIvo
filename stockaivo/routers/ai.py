@@ -3,11 +3,12 @@ AI分析路由器 - 提供AI投资决策分析的API端点
 """
 
 import asyncio
+import inspect
 import logging
 from datetime import date
 from time import perf_counter
 from types import TracebackType
-from typing import Any, AsyncContextManager, List, Optional, Protocol, Set
+from typing import Any, AsyncContextManager, Awaitable, Dict, List, Optional, Protocol, Set, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -81,7 +82,11 @@ class _AcquireReleaseContext:
         self._bucket = bucket
 
     async def __aenter__(self) -> None:
-        await self._limiter.acquire(self._bucket)  # type: ignore[attr-defined]
+        acquire = getattr(self._limiter, "acquire", None)
+        if callable(acquire):
+            result = acquire(self._bucket)
+            if inspect.isawaitable(result):
+                await cast(Awaitable[Any], result)
         return None
 
     async def __aexit__(
@@ -92,7 +97,9 @@ class _AcquireReleaseContext:
     ) -> bool:
         release = getattr(self._limiter, "release", None)
         if callable(release):
-            await release(self._bucket, exc_type, exc, tb)  # type: ignore[arg-type]
+            result = release(self._bucket, exc_type, exc, tb)
+            if inspect.isawaitable(result):
+                await cast(Awaitable[Any], result)
         return False
 
 
@@ -102,22 +109,29 @@ def _rate_limit_guard(
 ) -> AsyncContextManager[None]:
     """根据限流器实现动态生成上下文管理器"""
     if limiter is None:
-        return _NullAsyncContext()
+        return _NullAsyncContext() 
 
     guard_callable = getattr(limiter, "guard", None)
     if callable(guard_callable):
         try:
             context = guard_callable(bucket)
-            if context is not None:
+            if isinstance(context, AsyncContextManager):
                 return context
+            if context is not None:
+                logger.warning(
+                    "限流器 guard 返回了非异步上下文对象 %r，将回退到 acquire 模式",
+                    type(context),
+                )
         except Exception as exc:  # pragma: no cover - 记录日志并降级
             logger.warning("创建限流 guard 时发生异常，将回退到 acquire 模式: %s", exc)
 
-    if hasattr(limiter, "acquire"):
-        return _AcquireReleaseContext(limiter, bucket)  # type: ignore[arg-type]
+    acquire = getattr(limiter, "acquire", None)
+    release = getattr(limiter, "release", None)
+    if callable(acquire) or callable(release):
+        return _AcquireReleaseContext(limiter, bucket)  
 
     logger.debug("限流器缺少 guard/acquire 接口，回退到无操作模式")
-    return _NullAsyncContext()
+    return _NullAsyncContext() 
 
 
 __all__ = [
@@ -248,7 +262,7 @@ async def analyze_stock_structured_prediction(
     request: StructuredPredictionRequest,
     db: DatabaseDep,
     rate_limiter: Optional[BatchPredictionRateLimiter] = Depends(get_batch_prediction_rate_limiter),
-) -> schemas.StructuredPredictionResponse:
+) -> StructuredPredictionResponse:
     """
     生成股票结构化预测。
     
@@ -268,8 +282,15 @@ async def analyze_stock_structured_prediction(
             await rate_limiter.acquire("tickertick")
             await rate_limiter.acquire("akshare")
 
+        normalized_request = StructuredPredictionRequest(
+            ticker=request.ticker,
+            end_date=request.end_date,
+            save_to_db=request.save_to_db,
+            execution_mode=request.execution_mode,
+        )
+
         async with _rate_limit_guard(rate_limiter, "ai_predict"):
-            return await run_structured_prediction(request, db)
+            return await run_structured_prediction(normalized_request, db)
 
     except ValueError as e:
         logger.error(f"结构化预测请求验证失败: {e}")
@@ -291,7 +312,7 @@ async def analyze_stock_structured_prediction_batch(
     request: StructuredPredictionBatchRequest,
     db: DatabaseDep,
     rate_limiter: Optional[BatchPredictionRateLimiter] = Depends(get_batch_prediction_rate_limiter),
-) -> schemas.StructuredPredictionBatchResponse:
+) -> StructuredPredictionBatchResponse:
     """
     批量生成多只股票的结构化预测。
 
@@ -334,6 +355,7 @@ async def analyze_stock_structured_prediction_batch(
             ticker=ticker,
             end_date=request.end_date,
             save_to_db=request.save_to_db,
+            execution_mode=request.execution_mode,
         )
         limiter_retry_cap = (
             rate_limiter.max_retry_attempts if rate_limiter is not None else request.max_retries
@@ -353,10 +375,17 @@ async def analyze_stock_structured_prediction_batch(
                         else:
                             session_to_use = db
                     if rate_limiter is not None:
-                        await rate_limiter.acquire("tickertick")
+                        if request.execution_mode == "full":
+                            await rate_limiter.acquire("tickertick")
                         await rate_limiter.acquire("akshare")
 
-                    async with _rate_limit_guard(rate_limiter, "ai_predict"):
+                    guard_context = (
+                        _rate_limit_guard(rate_limiter, "ai_predict")
+                        if request.execution_mode == "full"
+                        else _NullAsyncContext()
+                    )
+
+                    async with guard_context:
                         latest_response = await run_structured_prediction(
                             single_request,
                             session_to_use,
@@ -371,6 +400,7 @@ async def analyze_stock_structured_prediction_batch(
                         retries=attempt - 1,
                         response=latest_response,
                         error=None,
+                        execution_mode=latest_response.execution_mode,
                     )
 
                 last_error = latest_response.error or "结构化预测失败"
@@ -416,6 +446,12 @@ async def analyze_stock_structured_prediction_batch(
                     await asyncio.sleep(backoff_seconds)
 
         latency = perf_counter() - attempt_start
+        mode_for_item = (
+            latest_response.execution_mode
+            if latest_response is not None
+            else request.execution_mode
+        )
+
         return StructuredPredictionBatchItem(
             ticker=ticker,
             success=False,
@@ -423,6 +459,7 @@ async def analyze_stock_structured_prediction_batch(
             retries=attempts_allowed - 1,
             response=None,
             error=last_error,
+            execution_mode=mode_for_item,
         )
 
     # 2. 并发执行批量任务
@@ -448,11 +485,16 @@ async def analyze_stock_structured_prediction_batch(
             ", ".join(item.ticker for item in failed_items),
         )
 
+    mode_counts: Dict[str, int] = {}
+    for item in results:
+        mode_counts[item.execution_mode] = mode_counts.get(item.execution_mode, 0) + 1
+
     response_summary = StructuredPredictionBatchSummary(
         total=len(results),
         success=success_count,
         failed=len(failed_items),
         duration_seconds=total_duration,
+        execution_mode_counts=mode_counts,
     )
 
     return StructuredPredictionBatchResponse(

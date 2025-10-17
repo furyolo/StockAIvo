@@ -46,7 +46,10 @@ async def test_run_structured_prediction_success(monkeypatch):
         trading_days_count=5,
     )
 
-    async def fake_data_agent(state: Any) -> Dict[str, Any]:
+    captured_kwargs: Dict[str, Any] = {}
+
+    async def fake_data_agent(state: Any, **kwargs: Any) -> Dict[str, Any]:
+        captured_kwargs.update(kwargs)
         return {
             "analysis_results": {"data_collector": "ok"},
             "market_analysis": fake_market,
@@ -88,7 +91,12 @@ async def test_run_structured_prediction_success(monkeypatch):
 
     monkeypatch.setattr(service, "save_structured_prediction_pending_cache", fake_save_prediction)
 
-    request = StructuredPredictionRequest(ticker="AAPL", end_date=None, save_to_db=True)
+    request = StructuredPredictionRequest(
+        ticker="AAPL",
+        end_date=None,
+        save_to_db=True,
+        execution_mode="full",
+    )
     session = DummySession()
 
     response = await service.run_structured_prediction(request, cast(Session, session))
@@ -96,6 +104,8 @@ async def test_run_structured_prediction_success(monkeypatch):
     assert response.success is True
     assert response.direction == "UP"
     assert response.market_aware_date == "2024-01-05"
+    assert response.execution_mode == "full"
+    assert response.data_collection_summary is None
     assert session.committed is False
     assert session.merged is None
     assert len(saved_payloads) == 1
@@ -103,13 +113,14 @@ async def test_run_structured_prediction_success(monkeypatch):
     assert saved_payload.get("ticker") == "AAPL"
     assert saved_payload.get("market_aware_date") == "2024-01-05"
     assert saved_payload.get("target_date") == "2024-01-12"
+    assert captured_kwargs == {"include_news": True, "include_intraday": True}
 
 
 @pytest.mark.asyncio
 async def test_run_structured_prediction_technical_failure(monkeypatch):
     """技术分析失败时应抛出 AIServiceException"""
 
-    async def fake_data_agent(state: Any) -> Dict[str, Any]:
+    async def fake_data_agent(state: Any, **kwargs: Any) -> Dict[str, Any]:
         return {"analysis_results": {}, "market_analysis": None}
 
     async def fake_tech_agent(state: Any) -> Dict[str, Any]:
@@ -130,7 +141,12 @@ async def test_run_structured_prediction_technical_failure(monkeypatch):
     monkeypatch.setattr(service, "news_sentiment_analysis_agent", fake_news_agent)
     monkeypatch.setattr(service, "structured_prediction_agent", fake_structured_agent)
 
-    request = StructuredPredictionRequest(ticker="TSLA", end_date=None, save_to_db=False)
+    request = StructuredPredictionRequest(
+        ticker="TSLA",
+        end_date=None,
+        save_to_db=False,
+        execution_mode="full",
+    )
 
     with pytest.raises(AIServiceException):
         await service.run_structured_prediction(request, None)
@@ -146,7 +162,7 @@ async def test_run_structured_prediction_failure_response(monkeypatch):
         trading_days_count=5,
     )
 
-    async def fake_data_agent(state: Any) -> Dict[str, Any]:
+    async def fake_data_agent(state: Any, **kwargs: Any) -> Dict[str, Any]:
         return {
             "analysis_results": {"data_collector": "ok"},
             "market_analysis": fake_market,
@@ -177,7 +193,12 @@ async def test_run_structured_prediction_failure_response(monkeypatch):
     monkeypatch.setattr(service, "structured_prediction_agent", fake_structured_agent)
 
     session = DummySession()
-    request = StructuredPredictionRequest(ticker="NVDA", end_date=None, save_to_db=True)
+    request = StructuredPredictionRequest(
+        ticker="NVDA",
+        end_date=None,
+        save_to_db=True,
+        execution_mode="full",
+    )
 
     saved_payloads: List[StructuredPredictionPendingEntry] = []
 
@@ -191,9 +212,78 @@ async def test_run_structured_prediction_failure_response(monkeypatch):
 
     assert response.success is False
     assert response.error == "LLM 调用失败"
+    assert response.execution_mode == "full"
+    assert response.data_collection_summary is None
     assert session.committed is False
     assert session.merged is None
     assert saved_payloads == []
+
+
+@pytest.mark.asyncio
+async def test_run_structured_prediction_data_collection_only(monkeypatch):
+    """数据采集模式应跳过分析与持久化，仅返回数据摘要"""
+
+    fake_market = SimpleNamespace(
+        market_aware_date=date(2024, 3, 1),
+        target_friday_date=date(2024, 3, 8),
+        trading_days_count=5,
+    )
+
+    captured_kwargs: Dict[str, Any] = {}
+
+    async def fake_data_agent(state: Any, **kwargs: Any) -> Dict[str, Any]:
+        captured_kwargs.update(kwargs)
+        return {
+            "analysis_results": {"data_collector": "ok"},
+            "market_analysis": fake_market,
+            "raw_data": {
+                "daily_prices": {"data": [[1], [2]]},
+                "weekly_prices": {"data": [[3]]},
+            },
+        }
+
+    async def fail_agent(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+        raise AssertionError("analysis agent should not execute in data_collection_only mode")
+
+    async def fail_structured(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+        raise AssertionError("structured_prediction_agent should not be called in data_collection_only mode")
+
+    monkeypatch.setattr(service, "data_collection_agent", fake_data_agent)
+    monkeypatch.setattr(service, "technical_analysis_agent", fail_agent)
+    monkeypatch.setattr(service, "fundamental_analysis_agent", fail_agent)
+    monkeypatch.setattr(service, "news_sentiment_analysis_agent", fail_agent)
+    monkeypatch.setattr(service, "structured_prediction_agent", fail_structured)
+
+    persist_calls: List[StructuredPredictionPendingEntry] = []
+
+    def fake_save_prediction(payload: StructuredPredictionPendingEntry) -> str:
+        persist_calls.append(payload)
+        return "ignored"
+
+    monkeypatch.setattr(service, "save_structured_prediction_pending_cache", fake_save_prediction)
+
+    request = StructuredPredictionRequest(
+        ticker="BABA",
+        end_date=None,
+        save_to_db=True,
+        execution_mode="data_collection_only",
+    )
+    session = DummySession()
+
+    response = await service.run_structured_prediction(request, cast(Session, session))
+
+    assert response.success is True
+    assert response.execution_mode == "data_collection_only"
+    assert response.data_collection_summary == {"daily_prices": 2, "weekly_prices": 1}
+    assert response.direction is None
+    assert response.prediction_probability is None
+    assert response.error is None
+    assert "数据采集模式已完成" in (response.reasoning or "")
+    assert response.market_aware_date == "2024-03-01"
+    assert session.committed is False
+    assert session.merged is None
+    assert persist_calls == []
+    assert captured_kwargs == {"include_news": False, "include_intraday": False}
 
 
 class DummyDBSession(Session):
