@@ -6,6 +6,10 @@
     1. 先运行 bulk_predict_from_db.py 批量预测并生成失败列表；
     2. 使用本脚本读取失败 JSON，再次调用批量预测接口进行补跑；
     3. 结果仍会写入新的失败文件，便于多轮重试或审计。
+
+自 2025-10 起，脚本会保留原始失败文件中的 runs 列表，仅更新指定 context 的补跑结果，
+并重新计算聚合统计字段；若目标批次全部补跑成功，会自动将该 context 从失败列表中移除。
+默认输出即覆盖 logs/batch_failures/bulk_predict_failures.json，避免生成二次中间文件。
 """
 
 from __future__ import annotations
@@ -17,7 +21,8 @@ import logging
 from collections import OrderedDict
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, cast
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Set, cast
 
 from dotenv import load_dotenv
 
@@ -30,6 +35,143 @@ from stockaivo.schemas import StructuredPredictionExecutionMode
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FailureContext:
+    """表示补跑文件的上下文信息"""
+
+    document: Dict[str, Any]
+    selected_block: Dict[str, Any]
+    selected_context: Optional[str]
+    runs: Optional[List[Dict[str, Any]]]
+    selected_index: Optional[int]
+
+
+def _as_int(value: Any) -> int:
+    """安全地将值转换为整数"""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _load_failure_context(path: Path, run_context: Optional[str] = None) -> FailureContext:
+    """读取失败 JSON 并定位目标运行上下文"""
+    if not path.exists():
+        raise FileNotFoundError(f"未找到失败列表文件：{path}")
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    runs_data = document.get("runs")
+    selected_block: Dict[str, Any] = document
+    selected_context: Optional[str] = None
+    selected_index: Optional[int] = None
+
+    if isinstance(runs_data, list) and runs_data:
+        selected_run: Optional[Dict[str, Any]] = None
+        context_value: Optional[str] = None
+        if run_context:
+            for idx, run in enumerate(runs_data):
+                if not isinstance(run, dict):
+                    continue
+                if str(run.get("context") or "") == run_context:
+                    selected_run = run
+                    selected_index = idx
+                    context_value = str(run.get("context") or "")
+                    break
+            if selected_run is None:
+                raise ValueError(f"失败文件中未找到 context={run_context} 的记录。")
+        else:
+            for idx in range(len(runs_data) - 1, -1, -1):
+                candidate = runs_data[idx]
+                if isinstance(candidate, dict):
+                    selected_run = candidate
+                    selected_index = idx
+                    context_value = str(candidate.get("context") or "")
+                    break
+        if selected_run is None:
+            raise ValueError("失败文件的 runs 列表中没有有效的记录。")
+        selected_block = selected_run
+        selected_context = context_value
+        runs_ref: Optional[List[Dict[str, Any]]] = runs_data
+    else:
+        runs_ref = None
+
+    return FailureContext(
+        document=document,
+        selected_block=selected_block,
+        selected_context=selected_context,
+        runs=runs_ref,
+        selected_index=selected_index,
+    )
+
+
+def _extract_failure_entries(
+    selected_block: Dict[str, Any], root_document: Dict[str, Any]
+) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    """提取目标上下文中的失败记录列表"""
+    raw_failures = selected_block.get("failures") or []
+    execution_mode = selected_block.get("execution_mode")
+    mode_value: Optional[str] = execution_mode if isinstance(execution_mode, str) else None
+    ordered: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+
+    if isinstance(raw_failures, list):
+        for item in raw_failures:
+            if not isinstance(item, dict):
+                continue
+            ticker = str(item.get("ticker", "")).strip()
+            if not ticker or ticker in ordered:
+                continue
+            normalized = dict(item)
+            normalized["ticker"] = ticker
+            ordered[ticker] = normalized
+
+    if not ordered:
+        legacy = root_document.get("failed_tickers") or []
+        for ticker in legacy:
+            ticker_str = str(ticker).strip()
+            if not ticker_str or ticker_str in ordered:
+                continue
+            ordered[ticker_str] = {"ticker": ticker_str}
+
+    return list(ordered.values()), mode_value
+
+
+def _update_aggregate_statistics(document: Dict[str, Any], runs: List[Dict[str, Any]]) -> None:
+    """根据 runs 列表更新聚合统计字段"""
+    if not runs:
+        document["aggregate_total"] = 0
+        document["aggregate_success"] = 0
+        document["aggregate_failed"] = 0
+        document.pop("execution_mode_stats", None)
+        return
+
+    aggregate_total = 0
+    aggregate_success = 0
+    aggregate_failed = 0
+    mode_stats: Dict[str, Dict[str, int]] = {}
+
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        aggregate_total += _as_int(run.get("total"))
+        aggregate_success += _as_int(run.get("success"))
+        aggregate_failed += _as_int(run.get("failed"))
+
+        mode_key = str(run.get("execution_mode") or "").strip() or "unknown"
+        stats = mode_stats.setdefault(
+            mode_key, {"runs": 0, "total": 0, "success": 0, "failed": 0}
+        )
+        stats["runs"] += 1
+        stats["total"] += _as_int(run.get("total"))
+        stats["success"] += _as_int(run.get("success"))
+        stats["failed"] += _as_int(run.get("failed"))
+
+    document["aggregate_total"] = aggregate_total
+    document["aggregate_success"] = aggregate_success
+    document["aggregate_failed"] = aggregate_failed
+    if mode_stats:
+        document["execution_mode_stats"] = mode_stats
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,8 +188,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("logs/batch_failures/bulk_predict_failures_retry.json"),
-        help="补跑后失败列表输出路径（默认 logs/batch_failures/bulk_predict_failures_retry.json）",
+        default=Path("logs/batch_failures/bulk_predict_failures.json"),
+        help="补跑后失败列表输出路径（默认覆盖 logs/batch_failures/bulk_predict_failures.json）",
     )
     parser.add_argument(
         "--batch-size",
@@ -156,72 +298,18 @@ def _parse_date(value: str) -> date:
         raise argparse.ArgumentTypeError(f"无法解析日期 {value}: {exc}") from exc
 
 
-def _load_failure_entries(path: Path, run_context: Optional[str] = None) -> tuple[List[Dict[str, object]], Optional[str], Optional[str]]:
+def _load_failure_entries(
+    path: Path, run_context: Optional[str] = None
+) -> tuple[List[Dict[str, Any]], Optional[str], Optional[str], FailureContext]:
     """读取失败 JSON 并返回带元数据的去重股票失败记录"""
-    if not path.exists():
-        raise FileNotFoundError(f"未找到失败列表文件：{path}")
-
-    data = json.loads(path.read_text(encoding="utf-8"))
-
-    selected_block: Dict[str, object]
-    selected_context: Optional[str] = None
-    failures: List[Dict[str, object]]
-    execution_mode: Optional[object]
-
-    runs = data.get("runs")
-    if isinstance(runs, list) and runs:
-        selected_run: Optional[Dict[str, object]] = None
-        if run_context:
-            for run in runs:
-                if isinstance(run, dict) and run.get("context") == run_context:
-                    selected_run = run
-                    selected_context = str(run.get("context") or "")
-                    break
-            if selected_run is None:
-                raise ValueError(f"失败文件中未找到 context={run_context} 的记录。")
-        else:
-            # 默认选择最新一条记录
-            for run in reversed(runs):
-                if isinstance(run, dict):
-                    selected_context = str(run.get("context") or "")
-                    selected_run = run
-                    break
-        if selected_run is None:
-            raise ValueError("失败文件的 runs 列表中没有有效的记录。")
-        selected_block = selected_run
-    else:
-        selected_block = data
-
-    raw_failures = selected_block.get("failures") or []
-    execution_mode = selected_block.get("execution_mode")
-    mode_value: Optional[str] = execution_mode if isinstance(execution_mode, str) else None
-    ordered: "OrderedDict[str, Dict[str, object]]" = OrderedDict()
-
-    if isinstance(raw_failures, list):
-        for item in raw_failures:
-            if not isinstance(item, dict):
-                continue
-            ticker = str(item.get("ticker", "")).strip()
-            if not ticker or ticker in ordered:
-                continue
-            normalized = dict(item)
-            normalized["ticker"] = ticker
-            ordered[ticker] = normalized
-
-    if not ordered:
-        legacy = data.get("failed_tickers") or []
-        for ticker in legacy:
-            ticker_str = str(ticker).strip()
-            if not ticker_str or ticker_str in ordered:
-                continue
-            ordered[ticker_str] = {"ticker": ticker_str}
-
-    return list(ordered.values()), mode_value, selected_context
+    context = _load_failure_context(path, run_context=run_context)
+    entries, mode_value = _extract_failure_entries(context.selected_block, context.document)
+    return entries, mode_value, context.selected_context, context
 
 
 def _load_failed_tickers(path: Path, run_context: Optional[str] = None) -> List[str]:
     """保持向后兼容，返回失败股票代码列表"""
-    entries, _, _ = _load_failure_entries(path, run_context=run_context)
+    entries, _, _, _ = _load_failure_entries(path, run_context=run_context)
     return [str(entry["ticker"]) for entry in entries]
 
 
@@ -242,9 +330,12 @@ def main() -> None:
     configure_logging(args.log_level)
 
     try:
-        failure_entries, file_mode, selected_context = _load_failure_entries(
-            args.input, run_context=args.run_context
-        )
+        (
+            failure_entries,
+            file_mode,
+            selected_context,
+            failure_context,
+        ) = _load_failure_entries(args.input, run_context=args.run_context)
     except Exception as exc:
         logger.error("读取失败列表文件出错：%s", exc)
         raise SystemExit(1) from exc
@@ -255,7 +346,38 @@ def main() -> None:
         logger.info("按照 context=%s 过滤失败记录，但源文件未提供 context 字段。", args.run_context)
 
     if not failure_entries:
-        logger.info("失败列表为空，无需补跑。")
+        if failure_context.runs is not None and failure_context.selected_index is not None:
+            context_label = (
+                selected_context
+                or args.run_context
+                or str(failure_context.selected_block.get("context") or "")
+            )
+            failure_context.runs.pop(failure_context.selected_index)
+            failure_context.document["updated_at"] = datetime.now().isoformat()
+            _update_aggregate_statistics(failure_context.document, failure_context.runs)
+
+            if args.output and args.output != Path("-"):
+                try:
+                    if not args.output.parent.exists():
+                        args.output.parent.mkdir(parents=True, exist_ok=True)
+                    args.output.write_text(
+                        json.dumps(failure_context.document, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    logger.info(
+                        "失败列表为空，上下文 %s 已被移除并写入 %s。",
+                        context_label or "<unknown>",
+                        args.output,
+                    )
+                except Exception as exc:  # pragma: no cover
+                    logger.error("写入失败文件时出错：%s", exc)
+            else:
+                logger.info(
+                    "失败列表为空，上下文 %s 已从内存中移除，但未指定输出文件。",
+                    context_label or "<unknown>",
+                )
+        else:
+            logger.info("失败列表为空，无需补跑。")
         return
 
     mode_candidates: Set[str] = set()
@@ -399,26 +521,64 @@ def main() -> None:
         if isinstance(entry, dict) and not entry.get("execution_mode"):
             entry["execution_mode"] = resolved_mode
 
+    outstanding_count = len(updated_failures)
+    generated_at = datetime.now().isoformat()
+
     if args.output and args.output != Path("-"):
         try:
             if not args.output.parent.exists():
                 args.output.parent.mkdir(parents=True, exist_ok=True)
-            payload: Dict[str, object] = {
-                "generated_at": datetime.now().isoformat(),
-                "total": len(tickers),
-                "success": len(successful_tickers),
-                "failed": len(failed_details_map),
-                "outstanding": len(updated_failures),
-                "execution_mode": resolved_mode,
-                "failures": updated_failures,
-                "source_context": selected_context or args.run_context,
-            }
+            if failure_context.runs is not None and failure_context.selected_index is not None:
+                context_label = (
+                    selected_context
+                    or args.run_context
+                    or str(failure_context.selected_block.get("context") or "")
+                )
+                if outstanding_count == 0:
+                    removed_run = failure_context.runs.pop(failure_context.selected_index)
+                    logger.info(
+                        "上下文 %s 已全部补跑成功，已从失败列表中移除。",
+                        context_label or "<unknown>",
+                    )
+                    # 若需要保留最终补跑统计，可在此扩展追踪逻辑
+                else:
+                    selected_run = failure_context.runs[failure_context.selected_index]
+                    selected_run["generated_at"] = generated_at
+                    selected_run["total"] = len(tickers)
+                    selected_run["success"] = len(successful_tickers)
+                    selected_run["failed"] = len(failed_details_map)
+                    if outstanding_count or "outstanding" in selected_run:
+                        selected_run["outstanding"] = outstanding_count
+                    elif "outstanding" in selected_run:
+                        selected_run.pop("outstanding", None)
+                    selected_run["execution_mode"] = resolved_mode
+                    selected_run["failures"] = updated_failures
+                    if selected_context:
+                        selected_run["context"] = selected_context
+                    elif args.run_context and not selected_run.get("context"):
+                        selected_run["context"] = args.run_context
+
+                failure_context.document["updated_at"] = generated_at
+                _update_aggregate_statistics(failure_context.document, failure_context.runs)
+                payload_to_write: Dict[str, Any] = failure_context.document
+            else:
+                payload_to_write = {
+                    "generated_at": generated_at,
+                    "total": len(tickers),
+                    "success": len(successful_tickers),
+                    "failed": len(failed_details_map),
+                    "outstanding": outstanding_count,
+                    "execution_mode": resolved_mode,
+                    "failures": updated_failures,
+                    "source_context": selected_context or args.run_context,
+                }
+
             args.output.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2),
+                json.dumps(payload_to_write, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            if updated_failures:
-                logger.warning("仍有 %d 支股票待补跑，已写入 %s。", len(updated_failures), args.output)
+            if outstanding_count:
+                logger.warning("仍有 %d 支股票待补跑，已写入 %s。", outstanding_count, args.output)
             else:
                 logger.info("所有失败股票已补跑成功，输出文件 %s 为空列表。", args.output)
         except Exception as exc:  # pragma: no cover - 记录即可

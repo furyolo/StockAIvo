@@ -163,11 +163,110 @@ async def test_run_bulk_prediction_batches_and_failures(tmp_path: Path, monkeypa
     assert stats.failed_details[0]["execution_mode"] == "full"
 
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert payload["total"] == 4
-    assert payload["failed"] == 1
-    assert payload["failures"][0]["ticker"] == "DDD"
-    assert payload["execution_mode"] == "full"
-    assert payload["failures"][0]["execution_mode"] == "full"
+    assert payload["aggregate_total"] == 4
+    assert payload["aggregate_failed"] == 1
+    runs = payload["runs"]
+    assert len(runs) == 1
+    last_run = runs[-1]
+    assert last_run["total"] == 4
+    assert last_run["failed"] == 1
+    assert last_run["execution_mode"] == "full"
+    assert last_run["failures"][0]["ticker"] == "DDD"
+    assert last_run["failures"][0]["execution_mode"] == "full"
+    stats_by_mode = payload["execution_mode_stats"]["full"]
+    assert stats_by_mode["runs"] == 1
+    assert stats_by_mode["failed"] == 1
+
+
+def test_write_failures_skips_when_no_failures(tmp_path: Path):
+    """没有失败时不应创建新的失败文件"""
+    output = tmp_path / "failures.json"
+    cli._write_failures(
+        output_path=output,
+        total=5,
+        success=5,
+        failed=0,
+        failures=[],
+        execution_mode="full",
+    )
+    assert not output.exists()
+
+
+def test_write_failures_preserves_existing_on_success(tmp_path: Path):
+    """历史失败文件存在时，全成功应保持原文件不变"""
+    output = tmp_path / "failures.json"
+    original_payload = {
+        "updated_at": "2025-10-18T00:00:00",
+        "aggregate_total": 3,
+        "aggregate_success": 2,
+        "aggregate_failed": 1,
+        "runs": [
+            {
+                "generated_at": "2025-10-18T00:00:00",
+                "total": 3,
+                "success": 2,
+                "failed": 1,
+                "execution_mode": "full",
+                "context": "batch_001",
+                "failures": [
+                    {
+                        "ticker": "AAA",
+                        "error": "mock",
+                        "retries": 1,
+                        "batch_index": 1,
+                        "execution_mode": "full",
+                    }
+                ],
+            }
+        ],
+        "execution_mode_stats": {
+            "full": {"runs": 1, "total": 3, "success": 2, "failed": 1}
+        },
+    }
+    output.write_text(json.dumps(original_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    before = output.read_text(encoding="utf-8")
+    cli._write_failures(
+        output_path=output,
+        total=2,
+        success=2,
+        failed=0,
+        failures=[],
+        execution_mode="full",
+        context_label="batch_001",
+    )
+    after = output.read_text(encoding="utf-8")
+    assert after == before
+
+
+def test_write_failures_same_context_different_mode(tmp_path: Path):
+    """同一 context 不同执行模式应共存"""
+    output = tmp_path / "failures.json"
+    cli._write_failures(
+        output_path=output,
+        total=5,
+        success=4,
+        failed=1,
+        failures=[{"ticker": "AAA"}],
+        execution_mode="full",
+        context_label="batch_001",
+    )
+
+    cli._write_failures(
+        output_path=output,
+        total=5,
+        success=4,
+        failed=1,
+        failures=[{"ticker": "BBB"}],
+        execution_mode="data_collection_only",
+        context_label="batch_001",
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    runs = payload["runs"]
+    assert len(runs) == 2
+    contexts = [run for run in runs if run.get("context") == "batch_001"]
+    assert {run["execution_mode"] for run in contexts} == {"full", "data_collection_only"}
 
 
 @pytest.mark.asyncio
@@ -223,6 +322,26 @@ async def test_run_bulk_prediction_exclude_symbols(monkeypatch: pytest.MonkeyPat
     assert calls == [["AAA", "CCC"]]
 
 
+def test_progress_tracker_last_processed_count_increment(tmp_path: Path):
+    """last_processed_count 应反映最近一次写入新增的股票数量"""
+    progress_path = tmp_path / "progress.json"
+    tracker = cli.ProgressTracker(progress_path)
+
+    tracker.record_success(["AAA", "BBB"], execution_mode="full")
+    payload_initial = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert payload_initial["summary"]["last_processed_count"] == 2
+
+    tracker.record_success(["CCC"], execution_mode="full")
+    payload_after = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert payload_after["summary"]["last_processed_count"] == 1
+    assert payload_after["execution_modes"]["full"]["processed_count"] == 3
+
+    # 再次写入重复股票，应记录为 0
+    tracker.record_success(["CCC"], execution_mode="full")
+    payload_dup = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert payload_dup["summary"]["last_processed_count"] == 0
+
+
 @pytest.mark.asyncio
 async def test_run_bulk_prediction_progress_resume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """进度文件结合 resume 参数应正确跳过已完成股票"""
@@ -251,9 +370,20 @@ async def test_run_bulk_prediction_progress_resume(tmp_path: Path, monkeypatch: 
     assert stats_first.total_tickers == 2
     assert stats_first.success == 2
     data = json.loads(progress_path.read_text(encoding="utf-8"))
-    assert data["processed_count"] == 3
-    assert set(data["processed_tickers"]) == {"AAPL", "MSFT", "TSLA"}
-    assert data["execution_mode"] == "full"
+    assert data["schema_version"] == 2
+    assert "processed_tickers" not in data
+    assert "processed_count" not in data
+    assert "execution_mode" not in data
+    modes_block = data["execution_modes"]
+    assert modes_block["full"]["processed_count"] == 3
+    assert set(modes_block["full"]["processed_tickers"]) == {"AAPL", "MSFT", "TSLA"}
+    summary = data["summary"]
+    assert summary["total_execution_modes"] == 1
+    assert summary["total_processed_count"] == 3
+    assert summary["total_unique_tickers"] == 3
+    assert summary["last_execution_mode"] == "full"
+    assert summary["last_processed_count"] == 2
+    assert "last_processed_sample" not in summary
 
     # 第二次运行 resume=True，应直接跳过所有股票
     stats_second = await cli.run_bulk_prediction(
@@ -274,6 +404,96 @@ async def test_run_bulk_prediction_progress_resume(tmp_path: Path, monkeypatch: 
     )
     assert stats_third.total_tickers == 3
     assert stats_third.success == 3
+
+
+@pytest.mark.asyncio
+async def test_progress_tracker_supports_multiple_execution_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """同一进度文件应记录多个执行模式的数据"""
+    progress_path = tmp_path / "progress.json"
+    tracker = cli.ProgressTracker(progress_path)
+
+    def fake_provider(limit: Optional[int]) -> List[str]:
+        return ["AAA", "BBB"]
+
+    calls: List[List[str]] = []
+
+    async def success_dispatch(request, config_obj, limiter):
+        calls.append(list(request.tickers))
+        return _build_success_response(
+            request.tickers,
+            execution_mode=request.execution_mode,
+        )
+
+    monkeypatch.setattr(cli, "dispatch_batch_request", success_dispatch)
+    monkeypatch.setattr(cli, "get_batch_prediction_rate_limiter", lambda: None)
+
+    config_full = _build_config(batch_size=2, output_path=None, execution_mode="full")
+    await cli.run_bulk_prediction(
+        config_full,
+        symbol_provider=fake_provider,
+        progress_tracker=tracker,
+        resume=True,
+    )
+
+    config_data_collection = _build_config(
+        batch_size=2,
+        output_path=None,
+        execution_mode="data_collection_only",
+    )
+    await cli.run_bulk_prediction(
+        config_data_collection,
+        symbol_provider=fake_provider,
+        progress_tracker=tracker,
+        resume=True,
+    )
+
+    assert calls == [["AAA", "BBB"], ["AAA", "BBB"]]
+
+    payload = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
+    assert "processed_tickers" not in payload
+    assert "execution_mode" not in payload
+
+    modes = payload["execution_modes"]
+    assert set(modes.keys()) == {"full", "data_collection_only"}
+    assert modes["full"]["processed_count"] == 2
+    assert set(modes["full"]["processed_tickers"]) == {"AAA", "BBB"}
+    assert modes["data_collection_only"]["processed_count"] == 2
+    assert set(modes["data_collection_only"]["processed_tickers"]) == {"AAA", "BBB"}
+
+    summary = payload["summary"]
+    assert summary["total_execution_modes"] == 2
+    assert summary["total_processed_count"] == 4
+    assert summary["total_unique_tickers"] == 2
+    assert summary["last_execution_mode"] == "data_collection_only"
+    assert summary["last_processed_count"] == 2
+    assert "last_processed_sample" not in summary
+
+
+def test_progress_tracker_can_load_legacy_format(tmp_path: Path):
+    """进度跟踪器应兼容旧版顶层字段格式并写回新结构"""
+    progress_path = tmp_path / "legacy.json"
+    legacy_payload = {
+        "updated_at": "2025-10-18T00:00:00",
+        "processed_count": 1,
+        "processed_tickers": ["AAPL"],
+        "execution_mode": "full",
+    }
+    progress_path.write_text(json.dumps(legacy_payload, ensure_ascii=False), encoding="utf-8")
+
+    tracker = cli.ProgressTracker(progress_path)
+    pending = tracker.filter_pending(["AAPL", "MSFT"], resume=True, execution_mode="full")
+    assert pending == ["MSFT"]
+
+    tracker.record_success(["MSFT"], execution_mode="full")
+
+    payload = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
+    assert "processed_tickers" not in payload
+    modes = payload["execution_modes"]
+    assert set(modes["full"]["processed_tickers"]) == {"AAPL", "MSFT"}
 
 
 @pytest.mark.asyncio

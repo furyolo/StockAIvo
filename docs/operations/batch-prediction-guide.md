@@ -223,7 +223,6 @@ docker compose exec stockaivo-backend-1 \
 ```bash
 uv run python stockaivo/scripts/retry_failed_predictions.py \
   --input logs/batch_failures/bulk_predict_failures.json \
-  --output logs/batch_failures/bulk_predict_failures_retry.json \
   --batch-size 10 \
   --max-concurrency 3 \
   --max-retries 2 \
@@ -237,7 +236,7 @@ uv run python stockaivo/scripts/retry_failed_predictions.py \
 | 参数                  | 默认值                                                 | 说明                                                                                                                                       |
 | --------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `--input`             | `logs/batch_failures/bulk_predict_failures.json`       | 首次批量任务生成的失败列表路径，支持手动放入任意 JSON（需包含 `failures[].ticker` 或 `failed_tickers` 字段）；新格式将失败按 `runs` 聚合存储 |
-| `--output`            | `logs/batch_failures/bulk_predict_failures_retry.json` | 补跑后的失败列表输出位置，可用于下一轮重试或审计                                                                                           |
+| `--output`            | `logs/batch_failures/bulk_predict_failures.json`       | 补跑后的失败列表输出位置，默认就地更新原始文件；如需保留副本可额外指定自定义路径                                                           |
 | `--batch-size`        | `10`                                                   | 每批提交的股票数量，建议结合上一轮失败原因适当调小                                                                                         |
 | `--max-concurrency`   | `3`                                                    | 补跑时的并发度，可在受限环境下调低避免触发限流                                                                                             |
 | `--max-retries`       | `2`                                                    | 单票补跑的最大重试次数，默认比初次任务稍高                                                                                                 |
@@ -255,11 +254,13 @@ uv run python stockaivo/scripts/retry_failed_predictions.py \
 
 > 如未显式指定 `--run-context`，脚本会自动选取失败文件 `runs[]` 列表中的最新一条记录，并继承其中的 `execution_mode`；若失败文件仍为旧版（无 `runs` 字段），脚本将继续兼容原有结构。
 
+> 注意：同一 `context` 若在不同 `execution_mode` 下产生失败，文件会分别保留多条记录，仅当上下文与执行模式同时匹配时才会覆盖旧数据。
+
 > 建议补跑前先检查失败原因是否为限流或外部数据源故障。如多次补跑仍失败，可结合日志排查异常并考虑暂时移除问题股票。
 
 > 📌 当使用 `--limit` 分批补跑时，脚本会自动将本轮成功的股票从输出 JSON 中移除，同时保留未处理与仍失败的股票，方便下一轮继续执行。
 
-> 🔁 最佳实践：首轮补跑建议保持默认输出路径 `logs/batch_failures/bulk_predict_failures_retry.json`，下一轮可直接把该文件作为新的 `--input`，脚本会在此基础上继续补跑并写回同一路径。若希望“就地更新”原始 `bulk_predict_failures.json`，需要同时将 `--input` 与 `--output` 指向同一文件，执行前务必备份以便审计。
+> 🔁 最佳实践：默认情况下脚本会直接更新 `logs/batch_failures/bulk_predict_failures.json`，并自动移除已补跑成功的 `context`。如需保留补跑历史，可在执行前复制原始文件或通过 `--output` 指定其他路径。
 
 ### 5.6 批次清单与断点续跑流程
 
@@ -305,7 +306,7 @@ uv run python stockaivo/scripts/retry_failed_predictions.py \
    - `--include-symbols-file` 会按清单顺序执行，绕过数据库全量读取；
    - `--exclude-symbols-file` 可用于跳过已知问题股票，支持 JSON/CSV/纯文本格式；
    - 可通过 `--execution-mode` 选择 `full` 或 `data_collection_only`；清单任务支持两种模式，执行结果将写入相应的失败/进度文件；
-   - 进度默认写入 `logs/batch_progress/bulk_progress.json`，便于随时暂停并恢复剩余批次（文件会记录执行模式，切换模式时请配合 `--reset-progress` 或使用新文件）。
+   - 进度默认写入 `logs/batch_progress/bulk_progress.json`，现在会为每种执行模式分别维护已完成股票列表，切换模式时可在同一文件中继续累积进度（若希望重新开始，可配合 `--reset-progress` 或使用新文件）。
 
 3. **断点续跑与重置**
 
@@ -315,13 +316,28 @@ uv run python stockaivo/scripts/retry_failed_predictions.py \
 
      ```json
     {
+      "schema_version": 2,
       "updated_at": "2025-10-15T01:23:45.678901",
-      "processed_count": 120,
-      "processed_tickers": ["AAPL", "MSFT", "..."],
-      "execution_mode": "full"
+      "execution_modes": {
+        "full": {
+          "processed_count": 120,
+          "processed_tickers": ["AAPL", "MSFT", "..."]
+        },
+        "data_collection_only": {
+          "processed_count": 30,
+          "processed_tickers": ["TSLA", "NVDA", "..."]
+        }
+      },
+      "summary": {
+        "total_execution_modes": 2,
+        "total_processed_count": 150,
+        "total_unique_tickers": 140,
+        "last_execution_mode": "full",
+        "last_processed_count": 30
+      }
     }
     ```
-   - 进度文件会记录最近一次的执行模式，如需切换模式请先使用 `--reset-progress` 或清理该文件，避免跨模式跳过尚未执行的股票。
+   - 顶层不再重复存储整份股票列表，可通过 `summary.last_execution_mode` 与 `summary.last_processed_count` 快速确认最近一次写入新增的股票数量；`execution_modes` 保留每种模式的完整进度，便于断点续跑与审计。
 
    - 当批次执行失败时，失败股票仍会写入 `--output` 指定的 JSON，可与 `retry_failed_predictions.py` 搭配补跑。
 

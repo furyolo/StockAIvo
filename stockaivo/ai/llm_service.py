@@ -6,6 +6,7 @@ LLM Service - 大语言模型服务封装
 import os
 import asyncio
 import httpx
+import httpcore
 import json
 import random
 from typing import Dict, Any, Optional, AsyncGenerator, Type, Union
@@ -154,6 +155,25 @@ class LLMService:
         """
         # 对于429 (Too Many Requests) 和 5xx 服务器错误进行重试
         return status_code == 429 or (500 <= status_code < 600)
+
+    def _should_retry_request_error(self, error: httpx.RequestError) -> bool:
+        """判断 RequestError 是否属于可重试类型（如超时、连接错误）"""
+        retriable_httpx = (
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+            httpx.PoolTimeout,
+        )
+        retriable_httpcore = (
+            httpcore.ConnectTimeout,
+            httpcore.ReadTimeout,
+            httpcore.WriteTimeout,
+            httpcore.PoolTimeout,
+        )
+        if isinstance(error, retriable_httpx):
+            return True
+        cause = getattr(error, "__cause__", None)
+        return isinstance(cause, retriable_httpcore)
 
     async def _calculate_retry_delay(self, attempt: int, base_delay: float = 1.0) -> float:
         """
@@ -315,7 +335,16 @@ class LLMService:
                     return self._log_http_error(e, "非流式调用")
 
             except httpx.RequestError as e:
-                # 网络错误等，不进行重试
+                if self._should_retry_request_error(e) and attempt < max_retries:
+                    delay = await self._calculate_retry_delay(attempt)
+                    logger.warning(
+                        "非流式请求发生可重试的网络异常(%s)，%.1f秒后进行第%d次重试...",
+                        type(e).__name__,
+                        delay,
+                        attempt + 1,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
                 return self._log_request_error(e, "非流式请求")
 
             except Exception as e:
@@ -575,6 +604,16 @@ class LLMService:
                     return self._log_http_error(e, "结构化调用")
 
             except httpx.RequestError as e:
+                if self._should_retry_request_error(e) and attempt < max_retries:
+                    delay = await self._calculate_retry_delay(attempt)
+                    logger.warning(
+                        "结构化请求发生可重试的网络异常(%s)，%.1f秒后进行第%d次重试...",
+                        type(e).__name__,
+                        delay,
+                        attempt + 1,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
                 return self._log_request_error(e, "结构化请求")
 
             except Exception as e:

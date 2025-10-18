@@ -90,13 +90,14 @@ class BatchRunStats:
 
 
 class ProgressTracker:
-    """处理批量执行进度的工具"""
+    """处理批量执行进度的工具，支持多执行模式并行记录"""
 
     def __init__(self, path: Path):
         self.path = path
-        self._processed_list: List[str] = []
-        self._processed_set: Set[str] = set()
-        self._execution_mode: Optional[str] = None
+        self._mode_lists: Dict[str, List[str]] = {}
+        self._mode_sets: Dict[str, Set[str]] = {}
+        self._last_mode: Optional[str] = None
+        self._last_run_count: int = 0
         self._load()
 
     def _load(self) -> None:
@@ -107,19 +108,70 @@ class ProgressTracker:
         except Exception as exc:
             raise RuntimeError(f"读取进度文件失败：{self.path}: {exc}") from exc
 
-        mode_value = data.get("execution_mode")
-        if isinstance(mode_value, str):
-            self._execution_mode = mode_value
+        execution_modes_block = data.get("execution_modes")
+        if isinstance(execution_modes_block, dict):
+            for mode, payload in execution_modes_block.items():
+                mode_key = self._normalize_mode_key(mode)
+                raw_entries: Optional[Sequence[object]] = None
+                if isinstance(payload, dict):
+                    maybe = payload.get("processed_tickers")
+                    if isinstance(maybe, list):
+                        raw_entries = maybe
+                elif isinstance(payload, list):
+                    raw_entries = payload
+                if raw_entries is None:
+                    continue
+                self._ingest_mode_entries(mode_key, raw_entries)
 
-        raw_entries = data.get("processed_tickers") or data.get("tickers") or []
-        if not isinstance(raw_entries, list):
-            raise RuntimeError(f"进度文件格式不正确：{self.path}")
+            summary = data.get("summary")
+            if isinstance(summary, dict):
+                last_mode = summary.get("last_execution_mode")
+                if isinstance(last_mode, str) and last_mode.strip():
+                    self._last_mode = last_mode.strip()
+                last_run_count = summary.get("last_processed_count")
+                if isinstance(last_run_count, int) and last_run_count >= 0:
+                    self._last_run_count = last_run_count
 
+        elif "processed_tickers" in data or "tickers" in data:
+            mode_value = data.get("execution_mode")
+            mode_key = self._normalize_mode_key(mode_value)
+            raw_entries = data.get("processed_tickers") or data.get("tickers") or []
+            if not isinstance(raw_entries, list):
+                raise RuntimeError(f"进度文件格式不正确：{self.path}")
+            self._ingest_mode_entries(mode_key, raw_entries)
+            self._last_mode = mode_key
+        else:
+            raise RuntimeError(f"进度文件结构不支持：{self.path}")
+
+        if not self._last_mode:
+            # 尝试从顶层字段或已有模式推断
+            fallback_mode = data.get("execution_mode")
+            if isinstance(fallback_mode, str) and fallback_mode.strip():
+                self._last_mode = fallback_mode.strip()
+            elif self._mode_lists:
+                # 默认取最后插入的模式
+                self._last_mode = next(reversed(self._mode_lists))
+
+            if self._last_mode and self._last_mode not in self._mode_lists:
+                raw_entries = data.get("processed_tickers") or []
+                if isinstance(raw_entries, list):
+                    self._ingest_mode_entries(self._last_mode, raw_entries)
+            if not self._last_run_count and self._last_mode:
+                self._last_run_count = len(self._mode_lists.get(self._last_mode, []))
+
+    def _normalize_mode_key(self, value: object) -> str:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return "unknown"
+
+    def _ingest_mode_entries(self, mode_key: str, raw_entries: Sequence[object]) -> None:
+        target_list = self._mode_lists.setdefault(mode_key, [])
+        target_set = self._mode_sets.setdefault(mode_key, set())
         for symbol in raw_entries:
             normalized = _normalize_symbol(symbol)
-            if normalized and normalized not in self._processed_set:
-                self._processed_set.add(normalized)
-                self._processed_list.append(normalized)
+            if normalized and normalized not in target_set:
+                target_set.add(normalized)
+                target_list.append(normalized)
 
     def reset(self) -> None:
         """清空进度文件"""
@@ -128,12 +180,24 @@ class ProgressTracker:
                 self.path.unlink()
             except Exception as exc:
                 raise RuntimeError(f"删除进度文件失败：{self.path}: {exc}") from exc
-        self._processed_list.clear()
-        self._processed_set.clear()
-        self._execution_mode = None
+        self._mode_lists.clear()
+        self._mode_sets.clear()
+        self._last_mode = None
+        self._last_run_count = 0
 
-    def processed_count(self) -> int:
-        return len(self._processed_list)
+    def processed_count(
+        self, execution_mode: Optional[StructuredPredictionExecutionMode] = None
+    ) -> int:
+        if execution_mode is not None:
+            return len(self._mode_lists.get(str(execution_mode), []))
+
+        if self._last_mode and self._last_mode in self._mode_lists:
+            return len(self._mode_lists[self._last_mode])
+
+        if self._mode_lists:
+            first_mode = next(iter(self._mode_lists.values()))
+            return len(first_mode)
+        return 0
 
     def filter_pending(
         self,
@@ -145,20 +209,14 @@ class ProgressTracker:
         if not resume:
             return list(tickers)
 
-        if self._execution_mode and self._execution_mode != execution_mode:
-            logger.info(
-                "进度文件 %s 记录的执行模式为 %s，本次执行模式为 %s，将自动重置进度。",
-                self.path,
-                self._execution_mode,
-                execution_mode,
-            )
-            self.reset()
-            return list(tickers)
-
-        if self._execution_mode is None:
-            self._execution_mode = execution_mode
-
-        return [ticker for ticker in tickers if ticker not in self._processed_set]
+        mode_key = str(execution_mode)
+        processed_set = self._mode_sets.setdefault(mode_key, set())
+        self._mode_lists.setdefault(mode_key, [])
+        return [
+            ticker
+            for ticker in tickers
+            if _normalize_symbol(ticker) not in processed_set
+        ]
 
     def record_success(
         self,
@@ -166,29 +224,53 @@ class ProgressTracker:
         *,
         execution_mode: StructuredPredictionExecutionMode,
     ) -> None:
-        updated = False
+        mode_key = str(execution_mode)
+        target_list = self._mode_lists.setdefault(mode_key, [])
+        target_set = self._mode_sets.setdefault(mode_key, set())
+
+        appended = 0
         for ticker in tickers:
             normalized = _normalize_symbol(ticker)
-            if not normalized or normalized in self._processed_set:
+            if not normalized or normalized in target_set:
                 continue
-            self._processed_set.add(normalized)
-            self._processed_list.append(normalized)
-            updated = True
+            target_set.add(normalized)
+            target_list.append(normalized)
+            appended += 1
 
-        mode_updated = False
-        if self._execution_mode != execution_mode:
-            self._execution_mode = execution_mode
-            mode_updated = True
-
-        if updated or mode_updated:
+        mode_changed = self._last_mode != mode_key
+        if appended or mode_changed or self._last_run_count != appended:
+            self._last_mode = mode_key
+            self._last_run_count = appended
             self._save()
 
     def _save(self) -> None:
+        execution_modes_payload: Dict[str, Dict[str, object]] = {}
+        unique_symbols: Set[str] = set()
+        total_count = 0
+        for mode_key, items in self._mode_lists.items():
+            execution_modes_payload[mode_key] = {
+                "processed_count": len(items),
+                "processed_tickers": items,
+            }
+            total_count += len(items)
+            unique_symbols.update(items)
+
+        last_mode_list = (
+            self._mode_lists.get(self._last_mode, []) if self._last_mode else []
+        )
+        summary_payload: Dict[str, object] = {
+            "total_execution_modes": len(execution_modes_payload),
+            "total_processed_count": total_count,
+            "total_unique_tickers": len(unique_symbols),
+            "last_execution_mode": self._last_mode,
+            "last_processed_count": self._last_run_count,
+        }
+
         payload = {
+            "schema_version": 2,
             "updated_at": datetime.now().isoformat(),
-            "processed_count": len(self._processed_list),
-            "processed_tickers": self._processed_list,
-            "execution_mode": self._execution_mode,
+            "execution_modes": execution_modes_payload,
+            "summary": summary_payload,
         }
         _write_json_atomic(self.path, payload)
 
@@ -817,7 +899,18 @@ def _write_failures(
                 existing_runs = []
 
         if context_label:
-            existing_runs = [entry for entry in existing_runs if entry.get("context") != context_label]
+            existing_runs = [
+                entry
+                for entry in existing_runs
+                if not (
+                    entry.get("context") == context_label
+                    and str(entry.get("execution_mode") or "") == str(execution_mode)
+                )
+            ]
+
+        if failed == 0 and not existing_runs:
+            logger.info("无失败记录，本轮未生成失败文件。")
+            return
 
         entry: Dict[str, object] = {
             "generated_at": datetime.now().isoformat(),
@@ -829,6 +922,17 @@ def _write_failures(
         }
         if context_label:
             entry["context"] = context_label
+
+        if failed == 0 and existing_runs and failures:
+            logger.warning(
+                "无失败记录但传入的 failures 列表非空，将继续写入以保留上下文。"
+            )
+        elif failed == 0 and existing_runs and not failures:
+            logger.info(
+                "无失败记录，跳过附加空运行，保留历史失败文件 %s。",
+                output_path,
+            )
+            return
 
         existing_runs.append(entry)
 
@@ -860,8 +964,10 @@ def _write_failures(
         _write_json_atomic(output_path, payload)
         if failed > 0:
             logger.warning("失败列表已写入 %s，本次失败 %d 条。", output_path, failed)
+        elif existing_runs:
+            logger.info("无失败记录，已保留历史失败文件 %s。", output_path)
         else:
-            logger.info("无失败记录，仍写入空文件 %s 以供审计。", output_path)
+            logger.info("无失败记录，本轮未生成失败文件。")
     except Exception as exc:  # pragma: no cover - 记录即可
         logger.error("写入失败列表文件时发生异常: %s", exc)
 
