@@ -1,5 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
+chcp 65001 >nul
 
 :: StockAIvo Development Environment Startup Script
 echo Starting StockAIvo Development Environment...
@@ -144,19 +145,23 @@ echo   Frontend: http://localhost:3223
 echo   Backend API: http://127.0.0.1:8000
 echo   API Docs: http://127.0.0.1:8000/docs
 echo.
-call :ColorEcho "YELLOW" "Tips: Both services are running in separate windows, close windows to stop services"
+call :ColorEcho "YELLOW" "Tips: 前端与后端服务已在独立窗口运行，关闭对应窗口即可停止服务"
 echo.
-call :ColorEcho "BLUE" "Press any key to open browser"
-pause >nul
+call :ColorEcho "BLUE" "即将自动打开前端页面，请确认服务窗口输出"
+for /l %%i in (5,-1,1) do (
+    call :ColorEcho "BLUE" "浏览器将在 %%i 秒后打开..."
+    timeout /t 1 /nobreak >nul
+)
 
-:: Open browser
-start http://localhost:3223
+start "" http://localhost:3223
 
 call :ColorEcho "GREEN" "StockAIvo Development Environment is running!"
 echo.
-call :ColorEcho "BLUE" "Quick Commands:"
-echo   - Stop all services: Close both command windows
-echo   - Restart: Run this script again
-echo   - View logs: Check corresponding command windows
-echo.
-pause
+call :ColorEcho "BLUE" "此窗口将在 10 秒后自动关闭，如需保留请立即按 Ctrl+C"
+for /l %%i in (10,-1,1) do (
+    call :ColorEcho "BLUE" "窗口关闭倒计时：%%i 秒"
+    timeout /t 1 /nobreak >nul
+)
+
+call :ColorEcho "YELLOW" "感谢使用，窗口即将关闭"
+exit /b 0

@@ -13,7 +13,6 @@ from stockaivo.database_writer import persist_pending_data
 
 
 # 配置日志
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

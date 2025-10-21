@@ -93,3 +93,37 @@ class TestJSONCleaning:
         assert parsed["prediction_probability"] == 0.65
         assert parsed["direction"] == "DOWN"
         assert "基于技术面分析" in parsed["reasoning"]
+
+    def test_clean_json_with_prefix_text(self, llm_service):
+        """测试清理带前置说明文本的JSON"""
+        raw_response = '''基于提供的技术分析报告，我将生成结构化的概率预测：
+```json
+{
+  "prediction_probability": 0.68,
+  "direction": "DOWN",
+  "confidence_level": "MEDIUM",
+  "reasoning": "示例推理"
+}
+```'''
+
+        cleaned = llm_service._clean_json_response(raw_response)
+
+        import json
+        parsed = json.loads(cleaned)
+        assert parsed["prediction_probability"] == 0.68
+        assert parsed["direction"] == "DOWN"
+        assert parsed["confidence_level"] == "MEDIUM"
+        assert parsed["reasoning"] == "示例推理"
+
+    def test_clean_json_with_inline_object(self, llm_service):
+        """测试清理包含行内JSON对象的文本"""
+        raw_response = '模型输出如下： {"prediction_probability": 0.55, "direction": "UP", "confidence_level": "LOW", "reasoning": "行内JSON"} 请检查。'
+
+        cleaned = llm_service._clean_json_response(raw_response)
+
+        import json
+        parsed = json.loads(cleaned)
+        assert parsed["prediction_probability"] == 0.55
+        assert parsed["direction"] == "UP"
+        assert parsed["confidence_level"] == "LOW"
+        assert parsed["reasoning"] == "行内JSON"

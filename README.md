@@ -115,6 +115,16 @@ docker logs -f stockaivo-backend-1
 - **LLM 服务地址**：容器内默认无法访问宿主 `localhost`，请在 `.env` 中将 `OPENAI_API_BASE` 指向 `http://host.docker.internal:3222/v1`（或对应的服务域名）。
 - **环境变量加载**：`docker-compose` 会自动读取 `.env`，更新后记得 `docker-compose up -d --build` 重新加载。
 
+### 📝 日志配置与热重载
+
+- **统一日志落地**：后端默认使用 `logging.dictConfig` 将所有运行日志写入 `logs/backend/<YYYY-MM-DD>.log`。可通过环境变量覆写：
+  - `LOG_FILE_DIR`：日志根目录，默认 `logs/backend`
+  - `LOG_FILE_MAX_BYTES`：单个日志文件轮转大小，默认 `10_485_760`（10MB）
+  - `LOG_FILE_BACKUP_COUNT`：保留轮转文件数量，默认 `5`
+  - `LOG_LEVEL`：根日志级别，默认 `INFO`
+- **开发模式监听目录**：`uv run dev` 与 `python main.py` 均配置了 `reload_dirs`/`reload_excludes`，只监视 `stockaivo/`、`database_migrations/`、`tests/`，同时忽略 `logs/` 与 `*.log` 文件，防止日志更新导致热重载风暴。
+- **日志与终端输出并存**：旋转文件写入与控制台输出同时存在，便于排查实时问题并保留历史记录。
+
 ## 🗂️ 文档与历史任务
 
 - `docs/task-history/`：归档所有已完成的阶段性 TODO 与实施记录，统一采用 `YYYY-MM-主题.md` 命名规范。当前包含 `2025-10-technical-analysis-cache.md`，记录技术分析缓存方案的决策与交付物。

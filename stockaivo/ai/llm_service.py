@@ -9,6 +9,8 @@ import httpx
 import httpcore
 import json
 import random
+import re
+import traceback
 from typing import Dict, Any, Optional, AsyncGenerator, Type, Union
 import logging
 from google.generativeai.generative_models import GenerativeModel
@@ -252,10 +254,24 @@ class LLMService:
         Returns:
             错误信息字符串
         """
-        import traceback
         logger.error(f"调用OpenAI兼容API时发生{request_type}错误 (httpx): {type(e).__name__}: {e}")
         logger.error(f"httpx 错误详细信息: {str(e)}")
-        logger.error(f"httpx 错误堆栈: {traceback.format_exc()}")
+
+        if isinstance(e, httpx.ReadTimeout):
+            logger.error("httpx 请求读取超时，已省略详细堆栈，请检查上游响应或网络设置。")
+        else:
+            tb = traceback.TracebackException.from_exception(e, capture_locals=False)
+            frames = list(tb.stack or [])
+            if frames:
+                tail = frames[-5:]
+                frame_summary = " -> ".join(
+                    f"{os.path.basename(frame.filename)}:{frame.lineno}::{frame.name}"
+                    for frame in tail
+                )
+                logger.error(f"httpx 错误调用栈摘要(最近 {len(tail)} 层): {frame_summary}")
+            else:
+                logger.debug("httpx 请求错误未捕获到有效调用栈。")
+
         if hasattr(e, '__cause__') and e.__cause__:
             logger.error(f"httpx 错误根本原因: {type(e.__cause__).__name__}: {e.__cause__}")
         return f"Error calling OpenAI-compatible API: {type(e).__name__}: {e}"
@@ -526,18 +542,39 @@ class LLMService:
             清理后的JSON字符串
         """
         content = content.strip()
-        
-        # 移除 ```json 开头
-        if content.startswith('```json'):
-            content = content[7:].strip()
-        # 移除 ``` 开头
-        elif content.startswith('```'):
-            content = content[3:].strip()
-        
-        # 移除 ``` 结尾
-        if content.endswith('```'):
-            content = content[:-3].strip()
-        
+        if not content:
+            return content
+
+        # 优先提取被 Markdown 代码块包裹的 JSON 内容
+        code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", content, flags=re.IGNORECASE)
+        if code_block_match:
+            return code_block_match.group(1).strip()
+
+        def _extract_enclosed_segment(text: str, opener: str, closer: str) -> Optional[str]:
+            start = text.find(opener)
+            if start == -1:
+                return None
+
+            depth = 0
+            for idx in range(start, len(text)):
+                char = text[idx]
+                if char == opener:
+                    depth += 1
+                elif char == closer:
+                    depth -= 1
+                    if depth == 0:
+                        return text[start:idx + 1].strip()
+            return None
+
+        # 其次尝试提取第一个完整的 JSON 对象或数组
+        object_candidate = _extract_enclosed_segment(content, '{', '}')
+        if object_candidate:
+            return object_candidate
+
+        array_candidate = _extract_enclosed_segment(content, '[', ']')
+        if array_candidate:
+            return array_candidate
+
         return content
 
     async def _invoke_openai_structured(

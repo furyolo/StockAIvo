@@ -42,6 +42,7 @@ from stockaivo.routers.ai import (
     analyze_stock_structured_prediction_batch,
 )
 from stockaivo.schemas import StructuredPredictionExecutionMode
+from stockaivo.logging_config import configure_logging as configure_app_logging
 
 logger = logging.getLogger(__name__)
 
@@ -483,14 +484,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="运行前清空进度文件并重新记录",
     )
     return parser
-
-
-def configure_logging(level: str) -> None:
-    """初始化日志配置"""
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s - %(levelname)s - %(message)s",
-    )
 
 
 def fetch_well_known_symbols(limit: Optional[int] = None) -> List[str]:
@@ -986,7 +979,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    configure_logging(args.log_level)
+    configure_app_logging(args.log_level)
 
     config = BulkPredictConfig(
         batch_size=args.batch_size,

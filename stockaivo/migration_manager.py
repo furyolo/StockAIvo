@@ -287,8 +287,6 @@ def get_migration_status() -> dict:
 
 if __name__ == "__main__":
     # 命令行执行迁移
-    logging.basicConfig(level=logging.INFO)
-    
     print("StockAIvo 数据库迁移管理器")
     print("=" * 40)
     

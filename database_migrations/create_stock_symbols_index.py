@@ -26,14 +26,13 @@ from dotenv import load_dotenv
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# 统一导入日志配置
+from stockaivo.logging_config import configure_logging as configure_app_logging
+
 # 加载环境变量
 load_dotenv()
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+configure_app_logging()
 logger = logging.getLogger(__name__)
 
 def get_database_url():

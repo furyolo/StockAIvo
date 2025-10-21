@@ -28,8 +28,6 @@ class CacheType(Enum):
 # 加载环境变量
 load_dotenv()
 
-# 配置日志
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 PREDICTION_PENDING_TTL_SECONDS = int(os.getenv("PREDICTION_PENDING_TTL_SECONDS", "259200"))  # 默认3天

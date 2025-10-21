@@ -32,6 +32,7 @@ from stockaivo.scripts.bulk_predict_from_db import (
     run_bulk_prediction,
 )
 from stockaivo.schemas import StructuredPredictionExecutionMode
+from stockaivo.logging_config import configure_logging as configure_app_logging
 
 
 logger = logging.getLogger(__name__)
@@ -313,21 +314,13 @@ def _load_failed_tickers(path: Path, run_context: Optional[str] = None) -> List[
     return [str(entry["ticker"]) for entry in entries]
 
 
-def configure_logging(level: str) -> None:
-    """初始化日志配置"""
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s - %(levelname)s - %(message)s",
-    )
-
-
 def main() -> None:
     """脚本入口"""
     load_dotenv()
     parser = build_parser()
     args = parser.parse_args()
 
-    configure_logging(args.log_level)
+    configure_app_logging(args.log_level)
 
     try:
         (

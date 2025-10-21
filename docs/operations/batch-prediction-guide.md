@@ -49,14 +49,14 @@
 
 字段说明：
 
-| 字段                  | 类型        | 默认值 | 说明                                     |
-| --------------------- | ----------- | ------ | ---------------------------------------- |
-| `tickers`             | `List[str]` | 无     | 待处理股票列表，自动去重与裁剪空值       |
-| `end_date`            | `date`      | `null` | 可选统一结束日期；为空时使用系统日期推算 |
-| `save_to_db`          | `bool`      | `true` | 是否将结果持久化至 PostgreSQL            |
-| `max_concurrency`     | `int`       | `3`    | 并发协程上限，取值 1-10，建议 1-5        |
-| `max_retries`         | `int`       | `0`    | 单票失败后允许的最大重试次数（不含首次） |
-| `retry_delay_seconds` | `float`     | `5.0`  | 重试前等待秒数，用作指数退避基础值       |
+| 字段                  | 类型        | 默认值 | 说明                                                                                                                                                     |
+| --------------------- | ----------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tickers`             | `List[str]` | 无     | 待处理股票列表，自动去重与裁剪空值                                                                                                                       |
+| `end_date`            | `date`      | `null` | 可选统一结束日期；为空时使用系统日期推算                                                                                                                 |
+| `save_to_db`          | `bool`      | `true` | 是否将结果持久化至 PostgreSQL                                                                                                                            |
+| `max_concurrency`     | `int`       | `3`    | 并发协程上限，取值 1-10，建议 1-5                                                                                                                        |
+| `max_retries`         | `int`       | `0`    | 单票失败后允许的最大重试次数（不含首次）                                                                                                                 |
+| `retry_delay_seconds` | `float`     | `5.0`  | 重试前等待秒数，用作指数退避基础值                                                                                                                       |
 | `execution_mode`      | `str`       | `full` | 执行模式：`full` 运行完整预测；`data_collection_only` 仅采集日线/周线数据，跳过新闻与多智能体分析，且不会将结构化预测结果写入 Redis 待持久化队列或数据库 |
 
 > `data_collection_only` 模式仅抓取日线/周线行情数据，不触发新闻情感、技术/基本面分析与最终预测生成；对应的结构化预测结果不会写入 Redis 待持久化队列或数据库。
@@ -167,18 +167,18 @@ uv run python stockaivo/scripts/bulk_predict_from_db.py \
 
 常见参数：
 
-| 参数                     | 默认值                                           | 说明                                                                |
-| ------------------------ | ------------------------------------------------ | ------------------------------------------------------------------- |
-| `--api-base-url`         | 无                                               | 指定 FastAPI 服务地址，避免脚本与应用共用事件循环                   |
-| `--batch-size`           | 20                                               | 可在本地调试时下调以缩短单批耗时                                    |
-| `--output`               | `logs/batch_failures/bulk_predict_failures.json` | 失败列表输出路径，建议固定到可持久化目录，便于 diff 和归档          |
+| 参数                     | 默认值                                           | 说明                                                                                                                                             |
+| ------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--api-base-url`         | 无                                               | 指定 FastAPI 服务地址，避免脚本与应用共用事件循环                                                                                                |
+| `--batch-size`           | 20                                               | 可在本地调试时下调以缩短单批耗时                                                                                                                 |
+| `--output`               | `logs/batch_failures/bulk_predict_failures.json` | 失败列表输出路径，建议固定到可持久化目录，便于 diff 和归档                                                                                       |
 | `--execution-mode`       | `full`                                           | 执行模式：`full` 运行完整预测；`data_collection_only` 仅采集日线/周线数据，跳过新闻与预测阶段，结构化预测结果不会写入 Redis 待持久化队列或数据库 |
-| `--limit`                | 无                                               | 仅取前 N 个 symbol，便于局部验证                                    |
-| `--include-symbols-file` | 无                                               | 指定 manifest/JSON/CSV 清单后按文件内顺序执行，忽略数据库全量读取   |
-| `--exclude-symbols-file` | 无                                               | 提供需跳过的股票清单，常用于暂时排除故障股票                        |
-| `--progress-file`        | `logs/batch_progress/bulk_progress.json`        | 进度文件路径，记录已成功的股票，便于断点续跑                        |
-| `--resume/--no-resume`   | `--resume`                                       | 是否根据进度文件跳过已完成股票，默认开启，可通过 `--no-resume` 关闭 |
-| `--reset-progress`       | 关闭                                             | 运行前清空进度文件，适合重新跑批或验证                              |
+| `--limit`                | 无                                               | 仅取前 N 个 symbol，便于局部验证                                                                                                                 |
+| `--include-symbols-file` | 无                                               | 指定 manifest/JSON/CSV 清单后按文件内顺序执行，忽略数据库全量读取                                                                                |
+| `--exclude-symbols-file` | 无                                               | 提供需跳过的股票清单，常用于暂时排除故障股票                                                                                                     |
+| `--progress-file`        | `logs/batch_progress/bulk_progress.json`         | 进度文件路径，记录已成功的股票，便于断点续跑                                                                                                     |
+| `--resume/--no-resume`   | `--resume`                                       | 是否根据进度文件跳过已完成股票，默认开启，可通过 `--no-resume` 关闭                                                                              |
+| `--reset-progress`       | 关闭                                             | 运行前清空进度文件，适合重新跑批或验证                                                                                                           |
 
 ### 5.4 Docker 生产环境 CLI
 
@@ -200,69 +200,24 @@ docker compose exec stockaivo-backend-1 \
 
 命令参数说明：
 
-| 参数                     | 默认值                                            | 说明                                                       |
-| ------------------------ | ------------------------------------------------- | ---------------------------------------------------------- |
-| `--batch-size`           | 20                                                | 每批处理的股票数量，可根据限流配置下调                     |
-| `--max-concurrency`      | 5                                                 | 分发到 `/ai/predict-structured/batch` 的并发上限           |
-| `--max-retries`          | 1                                                 | 单票失败后的重试次数（不含首次）                           |
-| `--output`               | `/logs/batch_failures/bulk_predict_failures.json` | 失败列表输出路径，建议映射到宿主机便于重试；若使用示例命令将自动生成 `bulk_cli_failures.json` |
-| `--dry-run`              | 关闭                                              | 开启后仅打印批次数量，不发起调用                           |
-| `--api-base-url`         | 未设置                                            | 如需走 HTTP，可设为 `http://localhost:3224` 或反向代理地址 |
+| 参数                     | 默认值                                            | 说明                                                                                                                                             |
+| ------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--batch-size`           | 20                                                | 每批处理的股票数量，可根据限流配置下调                                                                                                           |
+| `--max-concurrency`      | 5                                                 | 分发到 `/ai/predict-structured/batch` 的并发上限                                                                                                 |
+| `--max-retries`          | 1                                                 | 单票失败后的重试次数（不含首次）                                                                                                                 |
+| `--output`               | `/logs/batch_failures/bulk_predict_failures.json` | 失败列表输出路径，建议映射到宿主机便于重试；若使用示例命令将自动生成 `bulk_cli_failures.json`                                                    |
+| `--dry-run`              | 关闭                                              | 开启后仅打印批次数量，不发起调用                                                                                                                 |
+| `--api-base-url`         | 未设置                                            | 如需走 HTTP，可设为 `http://localhost:3224` 或反向代理地址                                                                                       |
 | `--execution-mode`       | `full`                                            | 执行模式：`full` 运行完整预测；`data_collection_only` 仅采集日线/周线数据，跳过新闻与预测阶段，结构化预测结果不会写入 Redis 待持久化队列或数据库 |
-| `--include-symbols-file` | 无                                                | 指定容器内 manifest 或挂载清单，实现分批执行               |
-| `--progress-file`        | `/logs/batch_progress/bulk_progress.json`        | 建议指向持久化卷，记录断点信息                             |
-| `--resume/--no-resume`   | `--resume`                                        | 控制是否根据进度文件跳过已完成股票                         |
-| `--reset-progress`       | 关闭                                              | 运行前清空进度文件；清空后若未限制范围，本轮将全量执行     |
+| `--include-symbols-file` | 无                                                | 指定容器内 manifest 或挂载清单，实现分批执行                                                                                                     |
+| `--progress-file`        | `/logs/batch_progress/bulk_progress.json`         | 建议指向持久化卷，记录断点信息                                                                                                                   |
+| `--resume/--no-resume`   | `--resume`                                        | 控制是否根据进度文件跳过已完成股票                                                                                                               |
+| `--reset-progress`       | 关闭                                              | 运行前清空进度文件；清空后若未限制范围，本轮将全量执行                                                                                           |
 
 执行完成后脚本会输出总成功/失败统计，若存在失败，将在 `--output` 指定路径生成 JSON，包含失败的 ticker、错误信息与批次索引，便于后续 `--dry-run` 验证或二次重试。
 
-### 5.5 失败补跑脚本
 
-批量预测完成后，如 `--output` 生成的 `bulk_predict_failures.json` 中仍有失败股票，可使用 `stockaivo/scripts/retry_failed_predictions.py` 自动补跑。该脚本会读取失败列表 JSON，按参数重新分批调用批量接口，并将最新失败结果写入新的文件，确保多轮重试具备可追溯性；若传入 `--progress-file`，补跑成功的股票也会同步写入进度文件，便于主脚本断点恢复。
-
-```bash
-uv run python stockaivo/scripts/retry_failed_predictions.py \
-  --input logs/batch_failures/bulk_predict_failures.json \
-  --batch-size 10 \
-  --max-concurrency 3 \
-  --max-retries 2 \
-  --progress-file logs/batch_progress/bulk_progress.json \
-  --api-base-url http://127.0.0.1:8000 \
-  --run-context batch_004
-```
-
-参数说明：
-
-| 参数                  | 默认值                                                 | 说明                                                                                                                                       |
-| --------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--input`             | `logs/batch_failures/bulk_predict_failures.json`       | 首次批量任务生成的失败列表路径，支持手动放入任意 JSON（需包含 `failures[].ticker` 或 `failed_tickers` 字段）；新格式将失败按 `runs` 聚合存储 |
-| `--output`            | `logs/batch_failures/bulk_predict_failures.json`       | 补跑后的失败列表输出位置，默认就地更新原始文件；如需保留副本可额外指定自定义路径                                                           |
-| `--batch-size`        | `10`                                                   | 每批提交的股票数量，建议结合上一轮失败原因适当调小                                                                                         |
-| `--max-concurrency`   | `3`                                                    | 补跑时的并发度，可在受限环境下调低避免触发限流                                                                                             |
-| `--max-retries`       | `2`                                                    | 单票补跑的最大重试次数，默认比初次任务稍高                                                                                                 |
-| `--retry-delay`       | `5.0`                                                  | 指数退避基础值，与批量接口参数一致                                                                                                         |
-| `--save-to-db`        | `true`                                                 | 是否将补跑成功的结果写入数据库，可通过 `--no-save-to-db` 关闭                                                                              |
-| `--end-date`          | `null`                                                 | 可选统一结束日期，如需覆盖请传入 `YYYY-MM-DD`                                                                                              |
-| `--api-base-url`      | `null`                                                 | 指定 FastAPI 服务地址；未设置时脚本会复用应用内部路由                                                                                    |
-| `--api-key`           | `null`                                                 | HTTP 调用时附加的 `Authorization` 头部                                                                                                     |
-| `--limit`             | `null`                                                 | 仅补跑失败列表前 N 支股票，其余股票会原样保留在输出文件中，便于分批处理                                                                    |
-| `--execution-mode`    | 自动检测（或 `full`）                                  | 若失败列表包含模式信息会自动继承，可手动指定 `full`/`data_collection_only` 强制以特定模式补跑                                              |
-| `--run-context`       | `null`                                                 | 当失败文件中存在多个运行记录 (`runs[]`) 时，用于指定目标批次（通常为清单文件名，如 `batch_004`）；未指定时默认选取最新一条记录              |
-| `--progress-file`     | `logs/batch_progress/bulk_progress.json`               | 指定进度文件，补跑成功会自动同步到该文件，后续主流程可据此跳过已成功股票                                                                   |
-| `--resume/--no-resume`| `--resume`                                             | 控制是否根据进度文件跳过已成功股票，默认遵循进度；如需强制重跑可使用 `--no-resume`                                                         |
-| `--reset-progress`    | 关闭                                                   | 运行前清空进度文件（仅在启用了 `--progress-file` 时生效），适合重新初始化补跑                                                              |
-
-> 如未显式指定 `--run-context`，脚本会自动选取失败文件 `runs[]` 列表中的最新一条记录，并继承其中的 `execution_mode`；若失败文件仍为旧版（无 `runs` 字段），脚本将继续兼容原有结构。
-
-> 注意：同一 `context` 若在不同 `execution_mode` 下产生失败，文件会分别保留多条记录，仅当上下文与执行模式同时匹配时才会覆盖旧数据。
-
-> 建议补跑前先检查失败原因是否为限流或外部数据源故障。如多次补跑仍失败，可结合日志排查异常并考虑暂时移除问题股票。
-
-> 📌 当使用 `--limit` 分批补跑时，脚本会自动将本轮成功的股票从输出 JSON 中移除，同时保留未处理与仍失败的股票，方便下一轮继续执行。
-
-> 🔁 最佳实践：默认情况下脚本会直接更新 `logs/batch_failures/bulk_predict_failures.json`，并自动移除已补跑成功的 `context`。如需保留补跑历史，可在执行前复制原始文件或通过 `--output` 指定其他路径。
-
-### 5.6 批次清单与断点续跑流程
+### 5.5 批次清单与断点续跑流程
 
 > 自 2025-10-15 起，CLI 支持批次 manifest 生成与进度断点功能，可将 292 支股票拆分为多个小批次执行。
 
@@ -344,6 +299,52 @@ uv run python stockaivo/scripts/retry_failed_predictions.py \
 > 推荐流程：先使用 `--generate-manifests` 拆分批次 → 基于清单挨个跑批（搭配进度、排除清单）→ 若遇到失败则使用失败文件补跑或在下一批次前调整清单。
 
 > ⚠️ 提醒：`--reset-progress` 仅清除历史记录，不会自动缩减本轮股票集合。若希望清空后只执行子集，请结合 `--include-symbols-file`、`--limit` 或手动裁剪清单。
+
+### 5.6 失败补跑脚本
+
+批量预测完成后，如 `--output` 生成的 `bulk_predict_failures.json` 中仍有失败股票，可使用 `stockaivo/scripts/retry_failed_predictions.py` 自动补跑。该脚本会读取失败列表 JSON，按参数重新分批调用批量接口，并将最新失败结果写入新的文件，确保多轮重试具备可追溯性；若传入 `--progress-file`，补跑成功的股票也会同步写入进度文件，便于主脚本断点恢复。
+
+```bash
+uv run python stockaivo/scripts/retry_failed_predictions.py \
+  --input logs/batch_failures/bulk_predict_failures.json \
+  --batch-size 10 \
+  --max-concurrency 3 \
+  --max-retries 2 \
+  --progress-file logs/batch_progress/bulk_progress.json \
+  --api-base-url http://127.0.0.1:8000 \
+  --run-context batch_004
+```
+
+参数说明：
+
+| 参数                   | 默认值                                           | 说明                                                                                                                                         |
+| ---------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--input`              | `logs/batch_failures/bulk_predict_failures.json` | 首次批量任务生成的失败列表路径，支持手动放入任意 JSON（需包含 `failures[].ticker` 或 `failed_tickers` 字段）；新格式将失败按 `runs` 聚合存储 |
+| `--output`             | `logs/batch_failures/bulk_predict_failures.json` | 补跑后的失败列表输出位置，默认就地更新原始文件；如需保留副本可额外指定自定义路径                                                             |
+| `--batch-size`         | `10`                                             | 每批提交的股票数量，建议结合上一轮失败原因适当调小                                                                                           |
+| `--max-concurrency`    | `3`                                              | 补跑时的并发度，可在受限环境下调低避免触发限流                                                                                               |
+| `--max-retries`        | `2`                                              | 单票补跑的最大重试次数，默认比初次任务稍高                                                                                                   |
+| `--retry-delay`        | `5.0`                                            | 指数退避基础值，与批量接口参数一致                                                                                                           |
+| `--save-to-db`         | `true`                                           | 是否将补跑成功的结果写入数据库，可通过 `--no-save-to-db` 关闭                                                                                |
+| `--end-date`           | `null`                                           | 可选统一结束日期，如需覆盖请传入 `YYYY-MM-DD`                                                                                                |
+| `--api-base-url`       | `null`                                           | 指定 FastAPI 服务地址；未设置时脚本会复用应用内部路由                                                                                        |
+| `--api-key`            | `null`                                           | HTTP 调用时附加的 `Authorization` 头部                                                                                                       |
+| `--limit`              | `null`                                           | 仅补跑失败列表前 N 支股票，其余股票会原样保留在输出文件中，便于分批处理                                                                      |
+| `--execution-mode`     | 自动检测（或 `full`）                            | 若失败列表包含模式信息会自动继承，可手动指定 `full`/`data_collection_only` 强制以特定模式补跑                                                |
+| `--run-context`        | `null`                                           | 当失败文件中存在多个运行记录 (`runs[]`) 时，用于指定目标批次（通常为清单文件名，如 `batch_004`）；未指定时默认选取最新一条记录               |
+| `--progress-file`      | `logs/batch_progress/bulk_progress.json`         | 指定进度文件，补跑成功会自动同步到该文件，后续主流程可据此跳过已成功股票                                                                     |
+| `--resume/--no-resume` | `--resume`                                       | 控制是否根据进度文件跳过已成功股票，默认遵循进度；如需强制重跑可使用 `--no-resume`                                                           |
+| `--reset-progress`     | 关闭                                             | 运行前清空进度文件（仅在启用了 `--progress-file` 时生效），适合重新初始化补跑                                                                |
+
+> 如未显式指定 `--run-context`，脚本会自动选取失败文件 `runs[]` 列表中的最新一条记录，并继承其中的 `execution_mode`；若失败文件仍为旧版（无 `runs` 字段），脚本将继续兼容原有结构。
+
+> 注意：同一 `context` 若在不同 `execution_mode` 下产生失败，文件会分别保留多条记录，仅当上下文与执行模式同时匹配时才会覆盖旧数据。
+
+> 建议补跑前先检查失败原因是否为限流或外部数据源故障。如多次补跑仍失败，可结合日志排查异常并考虑暂时移除问题股票。
+
+> 📌 当使用 `--limit` 分批补跑时，脚本会自动将本轮成功的股票从输出 JSON 中移除，同时保留未处理与仍失败的股票，方便下一轮继续执行。
+
+> 🔁 最佳实践：默认情况下脚本会直接更新 `logs/batch_failures/bulk_predict_failures.json`，并自动移除已补跑成功的 `context`。如需保留补跑历史，可在执行前复制原始文件或通过 `--output` 指定其他路径。
 
 ## 6. 限流与重试配置
 

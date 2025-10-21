@@ -300,6 +300,21 @@ async def get_cache_statistics():
 if __name__ == "__main__":
     import uvicorn
     from stockaivo.logging_config import get_uvicorn_log_config
+    from pathlib import Path
+
+    PROJECT_ROOT = Path(__file__).resolve().parent
+    LOG_RELOAD_EXCLUDES = [
+        "logs",
+        "logs/*",
+        "logs/**/*",
+        "*.log",
+        str((PROJECT_ROOT / "logs").resolve()),
+    ]
+    RELOAD_DIRS = [
+        str((PROJECT_ROOT / "stockaivo").resolve()),
+        str((PROJECT_ROOT / "database_migrations").resolve()),
+        str((PROJECT_ROOT / "tests").resolve()),
+    ]
     
     # 开发环境运行配置
     uvicorn.run(
@@ -308,5 +323,7 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
         log_level="info",
-        log_config=get_uvicorn_log_config()
+        log_config=get_uvicorn_log_config(),
+        reload_excludes=LOG_RELOAD_EXCLUDES,
+        reload_dirs=RELOAD_DIRS,
     )

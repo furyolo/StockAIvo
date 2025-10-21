@@ -1,30 +1,28 @@
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
 import uvicorn
-from uvicorn.config import LOGGING_CONFIG
 
-# Define a custom log config dictionary
-LOG_CONFIG = LOGGING_CONFIG
-LOG_CONFIG["formatters"]["default"]["fmt"] = "[%(asctime)s] %(levelname)s - %(message)s"
-LOG_CONFIG["formatters"]["default"]["datefmt"] = "%H:%M:%S"
-LOG_CONFIG["formatters"]["access"]["fmt"] = '[%(asctime)s] %(levelname)s - %(client_addr)s - "%(request_line)s" %(status_code)s'
-LOG_CONFIG["formatters"]["access"]["datefmt"] = "%H:%M:%S"
+from stockaivo.logging_config import build_logging_config, configure_logging
 
-# Configure the root logger to capture all application logs and apply the default formatter
-LOG_CONFIG["loggers"][""] = {
-    "handlers": ["default"], 
-    "level": "INFO"
-}
-# Ensure uvicorn's own loggers are also set correctly
-LOG_CONFIG["loggers"]["uvicorn"]["handlers"] = ["default"]
-LOG_CONFIG["loggers"]["uvicorn.error"]["level"] = "INFO"
-LOG_CONFIG["loggers"]["uvicorn.access"] = {
-    "handlers": ["access"], 
-    "level": "INFO", 
-    "propagate": False
-}
+configure_logging()
+LOG_CONFIG = build_logging_config()
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LOG_RELOAD_EXCLUDES = [
+    "logs",
+    "logs/*",
+    "logs/**/*",
+    "*.log",
+    str((PROJECT_ROOT / "logs").resolve()),
+]
+RELOAD_DIRS = [
+    str((PROJECT_ROOT / "stockaivo").resolve()),
+    str((PROJECT_ROOT / "database_migrations").resolve()),
+    str((PROJECT_ROOT / "tests").resolve()),
+]
 
 
 def dev():
@@ -34,7 +32,9 @@ def dev():
         host="127.0.0.1",
         port=8000,
         reload=True,
-        log_config=LOG_CONFIG
+        log_config=LOG_CONFIG,
+        reload_excludes=LOG_RELOAD_EXCLUDES,
+        reload_dirs=RELOAD_DIRS,
     )
 
 def start():

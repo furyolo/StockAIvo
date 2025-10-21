@@ -26,16 +26,14 @@ from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
 from ..models import WellKnownStockSymbol
+from ..logging_config import configure_logging as configure_app_logging
 
 # 加载环境变量，确保 DATABASE_URL 等配置可用
 load_dotenv()
+configure_app_logging()
 
 # 配置日志
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
 
 # 默认 Excel 路径：项目根目录的 well-known US stocks.xlsx
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

@@ -27,7 +27,6 @@ from . import cache_manager
 from .cache_manager import CacheType
 
  # 配置日志
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 定义支持的时间周期类型
