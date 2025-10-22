@@ -81,6 +81,8 @@
 Python 3.13+  •  Node.js 18+  •  PostgreSQL 17+  •  Redis 8+
 ```
 
+> ℹ️ 提示：后端代码与依赖已迁移至 `backend/` 子目录。运行任何 `uv ...`、`python database_migrations/...` 等命令前，请先切换到该目录或使用 `cd backend &&` 前缀。
+
 ### ⚡ 一键部署
 
 ```bash
@@ -93,11 +95,11 @@ OPENAI_API_BASE=""
 OPENAI_API_KEY=""
 
 # 3️⃣ 安装依赖
-uv sync --extra dev                    # 后端依赖
+cd backend && uv sync --extra dev     # 后端依赖
 cd frontend && pnpm install           # 前端依赖
 
 # 4️⃣ 启动服务
-uv run dev                            # 后端: http://127.0.0.1:8000
+cd backend && uv run dev              # 后端: http://127.0.0.1:8000
 cd frontend && pnpm dev               # 前端: http://localhost:3223
 ```
 
@@ -122,7 +124,7 @@ docker logs -f stockaivo-backend-1
   - `LOG_FILE_MAX_BYTES`：单个日志文件轮转大小，默认 `10_485_760`（10MB）
   - `LOG_FILE_BACKUP_COUNT`：保留轮转文件数量，默认 `5`
   - `LOG_LEVEL`：根日志级别，默认 `INFO`
-- **开发模式监听目录**：`uv run dev` 与 `python main.py` 均配置了 `reload_dirs`/`reload_excludes`，只监视 `stockaivo/`、`database_migrations/`、`tests/`，同时忽略 `logs/` 与 `*.log` 文件，防止日志更新导致热重载风暴。
+- **开发模式监听目录**：在 `backend/` 目录运行的 `uv run dev` 与 `python main.py` 均配置了 `reload_dirs`/`reload_excludes`，只监视 `stockaivo/`、`database_migrations/`、`tests/`，同时忽略 `logs/` 与 `*.log` 文件，防止日志更新导致热重载风暴。
 - **日志与终端输出并存**：旋转文件写入与控制台输出同时存在，便于排查实时问题并保留历史记录。
 
 ## 🗂️ 文档与历史任务
@@ -270,40 +272,37 @@ curl -X POST "http://127.0.0.1:8000/stocks/realtime-quotes/update" \
 
 ```
 StockAIvo/
+├── 🚀 backend/                     # FastAPI 后端子项目
+│   ├── stockaivo/                  # 核心业务与 AI 模块
+│   ├── database_migrations/        # 数据库迁移脚本
+│   ├── tests/                      # PyTest 用例与性能基准
+│   ├── main.py                     # FastAPI 应用入口
+│   ├── pyproject.toml              # uv 项目配置
+│   └── Dockerfile                  # 后端容器构建
 ├── 🎨 frontend/                    # React 19 前端
 │   ├── src/components/             # 核心组件
 │   │   ├── StockSearch.tsx         # 智能搜索
 │   │   ├── TradingViewChart.tsx    # 专业图表
-│   │   ├── AIAnalysis.tsx          # AI分析界面
-│   │   └── ui/                     # shadcn/ui组件库
+│   │   ├── AIAnalysis.tsx          # AI 分析界面
+│   │   └── ui/                     # Mantine 定制组件
 │   └── package.json                # 前端依赖 (pnpm)
-├── 🚀 stockaivo/                   # Python 3.13 后端
-│   ├── ai/                         # AI分析引擎
-│   │   ├── agents.py               # 多Agent定义 (含结构化预测Agent)
-│   │   ├── orchestrator.py         # LangGraph编排
-│   │   └── technical_indicator.py  # 技术指标计算
-│   ├── routers/                    # FastAPI路由
-│   │   ├── stocks.py               # 股票数据API
-│   │   ├── ai.py                   # AI分析API
-│   │   └── search.py               # 搜索API
-│   ├── data_service.py             # 三级缓存数据服务
-│   ├── models.py                   # SQLAlchemy模型
-│   └── dependencies.py             # 现代化依赖注入
-├── 🧪 tests/                       # 测试代码
-├── main.py                         # 应用入口
-└── pyproject.toml                  # uv项目配置
+├── 🐳 docker/                      # 容器与 Nginx 配置
+├── 📚 docs/                        # 运维手册与历史记录
+├── 🗂️ logs/                        # 本地调试日志输出
+├── 🧾 README.md / STARTUP.md       # 项目说明与启动指南
+└── 🛠️ start-dev.sh(.bat)           # 一键本地开发脚本
 ```
 
 ## 🧪 开发 & 测试
 
 ```bash
 # 🔧 开发调试
-uv run dev                          # 后端开发服务器 (热重载)
+cd backend && uv run dev            # 后端开发服务器 (热重载)
 cd frontend && pnpm dev             # 前端开发服务器
 
 # ✅ 测试运行
-uv run pytest tests/ -v            # 后端测试
-uv run mypy stockaivo/              # 类型检查
+cd backend && uv run pytest tests/ -v # 后端测试
+cd backend && uv run mypy stockaivo/  # 类型检查
 cd frontend && pnpm test            # 前端测试
 
 # 📊 系统监控
@@ -313,7 +312,7 @@ curl http://127.0.0.1:8000/cache-stats # 缓存统计
 
 ### 🕒 后台任务调度
 - APScheduler 以 8 分钟间隔触发 `persist_pending_data`，启用 `coalesce=True`、`misfire_grace_time=300`、`max_instances=1`，确保容器启动抖动不会导致重复执行。
-- 日志输出会在任务结束时记录计划开始时间（UTC，精确到秒）、实际耗时以及处理数量摘要，可在本地或容器中通过 `uv run dev`、`docker logs` 观察。
+- 日志输出会在任务结束时记录计划开始时间（UTC，精确到秒）、实际耗时以及处理数量摘要，可在本地或容器中通过 `cd backend && uv run dev`、`docker logs` 观察。
 - 如需临时暂停，可调用 `stockaivo.background_scheduler.stop_scheduler()`，重新启动前确保无并发任务残留。
 
 ### 🏗️ 架构特色

@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.venv/
+.mypy_cache/
+.pytest_cache/
+logs/
+tests/
+*.md
+README*
+tmp/
+temp/
+.env
+.env.local
+.env.*.local
+
+# Docker volumes
+data/
+postgres_data/
+redis_data/

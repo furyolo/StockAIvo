@@ -28,7 +28,7 @@
    - `OPENAI_API_BASE`、`OPENAI_API_KEY`：Agent 依赖的 LLM 服务。
    - `REDIS_URL`、`DATABASE_URL`：缓存与数据库连接。
    - 如需调整批量限流参数，请参考第 6 节环境变量。
-2. 启动 FastAPI 应用（`uv run dev` 或 `docker-compose up`），确认 `/health` 返回 200。
+2. 启动 FastAPI 应用（`cd backend && uv run dev` 或 `docker-compose up`），确认 `/health` 返回 200。
 3. Redis 需可写并允许创建 `prediction:pending:*` 键；PostgreSQL 需要存在 `stock_predictions` 相关表结构（随迁移自动创建）。
 
 ## 4. 请求与响应模型
@@ -152,7 +152,7 @@ curl -X POST "http://127.0.0.1:8000/ai/predict-structured/batch" \
 
 ### 5.3 本地开发环境 CLI
 
-如果只是在本地验证，可直接使用 `uv` 运行脚本；确保 FastAPI 服务已通过 `uv run dev` 启动（默认监听 `http://127.0.0.1:8000`）：
+如果只是在本地验证，可直接使用 `uv` 运行脚本；确保 FastAPI 服务已通过 `cd backend && uv run dev` 启动（默认监听 `http://127.0.0.1:8000`）：
 
 ```bash
 uv run python stockaivo/scripts/bulk_predict_from_db.py \
@@ -185,7 +185,7 @@ uv run python stockaivo/scripts/bulk_predict_from_db.py \
 全量跑通 `well_known_stock_symbols` 表时，可直接在容器内调用新脚本 `stockaivo/scripts/bulk_predict_from_db.py`：
 
 ```bash
-docker compose exec stockaivo-backend-1 \
+docker compose exec backend \
   uv run python stockaivo/scripts/bulk_predict_from_db.py \
     --batch-size 20 \
     --max-concurrency 5 \

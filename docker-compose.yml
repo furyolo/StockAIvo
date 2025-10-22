@@ -15,7 +15,8 @@ services:
 
   # 后端 API 服务
   backend:
-    build: .
+    build:
+      context: ./backend
     ports:
       - "3224:3224"
     env_file:

@@ -114,6 +114,7 @@ timeout /t 3 /nobreak >nul
 
 :: Start Backend Service
 call :ColorEcho "YELLOW" "Starting Backend Service (FastAPI)"
+cd backend
 if not exist .venv (
     call :ColorEcho "BLUE" "Creating virtual environment"
     uv venv
@@ -136,6 +137,8 @@ if !errorlevel! neq 0 (
 
 :: Start backend dev server
 start "StockAIvo Backend" cmd /c "uv run dev && echo. && echo Backend service stopped && pause"
+call deactivate
+cd ..
 
 echo.
 call :ColorEcho "GREEN" "Development environment startup completed!"

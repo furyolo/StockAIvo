@@ -38,22 +38,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 后端开发 (Python 3.13 + FastAPI)
 ```bash
 # 安装依赖
-uv sync --extra dev
+cd backend && uv sync --extra dev
 
 # 开发服务器启动
-uv run dev                          # 开发服务器 (http://127.0.0.1:8000)
+cd backend && uv run dev                 # 开发服务器 (http://127.0.0.1:8000)
 
 # 类型检查和测试
-uv run mypy stockaivo/              # MyPy类型检查 (渐进式类型检查策略)
-uv run pytest tests/ -v            # 运行所有后端测试
-uv run pytest tests/test_file.py -v # 运行单个测试文件
-uv run pytest tests/test_file.py::test_func -v # 运行单个测试函数
+cd backend && uv run mypy stockaivo/              # MyPy类型检查 (渐进式类型检查策略)
+cd backend && uv run pytest tests/ -v             # 运行所有后端测试
+cd backend && uv run pytest tests/test_file.py -v # 运行单个测试文件
+cd backend && uv run pytest tests/test_file.py::test_func -v # 运行单个测试函数
 
 # 开发工作流建议
-uv run mypy stockaivo/ && uv run pytest tests/ -v  # 类型检查+测试一键运行
+cd backend && uv run mypy stockaivo/ && uv run pytest tests/ -v  # 类型检查+测试一键运行
 
 # 生产环境启动
-uv run start                        # 生产服务器
+cd backend && uv run start               # 生产服务器
 ```
 
 ### 前端开发 (React 19 + TypeScript + Mantine UI)
@@ -124,8 +124,8 @@ cd frontend && pnpm test:ui         # UI测试界面
 ### 数据库和缓存
 ```bash
 # 数据库迁移
-python database_migrations/create_stock_news_table.py
-python database_migrations/drop_stock_news_table.py
+cd backend && python database_migrations/create_stock_news_table.py
+cd backend && python database_migrations/drop_stock_news_table.py
 
 # 系统监控
 curl http://127.0.0.1:8000/health  # 健康检查（容器模式下首次成功后即视为通过）
@@ -394,41 +394,35 @@ AI_SYNTHESIS_MODEL="gemini-2.5-pro"
 
 ```
 StockAIvo/
-├── 📁 stockaivo/                   # 核心后端模块
-│   ├── 🤖 ai/                      # AI分析引擎
-│   │   ├── agents.py               # 多Agent定义 (技术/基本面/新闻)
-│   │   ├── orchestrator.py         # LangGraph编排器 (并行工作流)
-│   │   └── technical_indicator.py  # 技术指标计算 (MA/RSI/MACD等)
-│   ├── 🌐 routers/                 # FastAPI路由模块
-│   │   ├── stocks.py               # 股票数据API
-│   │   ├── ai.py                   # AI分析API
-│   │   └── search.py               # 搜索API
-│   ├── 📊 data_service.py          # 核心数据服务 (三级缓存协调)
-│   ├── 🗄️ models.py                # SQLAlchemy 2.0模型
-│   ├── 🔧 dependencies.py          # 现代化依赖注入
-│   ├── ⚡ cache_manager.py         # Redis缓存管理
-│   └── 🛡️ exceptions.py            # 统一异常处理
-├── 🎨 frontend/                    # React前端
-│   ├── 📦 src/components/          # 核心React组件
+├── 🚀 backend/                     # FastAPI 后端子项目
+│   ├── 📁 stockaivo/               # 核心业务 & AI 模块
+│   │   ├── 🤖 ai/                  # 多 Agent 分析引擎
+│   │   ├── 🌐 routers/             # FastAPI 路由
+│   │   ├── 📊 data_service.py      # 三级缓存数据服务
+│   │   ├── ⚡ cache_manager.py     # Redis 缓存管理
+│   │   └── 🛡️ exceptions.py        # 统一异常处理
+│   ├── 🗃️ database_migrations/     # 数据库迁移脚本
+│   ├── 🧪 tests/                   # PyTest 套件 (含性能基准)
+│   ├── 📖 main.py                  # FastAPI 应用入口
+│   ├── ⚙️ pyproject.toml           # uv 项目配置
+│   └── 🧱 Dockerfile               # 后端镜像构建
+├── 🎨 frontend/                    # React 前端
+│   ├── 📦 src/components/          # Mantine 组件与业务模块
 │   │   ├── StockSearch.tsx         # 智能股票搜索
-│   │   ├── TradingViewChart.tsx    # 专业K线图表
-│   │   ├── AIAnalysis.tsx          # AI分析结果展示
-│   │   └── ui/                     # shadcn/ui组件库
+│   │   ├── TradingViewChart.tsx    # 专业 K 线图表
+│   │   ├── AIAnalysis.tsx          # AI 分析结果面板
+│   │   └── ui/                     # Mantine 定制组件
 │   ├── 📱 src/hooks/               # React Hooks
-│   └── 🎯 src/types/               # TypeScript类型定义
-├── 🧪 tests/                       # 测试代码
-│   ├── test_data_service.py        # 数据服务测试
-│   ├── test_ai_analysis.py         # AI分析测试
-│   └── conftest.py                 # 测试配置
-├── 🗃️ database_migrations/         # 数据库迁移脚本
-├── 📖 main.py                      # FastAPI应用入口
-├── ⚙️ pyproject.toml               # uv项目配置 (Python依赖)
-└── 📋 frontend/package.json        # pnpm配置 (前端依赖)
+│   └── 🎯 src/types/               # TypeScript 类型定义
+├── 🐳 docker/                      # Docker Compose 与 Nginx 配置
+├── 📚 docs/                        # 运维手册与历史任务
+├── 🧾 README.md / STARTUP.md       # 项目说明与启动指南
+└── 🛠️ start-dev.sh(.bat)           # 一键开发脚本
 ```
 
 ### 关键目录说明
-- **stockaivo/ai/**: LangGraph多Agent并行分析系统核心
-- **stockaivo/routers/**: RESTful API端点定义，按功能模块组织
-- **frontend/src/components/**: React 19组件，使用TypeScript和shadcn/ui
-- **tests/**: pytest测试套件，包含单元测试和集成测试
-- **database_migrations/**: 数据库schema变更脚本
+- **backend/stockaivo/**: LangGraph 多 Agent 后端核心实现
+- **backend/tests/**: PyTest 测试套件（单元 + 集成 + 性能）
+- **backend/database_migrations/**: 数据库 schema 变更脚本
+- **frontend/src/components/**: React 19 组件，结合 Mantine UI 与 TradingView
+- **docker/**: 生产容器组合、Nginx 反代与运行时优化配置

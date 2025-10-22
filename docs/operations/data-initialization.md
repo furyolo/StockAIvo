@@ -89,7 +89,7 @@ curl "http://localhost:3224/check-pending-data"
 ./start-dev.sh
 
 # 或手动启动
-uv run dev
+cd backend && uv run dev
 
 # 然后调用API接口
 curl -X POST "http://127.0.0.1:8000/stocks/us-stock-names/update"

@@ -43,7 +43,7 @@
   ```sql
   DELETE FROM well_known_stock_symbols WHERE symbol = 'AAPL';
   ```
-- 若需要重新建表，可重新运行 `python database_migrations/create_well_known_stock_symbols.py`（脚本包含触发器创建逻辑）。
+- 若需要重新建表，可重新运行 `cd backend && python database_migrations/create_well_known_stock_symbols.py`（脚本包含触发器创建逻辑）。
 
 ## 后续维护建议
 - Excel 更新后重复执行导入即可同步变更。

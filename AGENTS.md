@@ -1,13 +1,15 @@
 # Repository Guidelines
 
 ## 项目结构与模块组织
-- `stockaivo/`：FastAPI 核心服务，包含数据服务、缓存管理、调度脚本等业务模块；`main.py` 暴露应用入口。
+- `backend/`：FastAPI 后端子项目，内含 `stockaivo/` 业务模块、`database_migrations/` 迁移脚本、`tests/` PyTest 用例，以及 `main.py`、`pyproject.toml`、`Dockerfile` 等运行入口与构建文件。
 - `frontend/`：React 19 + Vite 前端界面，整合 Mantine 组件与 TradingView 图表；静态资源统一存放于 `frontend/src/assets/`。
-- `tests/`：后端 PyTest 用例和性能基准，按照服务维度分文件；前端测试集中在 `frontend` 目录的 Vitest 配置中。
-- 支持性目录：`database_migrations/` 保存 SQL 迁移脚本；`docker/` 提供容器化配置；`logs/` 用于本地调试日志；`.env`、`.env.example` 管理运行所需密钥。
+- `docker/`：Docker Compose 与 Nginx 配置，支撑多容器部署。
+- `docs/`：运维手册、历史任务与实施方案。
+- `logs/`：本地调试日志目录，可根据需要挂载或清理。
+- `.env` / `.env.example`：运行所需密钥模板；`start-dev.sh(.bat)` 提供一键开发脚本。
 
 ## 构建、测试与开发命令
-- 后端依赖：`uv sync --extra dev`；启动开发服务：`uv run dev`；生产模式请使用 `uv run start`。
+- 后端依赖：在 `backend/` 下运行 `uv sync --extra dev`；启动开发服务：`cd backend && uv run dev`；生产模式请使用 `cd backend && uv run start`。
 - 前端：进入 `frontend` 执行 `pnpm install` 安装依赖，`pnpm dev` 启动本地调试，`pnpm build` 生成产物，`pnpm preview` 验证打包结果。
 - 容器一键体验：`docker-compose up --build` 会启动 FastAPI、Redis、PostgreSQL、前端与 Nginx 反向代理。
 
@@ -35,7 +37,7 @@
 
 ## 安全与配置提示
 - `.env` 内含 API Key 与数据库密码，请使用 `.env.example` 作为模板，避免直接提交敏感字段。
-- 数据服务依赖 Redis 与 PostgreSQL，首次部署前执行 `database_migrations/` 内的脚本或运行 `uv run main` 自动迁移。
+- 数据服务依赖 Redis 与 PostgreSQL，首次部署前执行 `backend/database_migrations/` 内的脚本或运行 `cd backend && uv run main` 自动迁移。
 - 日志默认输出到控制台与 `logs/` 下特定文件，生成环境需结合 Dockerfile 与 `docker-compose.yml` 自定义挂载与留存策略。
 
 ## 后台任务与监控

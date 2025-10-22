@@ -25,6 +25,8 @@
 ./start-dev.sh logs
 ```
 
+> 💡 提示：后端 FastAPI 代码与依赖已移动至 `backend/` 子目录。若需手动运行 `uv ...` 或 `python database_migrations/...` 命令，请先 `cd backend`。
+
 ### 生产环境
 
 #### 跨平台（推荐）
@@ -122,7 +124,7 @@ FRONTEND_URL=http://localhost:3223
 ### 初始化数据库
 ```bash
 # 启动应用后自动创建表结构（通过SQLAlchemy）
-uv run dev
+cd backend && uv run dev
 
 # Docker 环境初始化（包含自动迁移）
 docker-compose up -d
@@ -149,17 +151,17 @@ RUN_DATABASE_MIGRATIONS=false
 
 ```bash
 # 创建搜索索引（优化模糊搜索性能）
-python database_migrations/create_search_indexes.py
+cd backend && python database_migrations/create_search_indexes.py
 
 # 创建stock_symbols索引（优化symbol查询）
-python database_migrations/create_stock_symbols_index.py
+cd backend && python database_migrations/create_stock_symbols_index.py
 
 # 清理废弃表（仅在新数据库需要时执行）
-python database_migrations/drop_minute_table.py
-python database_migrations/drop_hourly_table.py
+cd backend && python database_migrations/drop_minute_table.py
+cd backend && python database_migrations/drop_hourly_table.py
 
 # 查看详细的迁移说明
-cat database_migrations/MIGRATIONS.md
+cd backend && cat database_migrations/MIGRATIONS.md
 ```
 
 ### 健康检查

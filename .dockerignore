@@ -137,3 +137,7 @@ redis_data/
 
 # Docker build cache
 .docker/
+
+.claude/
+.kilocode/
+.serena/

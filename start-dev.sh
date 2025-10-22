@@ -79,24 +79,24 @@ cd ..
 echo -e "${BLUE}等待前端服务启动...${RESET}"
 sleep 3
 
-# 启动后端服务
 echo -e "${YELLOW}启动后端服务 (FastAPI)...${RESET}"
+pushd backend > /dev/null
 
 if [ ! -d ".venv" ]; then
     echo -e "${BLUE}创建虚拟环境...${RESET}"
     uv venv
 fi
 
-# 激活虚拟环境并安装依赖
 echo -e "${BLUE}检查后端依赖...${RESET}"
 source .venv/bin/activate
 uv sync --extra dev
 
-# 启动后端开发服务器（后台运行）
 echo -e "${BLUE}启动后端服务器...${RESET}"
 uv run dev > "$TEMP_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo $BACKEND_PID > "$TEMP_DIR/backend.pid"
+deactivate >/dev/null 2>&1 || true
+popd > /dev/null
 
 echo
 echo -e "${GREEN}🎉 开发环境启动完成！${RESET}"
