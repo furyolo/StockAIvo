@@ -46,11 +46,15 @@ def scheduled_persist_job():
 
         if result.get("success"):
             processed_count = result.get("processed_count", 0)
+            prediction_processed_count = result.get("prediction_processed_count", 0)
             failed_count = result.get("failed_count", 0)
             pending_count = result.get("pending_count", 0)
+            total_processed = processed_count + prediction_processed_count
             logger.info(
-                "预定任务完成 - 总处理: %s 条, 失败: %s 条, Redis 待处理键: %s",
+                "预定任务完成 - 总处理: %s 条 (行情: %s, 预测: %s), 失败: %s 条, Redis 待处理键: %s",
+                total_processed,
                 processed_count,
+                prediction_processed_count,
                 failed_count,
                 pending_count,
             )
@@ -65,9 +69,14 @@ def scheduled_persist_job():
 
         duration = perf_counter() - job_timer
         if result.get("success"):
+            processed_count = result.get("processed_count", 0)
+            prediction_processed_count = result.get("prediction_processed_count", 0)
+            total_processed = processed_count + prediction_processed_count
             logger.info(
-                "持久化任务完成 - 处理: %s 条, 失败: %s 条, 耗时: %.2f 秒",
-                result.get("processed_count", 0),
+                "持久化任务完成 - 总处理: %s 条 (行情: %s, 预测: %s), 失败: %s 条, 耗时: %.2f 秒",
+                total_processed,
+                processed_count,
+                prediction_processed_count,
                 result.get("failed_count", 0),
                 duration,
             )
