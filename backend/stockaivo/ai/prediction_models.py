@@ -15,15 +15,15 @@ class StockPredictionResult(BaseModel):
     用于AI生成结构化的股票涨跌概率预测，确保输出格式的一致性和准确性。
     
     概率值含义：
-    - 上涨概率：P(high >= close * 1.03) 在指定交易日内
-    - 下跌概率：P(low <= close * 0.97) 在指定交易日内
+    - 上涨概率：P(high >= close * 1.04) 在指定交易日内
+    - 下跌概率：P(low <= close * 0.96) 在指定交易日内
     """
     
     prediction_probability: float = Field(
         ...,
         ge=0.0,
         le=1.0,
-        description="预测概率值，范围0.0-1.0。若direction为UP，表示股价上涨超过3%的概率；若direction为DOWN，表示股价下跌超过3%的概率"
+        description="预测概率值，范围0.0-1.0。若direction为UP，表示股价上涨超过4%的概率；若direction为DOWN，表示股价下跌超过4%的概率"
     )
     
     direction: Literal["UP", "DOWN"] = Field(
@@ -48,7 +48,7 @@ class StockPredictionResult(BaseModel):
                 "prediction_probability": 0.7500,
                 "direction": "UP",
                 "confidence_level": "HIGH",
-                "reasoning": "基于RSI超卖信号、MACD金叉形态和成交量放大，预测短期内股价有较大概率上涨超过3%",
+                "reasoning": "基于RSI超卖信号、MACD金叉形态和成交量放大，预测短期内股价有较大概率上涨超过4%",
             }
         }
     )

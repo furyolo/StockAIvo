@@ -41,7 +41,7 @@ uv run python tests/test_prompt_output.py --agent technical_analysis --ticker GO
 - 股票基本信息和价格数据
 - 技术分析、基本面分析、新闻情感分析结果
 - 市场感知日期和交易日计算
-- 具体的3%涨跌目标价格计算
+- 具体的4%涨跌目标价格计算
 - 概率预测要求和输出格式
 
 **使用场景**：验证AI预测模型的输入数据完整性
@@ -105,8 +105,8 @@ uv run python tests/test_prompt_output.py --agent technical_analysis --ticker GO
 
 ## Stock Price Data
 Current Price: $150.25
-Upside Target (+3%): $154.76
-Downside Target (-3%): $145.74
+Upside Target (+4%): $156.26
+Downside Target (-4%): $144.24
 
 [完整Prompt内容...]
 ================================================================================

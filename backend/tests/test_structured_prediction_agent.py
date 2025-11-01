@@ -69,8 +69,8 @@ def test_build_structured_prediction_prompt():
     assert "confidence_level" in prompt
     assert "reasoning" in prompt
     assert "当前收盘价: $155.00" in prompt
-    assert "上涨目标价位（+3%）: $159.65" in prompt
-    assert "下跌目标价位（-3%）: $150.35" in prompt
+    assert "上涨目标价位（+4%）: $161.20" in prompt
+    assert "下跌目标价位（-4%）: $148.80" in prompt
 
 def test_structured_prediction_agent_technical_analysis_missing():
     """测试技术分析缺失时的处理"""
@@ -163,8 +163,8 @@ def test_market_data_parsing():
     
     prompt = _build_structured_prediction_prompt(normal_state)
     assert "当前收盘价: $310.00" in prompt
-    assert "上涨目标价位（+3%）: $319.30" in prompt
-    assert "下跌目标价位（-3%）: $300.70" in prompt
+    assert "上涨目标价位（+4%）: $322.40" in prompt
+    assert "下跌目标价位（-4%）: $297.60" in prompt
     
     # 测试异常市场数据
     bad_state = create_graph_state(

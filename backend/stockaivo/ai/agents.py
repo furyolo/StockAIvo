@@ -1522,14 +1522,14 @@ def _build_structured_prediction_prompt(state: GraphState) -> str:
                 if 'close' in daily_price_df.columns:
                     latest_close = daily_price_df['close'].iloc[-1]
                     # 计算目标价格水平
-                    upside_target = latest_close * 1.03  # 上涨3%目标
-                    downside_target = latest_close * 0.97  # 下跌3%目标
+                    upside_target = latest_close * 1.04  # 上涨4%目标
+                    downside_target = latest_close * 0.96  # 下跌4%目标
                     
                     current_price_info = f"""
 **当前市场数据（{market_aware_date}）:**
 - 当前收盘价: ${latest_close:.2f}
-- 上涨目标价位（+3%）: ${upside_target:.2f}
-- 下跌目标价位（-3%）: ${downside_target:.2f}
+- 上涨目标价位（+4%）: ${upside_target:.2f}
+- 下跌目标价位（-4%）: ${downside_target:.2f}
 """
     except Exception as e:
         current_price_info = f"\n**价格数据获取异常:** {e}"
@@ -1600,12 +1600,12 @@ def _build_structured_prediction_prompt(state: GraphState) -> str:
 
 ### 第二步：计算具体概率值
 {f'''**如果预测方向为UP（上涨）:**
-在接下来{trading_days_count}个交易日内（到{target_date}前），股价从当前的${latest_close:.2f}上涨至少3%，达到或超过${upside_target:.2f}的概率是多少？请给出0.0-1.0的概率值。
+在接下来{trading_days_count}个交易日内（到{target_date}前），股价从当前的${latest_close:.2f}上涨至少4%，达到或超过${upside_target:.2f}的概率是多少？请给出0.0-1.0的概率值。
 
 **如果预测方向为DOWN（下跌）:**
-在接下来{trading_days_count}个交易日内（到{target_date}前），股价从当前的${latest_close:.2f}下跌至少3%，跌至或低于${downside_target:.2f}的概率是多少？请给出0.0-1.0的概率值。''' if latest_close is not None else '''**价格数据不可用，请基于分析信号估算概率:**
-- UP方向：股价在预测期内上涨至少3%的概率
-- DOWN方向：股价在预测期内下跌至少3%的概率'''}
+在接下来{trading_days_count}个交易日内（到{target_date}前），股价从当前的${latest_close:.2f}下跌至少4%，跌至或低于${downside_target:.2f}的概率是多少？请给出0.0-1.0的概率值。''' if latest_close is not None else '''**价格数据不可用，请基于分析信号估算概率:**
+- UP方向：股价在预测期内上涨至少4%的概率
+- DOWN方向：股价在预测期内下跌至少4%的概率'''}
 
 ### 第三步：评估置信度
 {confidence_text}

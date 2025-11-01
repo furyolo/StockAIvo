@@ -388,12 +388,12 @@ class PromptTester:
                     )
                     if not daily_price_df.empty and 'close' in daily_price_df.columns:
                         latest_close = daily_price_df['close'].iloc[-1]
-                        upside_target = latest_close * 1.03
-                        downside_target = latest_close * 0.97
+                        upside_target = latest_close * 1.04
+                        downside_target = latest_close * 0.96
                         print(f"   ✅ 价格数据解析成功:")
                         print(f"      - 最新收盘价: ${latest_close:.2f}")
-                        print(f"      - 上涨目标: ${upside_target:.2f} (+3%)")
-                        print(f"      - 下跌目标: ${downside_target:.2f} (-3%)")
+                        print(f"      - 上涨目标: ${upside_target:.2f} (+4%)")
+                        print(f"      - 下跌目标: ${downside_target:.2f} (-4%)")
                     else:
                         print("   ❌ DataFrame为空或缺少close列")
                 except Exception as e:
