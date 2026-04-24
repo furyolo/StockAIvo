@@ -36,7 +36,7 @@ class LLMService:
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
 
         # 加载AI模型配置
-        self.ai_default_model = os.getenv("AI_DEFAULT_MODEL", "gemini-2.5-flash")
+        self.ai_default_model = os.getenv("AI_DEFAULT_MODEL", "gemini-3-flash-preview")
 
         # 代理特定模型配置
         self.agent_model_overrides = {

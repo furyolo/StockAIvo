@@ -1,12 +1,12 @@
-# 多阶段构建，统一使用 Python 3.13 Alpine Linux 精简镜像
-FROM python:3.13.7-alpine AS builder
+# 多阶段构建，统一使用 Python 3.14 Alpine Linux 精简镜像
+FROM python:3.14.3-alpine AS builder
 
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
-    UV_PYTHON=python3.13.7
+    UV_PYTHON=python3.14.3
 
 # 构建阶段仅安装编译所需依赖
 RUN apk update \
@@ -29,7 +29,7 @@ RUN find .venv -name "__pycache__" -type d -prune -exec rm -rf {} + \
     && find .venv -name "*.pyc" -delete
 
 
-FROM python:3.13.7-alpine AS runtime
+FROM python:3.14.3-alpine AS runtime
 
 WORKDIR /app
 

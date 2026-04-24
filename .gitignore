@@ -91,11 +91,4 @@ tests/*$py.class
 # Claude
 .claude/
 
-# Serena language server
-.serena/
-
-# Kilo Code
-.kilocode/
-
-# Cunzhi Memory
-.cunzhi-memory/
+.ace-tool/
